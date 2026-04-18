@@ -1,0 +1,6 @@
+# .prettierignore
+dist
+public
+.local
+node_modules
+pnpm-lock.yaml

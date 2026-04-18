@@ -1,0 +1,39 @@
+// TypeScript 配置文件
+{
+  "compilerOptions": {
+    // 解析非相对模块路径时的基础目录
+    "baseUrl": ".",
+    // 输出模块系统，使用最新 ES 模块语法
+    "module": "esnext",
+    // 编译目标 JavaScript 版本
+    "target": "esnext",
+    // 加载的类型声明文件（仅这些包的类型）
+    "types": [],
+    // 编译时包含的内置库
+    "lib": ["esnext", "DOM"],
+    // 生成源码映射文件
+    "sourceMap": true,
+    // 生成 .d.ts 类型声明文件
+    "declaration": true,
+    // 为声明文件生成 sourceMap
+    "declarationMap": true,
+    // 索引访问结果自动包含 undefined
+    "noUncheckedIndexedAccess": true,
+    // 启用所有严格类型检查
+    "strict": true,
+    // 保持原始 import/export 语法
+    "verbatimModuleSyntax": false,
+    // 模块解析策略，与打包工具一致
+    "moduleResolution": "bundler",
+    // 每个文件必须能独立编译
+    "isolatedModules": true,
+    // 检查副作用导入
+    "noUncheckedSideEffectImports": true,
+    // 自动检测模块类型
+    "moduleDetection": "force",
+    // 跳过第三方库类型检查
+    "skipLibCheck": true
+  },
+  // 排除不参与编译的目录
+  "exclude": ["node_modules", "dist"]
+}
