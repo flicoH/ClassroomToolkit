@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 00:11:15
+ * @LastEditTime: 2026-04-21 23:08:49
  */
 "use client";
 
@@ -18,6 +18,7 @@ import { LoginForm } from "@/components/Login";
 import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
 import { Taskbar } from "@/components/Taskbar";
+import { CountdownTimer } from "@/components/CountdownTimer";
 import { GraduationCap, Timer } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
 
@@ -27,13 +28,13 @@ const menuItems: MenuItemData[] = [{ name: "倒计时", icon: Timer, contentKey:
 function WindowContent({ contentKey }: { contentKey: string }) {
   switch (contentKey) {
     case "countdown":
+      return <CountdownTimer />;
+    default:
       return (
         <div className="flex flex-col items-center justify-center h-full">
           <p className="text-muted-foreground mb-4">倒计时功能开发中...</p>
         </div>
       );
-    default:
-      return <div className="text-muted-foreground">未知功能</div>;
   }
 }
 
