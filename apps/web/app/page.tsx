@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 23:08:49
+ * @LastEditTime: 2026-04-21 23:12:59
  */
 "use client";
 
@@ -21,14 +21,28 @@ import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { GraduationCap, Timer } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
+import { Countdown } from "@/components/apps/Countdown";
 
-const menuItems: MenuItemData[] = [{ name: "倒计时", icon: Timer, contentKey: "countdown" }];
+const menuItems: MenuItemData[] = [
+  { name: "倒计时", icon: Timer, contentKey: "countdown" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown1" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown2" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown3" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown4" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown5" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown6" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown7" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown8" },
+  { name: "倒计时", icon: Timer, contentKey: "countdown9" }
+];
 
 /** 根据 contentKey 渲染弹窗内容 */
 function WindowContent({ contentKey }: { contentKey: string }) {
   switch (contentKey) {
     case "countdown":
       return <CountdownTimer />;
+    case "countdown1":
+      return <Countdown />;
     default:
       return (
         <div className="flex flex-col items-center justify-center h-full">
@@ -51,7 +65,7 @@ export default function Home() {
   return (
     <div className="fixed inset-0 flex flex-col">
       {/* Function Menu Area */}
-      <div className="absolute bottom-14 left-0 right-0 flex-1 flex items-end px-6 pb-4">
+      <div className="absolute top-10 left-0 flex-1 flex items-end px-6 pb-4">
         <MenuBox items={menuItems} onItemClick={handleMenuClick} />
       </div>
 

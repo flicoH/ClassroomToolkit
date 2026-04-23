@@ -5,8 +5,8 @@
  *  其他任何个人、公司不得使用、复制、传播、修改或商业使用。
  * **********************************************************************************************
  * @Date: 2026-04-21 00:25:14
- * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 00:25:15
+ * @LastEditors: huangqinjia huangqinjia
+ * @LastEditTime: 2026-04-21 17:41:42
  */
 import { create } from "zustand";
 
@@ -33,9 +33,10 @@ interface WindowStore {
   restoreWindow: (id: string) => void;
   focusWindow: (id: string) => void;
   updatePosition: (id: string, x: number, y: number) => void;
+  updateWindowState: (id: string, state: WindowState, prevState: WindowState) => void;
 }
 
-const DEFAULT_SIZE = { w: 480, h: 400 };
+const DEFAULT_SIZE = { w: 580, h: 510 };
 const OFFSET_STEP = 30;
 
 export const useWindowStore = create<WindowStore>()((set, get) => ({
@@ -61,7 +62,7 @@ export const useWindowStore = create<WindowStore>()((set, get) => ({
       id: `${contentKey}-${Date.now()}`,
       title,
       contentKey,
-      state: "normal",
+      state: "maximized",
       prevState: "normal",
       position: { x: 100 + offset, y: 60 + offset },
       size: DEFAULT_SIZE,
@@ -114,6 +115,12 @@ export const useWindowStore = create<WindowStore>()((set, get) => ({
   updatePosition: (id, x, y) => {
     set(s => ({
       windows: s.windows.map(w => (w.id === id ? { ...w, position: { x, y } } : w))
+    }));
+  },
+
+  updateWindowState: (id, state, prevState) => {
+    set(s => ({
+      windows: s.windows.map(w => (w.id === id ? { ...w, state, prevState } : w))
     }));
   }
 }));

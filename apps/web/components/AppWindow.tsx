@@ -26,6 +26,8 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
 
   const isMaximized = win.state === "maximized";
   const isMinimized = win.state === "minimized";
+  // 全屏默认打开时，prevState 也设为 maximized，需要特殊处理
+  const isDefaultMaximized = isMaximized && win.prevState === "maximized";
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -101,7 +103,10 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
             className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
             onClick={e => {
               e.stopPropagation();
-              if (isMaximized) {
+              if (isDefaultMaximized) {
+                // 默认全屏 -> 恢复正常大小
+                useWindowStore.getState().updateWindowState(win.id, "normal", "normal");
+              } else if (isMaximized) {
                 restoreWindow(win.id);
               } else {
                 maximizeWindow(win.id);
