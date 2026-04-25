@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-21 00:25:14
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 00:25:15
+ * @LastEditTime: 2026-04-23 23:31:23
  */
 "use client";
 
@@ -129,7 +129,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4">{children}</div>
+      <div className="flex-1 overflow-auto">{children}</div>
     </div>
   );
 }
