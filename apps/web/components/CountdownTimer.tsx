@@ -23,6 +23,14 @@ function formatTime(seconds: number, showHours: boolean): string {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+function easeInQuad(t: number) {
+  return t * t;
+}
+
+function easeOutCubic(t: number) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
 /** 滴水 Canvas 动画组件 */
 function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -32,6 +40,14 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
   const displayProgressRef = useRef(progress);
   const timeRef = useRef(0);
   const runningRef = useRef(isRunning);
+  const trailSeedsRef = useRef([-0.58, 0.32, -0.18, 0.48, -0.36]);
+  const splashSeedsRef = useRef([
+    { angle: -0.95, speed: 0.72, radius: 0.95 },
+    { angle: -0.48, speed: 0.9, radius: 0.72 },
+    { angle: 0.02, speed: 0.66, radius: 1.05 },
+    { angle: 0.44, speed: 0.86, radius: 0.82 },
+    { angle: 0.9, speed: 0.74, radius: 0.64 }
+  ]);
   // 用 ref 持有尺寸信息，避免闭包过期
   const sizeRef = useRef({ w: 260, h: 420, dpr: 1 });
 
@@ -100,22 +116,22 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
     }
 
     const draw = (now: number) => {
-      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      const dt = Math.min((now - lastTime) / 1000, 0.033);
       lastTime = now;
 
       // 平滑插值
       const target = progressRef.current;
       const diff = target - displayProgressRef.current;
-      const lerpFactor = 1 - Math.pow(0.001, dt);
-      displayProgressRef.current += diff * Math.min(lerpFactor * 4, 1);
-      if (Math.abs(diff) < 0.0005) {
+      const lerpFactor = 1 - Math.exp(-dt * 10);
+      displayProgressRef.current += diff * lerpFactor;
+      if (Math.abs(diff) < 0.0008) {
         displayProgressRef.current = target;
       }
 
       const prog = displayProgressRef.current;
       timeRef.current += dt;
 
-      const { w, h, dpr } = sizeRef.current;
+      const { w, h } = sizeRef.current;
       const scaleX = w / W;
       const scaleY = h / H;
       const cx = w / 2;
@@ -158,14 +174,17 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
         roundRect(ctx, glassX + 2, glassTop + 2, glassW - 4, glassH - 4, glassR - 2);
         ctx.clip();
 
-        const waveAmp = 2 * scaleY;
+        const waveAmp = 2.2 * scaleY;
         const waveFreq = 0.08;
         const t = timeRef.current;
 
         ctx.beginPath();
         ctx.moveTo(glassX + 4, waterSurfaceY);
         for (let wx = glassX + 4; wx <= glassX + glassW - 4; wx += 3) {
-          const wy = waterSurfaceY + Math.sin((wx / scaleX) * waveFreq + t * 2.5) * waveAmp;
+          const wy =
+            waterSurfaceY +
+            Math.sin((wx / scaleX) * waveFreq + t * 2.4) * waveAmp +
+            Math.sin((wx / scaleX) * 0.035 - t * 1.6) * waveAmp * 0.38;
           ctx.lineTo(wx, wy);
         }
         ctx.lineTo(glassX + glassW - 4, glassBottom - 4);
@@ -184,7 +203,13 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
         ctx.beginPath();
         ctx.moveTo(glassX + 12, waterSurfaceY - 1);
         for (let wx = glassX + 12; wx <= glassX + glassW - 12; wx += 3) {
-          ctx.lineTo(wx, waterSurfaceY + Math.sin((wx / scaleX) * waveFreq + t * 2.5) * waveAmp - 1);
+          ctx.lineTo(
+            wx,
+            waterSurfaceY +
+              Math.sin((wx / scaleX) * waveFreq + t * 2.4) * waveAmp +
+              Math.sin((wx / scaleX) * 0.035 - t * 1.6) * waveAmp * 0.38 -
+              1
+          );
         }
         ctx.strokeStyle = "rgba(191,219,254,0.45)";
         ctx.lineWidth = 1.5;
@@ -227,43 +252,46 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
 
       // ====== 下落的水滴动画（仅在运行时显示） ======
       if (runningRef.current && prog > 0.005 && prog < 0.998) {
-        const tVal = timeRef.current;
-        const dropCycle = 0.75;
-        const phase = (tVal % dropCycle) / dropCycle;
+        const dropCycle = 0.82;
         const dropSize = 5.5 * scaleX;
 
         const startY = spoutCY + 20 * scaleY;
         const endY = waterSurfaceY - 5 * scaleY;
         const fallDist = endY - startY;
-        const easeIn = phase * phase;
-        const dropY = startY + easeIn * fallDist;
-        const dropAlpha = phase < 0.04 ? phase / 0.04 : phase > 0.92 ? (1 - phase) / 0.08 : 1;
-        drawDrop(spoutCX, dropY, dropSize * (0.8 + phase * 0.4), dropAlpha);
 
-        // 尾迹粒子
-        for (let i = 1; i <= 4; i++) {
-          const trailPhase = (phase - i * 0.04) % 1;
-          if (trailPhase >= 0 && trailPhase < 1) {
-            const ty = startY + trailPhase * trailPhase * fallDist;
-            drawDrop(
-              spoutCX + (Math.random() - 0.5) * 2 * scaleX,
-              ty,
-              dropSize * 0.3 * (1 - i * 0.18),
-              0.3 * (1 - i * 0.22)
-            );
+        // 使用两个错开的相位形成连续水滴流，避免单滴循环重置时出现空档。
+        for (let stream = 0; stream < 2; stream++) {
+          const phase = (((timeRef.current / dropCycle + stream * 0.5) % 1) + 1) % 1;
+          const easedPhase = easeInQuad(phase);
+          const dropY = startY + easedPhase * fallDist;
+          const fadeIn = Math.min(phase / 0.08, 1);
+          const fadeOut = Math.min((1 - phase) / 0.12, 1);
+          const dropAlpha = Math.min(fadeIn, fadeOut);
+          const wobble = Math.sin(timeRef.current * 8 + stream * Math.PI) * 0.7 * scaleX;
+
+          drawDrop(spoutCX + wobble, dropY, dropSize * (0.78 + phase * 0.42), dropAlpha);
+
+          // 尾迹粒子使用稳定偏移，避免每帧随机跳动。
+          for (let i = 1; i <= 4; i++) {
+            const trailPhase = phase - i * 0.045;
+            if (trailPhase > 0 && trailPhase < 1) {
+              const ty = startY + easeInQuad(trailPhase) * fallDist;
+              const seed = trailSeedsRef.current[(i + stream) % trailSeedsRef.current.length] ?? 0;
+              const tx = spoutCX + seed * 2.2 * scaleX + Math.sin(timeRef.current * 5 + i) * 0.25 * scaleX;
+              drawDrop(tx, ty, dropSize * 0.28 * (1 - i * 0.14), 0.24 * (1 - i * 0.16) * dropAlpha);
+            }
           }
-        }
 
-        // 飞溅效果
-        if (phase > 0.86) {
-          const splashT = (phase - 0.86) / 0.14;
-          for (let si = 0; si < 5; si++) {
-            const angle = Math.PI / 3 + (si / 4) * (Math.PI / 1.5);
-            const spd = splashT * 20 * scaleY * (0.6 + Math.random() * 0.4);
-            const sx = spoutCX + Math.sin(angle) * spd * (si % 2 === 0 ? 1 : -1);
-            const sy = endY - Math.cos(angle) * spd;
-            const sr = (1.2 + Math.random() * 0.8) * scaleX * (1 - splashT * 0.55);
-            drawDrop(sx, sy, sr, 0.5 * (1 - splashT));
+          // 飞溅效果同样使用稳定种子，让水花扩散自然而不闪烁。
+          if (phase > 0.84) {
+            const splashT = (phase - 0.84) / 0.16;
+            const splashEase = easeOutCubic(splashT);
+            splashSeedsRef.current.forEach(seed => {
+              const sx = spoutCX + Math.sin(seed.angle) * splashEase * 18 * scaleX * seed.speed;
+              const sy = endY - Math.cos(seed.angle) * splashEase * 13 * scaleY * seed.speed;
+              const sr = seed.radius * 1.4 * scaleX * (1 - splashT * 0.45);
+              drawDrop(sx, sy, sr, 0.38 * (1 - splashT) * dropAlpha);
+            });
           }
         }
       }

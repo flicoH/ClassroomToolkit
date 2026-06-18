@@ -10,23 +10,23 @@
  */
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAuthStore } from "@/store/authStore";
+import { useState } from "react";
 import { useWindowStore } from "@/store/windowStore";
 import { UserPanel } from "@/components/UserPanel";
-import { LoginForm } from "@/components/Login";
 import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
 import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
-import { GraduationCap, Timer } from "lucide-react";
+import { ClipboardList, GraduationCap, Timer, Users } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
 import { Countdown } from "@/components/apps/Countdown";
+import { StudentManagement } from "@/components/apps/StudentManagement";
+import { TaskStats } from "@/components/apps/TaskStats";
 
 const menuItems: MenuItemData[] = [
   { name: "倒计时", icon: Timer, contentKey: "countdown" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown1" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown2" },
+  { name: "任务统计", icon: ClipboardList, contentKey: "taskStats" },
+  { name: "学生管理", icon: Users, contentKey: "studentManagement" },
   { name: "倒计时", icon: Timer, contentKey: "countdown3" },
   { name: "倒计时", icon: Timer, contentKey: "countdown4" },
   { name: "倒计时", icon: Timer, contentKey: "countdown5" },
@@ -41,7 +41,11 @@ function WindowContent({ contentKey }: { contentKey: string }) {
   switch (contentKey) {
     case "countdown":
       return <CountdownTimer />;
-    case "countdown1":
+    case "taskStats":
+      return <TaskStats />;
+    case "studentManagement":
+      return <StudentManagement />;
+    case "countdown3":
       return <Countdown />;
     default:
       return (
@@ -53,7 +57,6 @@ function WindowContent({ contentKey }: { contentKey: string }) {
 }
 
 export default function Home() {
-  const { user, isLoading } = useAuthStore();
   const { windows, openWindow } = useWindowStore();
   const [panelOpen, setPanelOpen] = useState(false);
 
