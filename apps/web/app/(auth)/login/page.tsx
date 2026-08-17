@@ -11,6 +11,7 @@
 
 import { LoginForm } from "@/components/Login";
 
+/** 登录路由只负责挂载登录表单，表单逻辑集中在 LoginForm。 */
 export default function LoginPage() {
   return <LoginForm />;
 }

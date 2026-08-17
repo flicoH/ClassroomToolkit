@@ -63,11 +63,14 @@ const initialClasses: ClassRoom[] = [
   }
 ];
 
+const defaultClass = initialClasses[0]!;
+
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
 
 function parseImportRows(text: string): Student[] {
+  // 支持“姓名 学号 性别”的简单文本导入，空学号会自动生成。
   return text
     .split("\n")
     .map(row => row.trim())
@@ -87,7 +90,7 @@ function parseImportRows(text: string): Student[] {
 
 export function StudentManagement() {
   const [classes, setClasses] = useState<ClassRoom[]>(initialClasses);
-  const [activeClassId, setActiveClassId] = useState(initialClasses[0].id);
+  const [activeClassId, setActiveClassId] = useState(defaultClass.id);
   const [modal, setModal] = useState<ModalType>(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [query, setQuery] = useState("");
@@ -98,8 +101,9 @@ export function StudentManagement() {
   const [importText, setImportText] = useState("");
   const [groupName, setGroupName] = useState("");
 
-  const activeClass = classes.find(item => item.id === activeClassId) ?? classes[0];
+  const activeClass = classes.find(item => item.id === activeClassId) ?? defaultClass;
 
+  // 当前班级学生列表：先按搜索过滤，再按学号方向排序。
   const visibleStudents = useMemo(() => {
     if (!activeClass) return [];
     const normalizedQuery = query.trim().toLowerCase();
@@ -116,12 +120,14 @@ export function StudentManagement() {
       });
   }, [activeClass, query, sortAsc]);
 
+  /** 所有学生/分组变更都通过这个 helper 只更新当前班级。 */
   const updateActiveClass = (updater: (classRoom: ClassRoom) => ClassRoom) => {
     setClasses(current =>
       current.map(classRoom => (classRoom.id === activeClass?.id ? updater(classRoom) : classRoom))
     );
   };
 
+  /** 关闭弹窗时清空草稿，避免下次打开沿用旧输入。 */
   const closeModal = () => {
     setModal(null);
     setStudentName("");
@@ -132,6 +138,7 @@ export function StudentManagement() {
     setGroupName("");
   };
 
+  /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
   const addStudent = () => {
     const name = studentName.trim();
     if (!name) return;
@@ -145,7 +152,10 @@ export function StudentManagement() {
     closeModal();
   };
 
+  /** 删除学生需要二次确认，避免误触删除。 */
   const removeStudent = (studentId: string) => {
+    const student = activeClass?.students.find(item => item.id === studentId);
+    if (!window.confirm(`确定删除学生「${student?.name ?? "未命名学生"}」吗？删除后不可恢复。`)) return;
     updateActiveClass(classRoom => ({
       ...classRoom,
       students: classRoom.students.filter(student => student.id !== studentId)

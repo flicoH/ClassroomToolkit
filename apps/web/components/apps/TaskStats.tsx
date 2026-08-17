@@ -84,6 +84,7 @@ const initialTasks: TaskItem[] = [
 
 const statusOrder: StudentStatus[] = ["未完成", "已完成", "需订正"];
 
+/** 汇总单个任务的完成比例和各状态人数，用于列表卡片和详情统计。 */
 function getTaskStats(task: TaskItem) {
   const total = task.students.length;
   const done = task.students.filter(student => student.status === "已完成").length;
@@ -118,6 +119,7 @@ export function TaskStats() {
 
   const activeTask = tasks.find(task => task.id === activeTaskId) ?? tasks[0];
 
+  // 详情页学生列表支持搜索和状态筛选，避免修改原始任务数据。
   const filteredStudents = useMemo(() => {
     if (!activeTask) return [];
     const normalizedQuery = query.trim().toLowerCase();
@@ -131,6 +133,7 @@ export function TaskStats() {
     });
   }, [activeStatus, activeTask, query]);
 
+  /** 基于表单草稿创建新任务，并进入新任务详情。 */
   const handleCreateTask = () => {
     const title = draftTitle.trim() || "课后作业完成情况统计";
     const nextTask: TaskItem = {
@@ -153,6 +156,7 @@ export function TaskStats() {
     setView("detail");
   };
 
+  /** 点击学生卡片时按固定顺序轮转任务状态。 */
   const updateStudentStatus = (studentId: string) => {
     if (!activeTask) return;
     setTasks(current =>
@@ -168,6 +172,18 @@ export function TaskStats() {
         };
       })
     );
+  };
+
+  /** 删除任务是不可恢复操作，统一先做二次确认。 */
+  const deleteTask = (taskId: string) => {
+    const task = tasks.find(item => item.id === taskId);
+    if (!window.confirm(`确定删除任务「${task?.title ?? "未命名任务"}」吗？删除后不可恢复。`)) return;
+    setTasks(current => current.filter(task => task.id !== taskId));
+    if (activeTaskId === taskId) {
+      const nextTask = tasks.find(task => task.id !== taskId);
+      setActiveTaskId(nextTask?.id ?? "");
+      setView("list");
+    }
   };
 
   if (view === "create") {
@@ -350,6 +366,15 @@ export function TaskStats() {
               <Settings className="h-4 w-4" />
               编辑任务设置
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-9 shrink-0 text-rose-500 hover:text-rose-600"
+              onClick={() => deleteTask(activeTask.id)}
+            >
+              <Trash2 className="h-4 w-4" />
+              删除任务
+            </Button>
           </div>
         </header>
 
@@ -429,13 +454,13 @@ export function TaskStats() {
         {tasks.map(task => {
           const stats = getTaskStats(task);
           return (
-            <button
+            <article
               key={task.id}
               onClick={() => {
                 setActiveTaskId(task.id);
                 setView("detail");
               }}
-              className="w-full rounded-2xl bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900"
+              className="w-full cursor-pointer rounded-2xl bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900"
             >
               <div className="flex items-start gap-4">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">
@@ -449,7 +474,19 @@ export function TaskStats() {
                         {task.className} · {stats.total} 人
                       </p>
                     </div>
-                    <ArrowLeft className="mt-1 h-4 w-4 rotate-180 text-slate-300" />
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        onClick={event => {
+                          event.stopPropagation();
+                          deleteTask(task.id);
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-rose-500 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                        aria-label="删除任务"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      <ArrowLeft className="h-4 w-4 rotate-180 text-slate-300" />
+                    </div>
                   </div>
 
                   <div className="mt-4 flex items-center justify-between text-sm font-bold">
@@ -473,9 +510,16 @@ export function TaskStats() {
                   </div>
                 </div>
               </div>
-            </button>
+            </article>
           );
         })}
+
+        {tasks.length === 0 && (
+          <div className="flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-dashed bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+            <ClipboardList className="mb-3 h-10 w-10" />
+            暂无任务
+          </div>
+        )}
       </main>
     </div>
   );

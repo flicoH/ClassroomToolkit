@@ -15,26 +15,27 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { cookieStorage } from "@/lib/cookie";
 import request from "@/lib/request";
+import type { User } from "@/types";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { GraduationCap, Loader2 } from "lucide-react";
-import Link from "next/link";
 
 export const LoginForm = () => {
   const [username, setUesrname] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { setUser, setLoading: setStoreLoading } = useAuthStore();
+  const { setUser } = useAuthStore();
 
+  /** 提交登录表单，成功后写入全局登录态和 token。 */
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const data = await request.post("/api/login", {
+      const data = await request.post<unknown, User>("/api/login", {
         username,
         password
       });

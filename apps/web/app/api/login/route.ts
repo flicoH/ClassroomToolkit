@@ -10,6 +10,7 @@
  */
 import { NextResponse } from "next/server";
 
+/** 本地模拟登录接口；后续接后端时只需要替换这里的校验逻辑。 */
 export async function POST(request: Request) {
   try {
     const { username, password } = await request.json();

@@ -25,8 +25,9 @@ const PRESET_TIMES = [
   { label: "15分钟", seconds: 900 }
 ];
 
+/** 旧版倒计时组件，复用 countdownStore 保存运行状态和剩余时间。 */
 export function Countdown() {
-  const { totalSeconds, remainingSeconds, isRunning, init, setTotalSeconds, setRemainingSeconds, setIsRunning, reset } =
+  const { totalSeconds, remainingSeconds, isRunning, init, setTotalSeconds, setRemainingSeconds, setIsRunning } =
     useCountdownStore();
 
   const [inputHours, setInputHours] = useState("0");
@@ -35,10 +36,12 @@ export function Countdown() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // 组件挂载时从 localStorage 恢复倒计时状态。
     init();
   }, [init]);
 
   useEffect(() => {
+    // 每次运行状态变化都重建 interval，避免多个定时器并行扣秒。
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -64,6 +67,7 @@ export function Countdown() {
     };
   }, [isRunning, setRemainingSeconds, setIsRunning]);
 
+  /** 将秒数格式化成 mm:ss 或 h:mm:ss。 */
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -74,6 +78,7 @@ export function Countdown() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  /** 运行中不允许改预设，防止总时长和剩余时间不同步。 */
   const handlePresetClick = (seconds: number) => {
     if (isRunning) return;
     setTotalSeconds(seconds);

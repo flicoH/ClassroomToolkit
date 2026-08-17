@@ -20,6 +20,7 @@ interface CountdownState {
 const STORAGE_KEY = "countdown_state";
 const DEFAULT_TIME = 300;
 
+/** 读取本地倒计时状态，并根据离开页面期间流逝的时间重新计算剩余秒数。 */
 function loadState(): CountdownState {
   if (typeof window === "undefined") {
     return {
@@ -41,21 +42,24 @@ function loadState(): CountdownState {
       };
     }
 
-    const parsed = JSON.parse(saved);
+    const parsed = JSON.parse(saved) as Partial<CountdownState>;
+    const totalSeconds = Math.max(1, Number(parsed.totalSeconds) || DEFAULT_TIME);
+    const remainingSeconds = Math.min(totalSeconds, Math.max(0, Number(parsed.remainingSeconds) || 0));
     if (!parsed.isRunning || !parsed.startTime) {
       return {
-        totalSeconds: parsed.totalSeconds || DEFAULT_TIME,
-        remainingSeconds: parsed.remainingSeconds || DEFAULT_TIME,
+        totalSeconds,
+        remainingSeconds,
         isRunning: false,
         startTime: null
       };
     }
 
     const elapsed = Math.floor((Date.now() - parsed.startTime) / 1000);
-    const newRemaining = Math.max(0, parsed.remainingSeconds - elapsed);
+    // startTime 已包含暂停前的进度，因此直接用总时长计算，避免刷新时重复扣减。
+    const newRemaining = Math.max(0, totalSeconds - elapsed);
 
     return {
-      totalSeconds: parsed.totalSeconds,
+      totalSeconds,
       remainingSeconds: newRemaining,
       isRunning: newRemaining > 0,
       startTime: newRemaining > 0 ? parsed.startTime : null
@@ -75,7 +79,7 @@ function saveState(state: CountdownState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // ignore
+    // localStorage 不可用时不阻断倒计时本身。
   }
 }
 
@@ -105,6 +109,7 @@ export const useCountdownStore = create<CountdownStore>((set, get) => ({
   setRemainingSeconds: remainingSeconds => {
     const state = get();
     const newState = { ...state, remainingSeconds };
+    // 到 0 后自动停止，避免刷新后继续按旧 startTime 计算。
     if (remainingSeconds <= 0) {
       newState.isRunning = false;
       newState.startTime = null;
@@ -115,10 +120,12 @@ export const useCountdownStore = create<CountdownStore>((set, get) => ({
 
   setIsRunning: isRunning => {
     const state = get();
+    const elapsedBeforeResume = Math.max(0, state.totalSeconds - state.remainingSeconds);
     const newState: CountdownState = {
       ...state,
       isRunning,
-      startTime: isRunning ? Date.now() : null
+      // 恢复计时时把暂停前的进度折算进 startTime，继续走剩余时长。
+      startTime: isRunning ? Date.now() - elapsedBeforeResume * 1000 : null
     };
     set(newState);
     saveState(newState);

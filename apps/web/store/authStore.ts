@@ -21,6 +21,7 @@ interface AuthState {
   logout: () => void;
 }
 
+/** 登录态集中存储，同时通过 persist 写入 localStorage，刷新后可恢复用户信息。 */
 export const useAuthStore = create<AuthState>()(
   persist(
     set => ({
@@ -29,6 +30,7 @@ export const useAuthStore = create<AuthState>()(
       setUser: user => set({ user }),
       setLoading: loading => set({ isLoading: loading }),
       logout: () => {
+        // 退出时同时清理 cookie 和 zustand 中的用户数据。
         cookieStorage.clearAll();
         set({ user: null });
       }

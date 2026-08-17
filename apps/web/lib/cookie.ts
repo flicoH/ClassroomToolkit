@@ -9,10 +9,12 @@
  * @LastEditTime: 2026-04-19 00:00:30
  */
 import Cookies from "js-cookie";
+import type { User } from "@/types";
 
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
 
+/** 认证相关 cookie 封装，避免组件层直接依赖 js-cookie 的键名和序列化细节。 */
 export const cookieStorage = {
   getToken: () => Cookies.get(TOKEN_KEY),
   setToken: (token: string) => {
@@ -27,6 +29,7 @@ export const cookieStorage = {
       try {
         return JSON.parse(userStr);
       } catch {
+        // 历史脏数据解析失败时按未登录处理。
         return null;
       }
     }

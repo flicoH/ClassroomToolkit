@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* 全局设计变量：提供亮色模式下的基础颜色和圆角 token。 */
 @theme {
   --color-background: hsl(0 0% 100%);
   --color-foreground: hsl(222.2 84% 4.9%);
@@ -25,6 +26,7 @@
   --radius-sm: 0.25rem;
 }
 
+/* 暗色模式下覆盖同一组 token，组件无需分别维护两套 class。 */
 .dark {
   --color-background: hsl(222.2 84% 4.9%);
   --color-foreground: hsl(210 40% 98%);
@@ -47,11 +49,79 @@
   --color-ring: hsl(224.3 76.3% 48%);
 }
 
+/* 页面默认前景/背景色从主题 token 读取。 */
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
 }
 
+/* 默认边框色统一接入主题 token。 */
 * {
   border-color: var(--color-border);
+}
+
+/* 宠物蛋待机、破壳和进化动效只使用 transform/opacity，避免触发布局重排。 */
+@keyframes pet-egg-idle {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-4px) rotate(1deg); }
+}
+
+@keyframes pet-hatch-flash {
+  0% { background-color: rgb(255 255 255 / 0); opacity: 0; }
+  28% { background-color: rgb(255 251 235 / 0.96); opacity: 1; }
+  100% { background-color: rgb(255 255 255 / 0); opacity: 1; }
+}
+
+@keyframes pet-evolve-flash {
+  0% { background-color: rgb(14 165 233 / 0); opacity: 0; }
+  35% { background-color: rgb(240 249 255 / 0.92); opacity: 1; }
+  100% { background-color: rgb(255 255 255 / 0); opacity: 1; }
+}
+
+@keyframes pet-effect-ring {
+  0% { opacity: 0; transform: scale(0.25); }
+  35% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.8); }
+}
+
+@keyframes pet-evolution-pop {
+  0% { filter: brightness(2.1) saturate(0); opacity: 0; transform: scale(0.5); }
+  45% { filter: brightness(1.45) saturate(1.35); opacity: 1; transform: scale(1.16); }
+  100% { filter: brightness(1) saturate(1); opacity: 1; transform: scale(1); }
+}
+
+.pet-egg-idle {
+  animation: pet-egg-idle 3.2s ease-in-out infinite;
+  transform-origin: 50% 78%;
+}
+
+.pet-hatch-effect {
+  animation: pet-hatch-flash 1.75s ease-out both;
+}
+
+.pet-evolve-effect {
+  animation: pet-evolve-flash 1.75s ease-out both;
+}
+
+.pet-effect-ring {
+  animation: pet-effect-ring 1.35s ease-out both;
+}
+
+.pet-effect-ring-delay {
+  animation-delay: 160ms;
+}
+
+.pet-evolution-pop {
+  animation: pet-evolution-pop 1.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-egg-idle,
+  .pet-hatch-effect,
+  .pet-evolve-effect,
+  .pet-effect-ring,
+  .pet-evolution-pop {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
 }

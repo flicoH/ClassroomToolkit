@@ -10,11 +10,12 @@
  */
 "use client";
 
-import type { LucideIcon } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
 
 export interface MenuItemData {
   name: string;
-  icon: LucideIcon;
+  /** 图标统一使用 SVG 组件，方便自定义卡通图标和 lucide 图标混用。 */
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   contentKey: string;
 }
 
@@ -31,7 +32,7 @@ export function MenuItem({ data, onClick }: MenuItemProps) {
       className="w-[85px] h-[85px] flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-white/20 dark:bg-black/20 backdrop-blur-md border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-black/30 active:scale-95 transition-all cursor-pointer"
       onClick={() => onClick?.(data.contentKey)}
     >
-      <Icon className="h-8 w-8 text-white drop-shadow-md" />
+      <Icon className="h-9 w-9 drop-shadow-md" />
       <span className="text-xs text-white font-medium drop-shadow-md">{data.name}</span>
     </button>
   );

@@ -19,13 +19,14 @@ export const metadata: Metadata = {
   description: "flico开发的课堂小工具,智慧教学互动工具"
 };
 
+/** 应用根布局：挂载背景、全局 Provider 和字体变量。 */
 export default function RootLayout({
   children
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="w-full h-full flex items-center justify-center relative overflow-hidden">
         <Background />
         <Providers>{children}</Providers>

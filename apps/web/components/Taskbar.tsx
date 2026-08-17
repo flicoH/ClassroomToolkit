@@ -14,6 +14,7 @@ import { useWindowStore } from "@/store/windowStore";
 
 export function Taskbar() {
   const { windows, restoreWindow, closeWindow } = useWindowStore();
+  // 任务栏只显示最小化窗口，普通/最大化窗口仍停留在桌面层。
   const minimizedWindows = windows.filter(w => w.state === "minimized");
 
   if (minimizedWindows.length === 0) return null;

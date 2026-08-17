@@ -23,10 +23,18 @@ export interface WindowItem {
   zIndex: number;
 }
 
+interface OpenWindowOptions {
+  /** 允许同一 contentKey 同时打开多个窗口，用于便签等多实例应用。 */
+  allowMultiple?: boolean;
+  state?: WindowState;
+  prevState?: WindowState;
+  size?: { w: number; h: number };
+}
+
 interface WindowStore {
   windows: WindowItem[];
   nextZIndex: number;
-  openWindow: (title: string, contentKey: string) => void;
+  openWindow: (title: string, contentKey: string, options?: OpenWindowOptions) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
@@ -39,33 +47,38 @@ interface WindowStore {
 const DEFAULT_SIZE = { w: 580, h: 510 };
 const OFFSET_STEP = 30;
 
+/** 统一管理桌面窗口的创建、层级、状态和位置。 */
 export const useWindowStore = create<WindowStore>()((set, get) => ({
   windows: [],
   nextZIndex: 10,
 
-  openWindow: (title, contentKey) => {
+  openWindow: (title, contentKey, options) => {
     const { windows, nextZIndex } = get();
-    const existing = windows.find(w => w.contentKey === contentKey && w.state !== "minimized");
-    if (existing) {
-      get().focusWindow(existing.id);
-      return;
+    // 默认同一个应用只打开一个窗口；再次点击时聚焦或恢复已有窗口。
+    if (!options?.allowMultiple) {
+      const existing = windows.find(w => w.contentKey === contentKey && w.state !== "minimized");
+      if (existing) {
+        get().focusWindow(existing.id);
+        return;
+      }
+
+      const minimized = windows.find(w => w.contentKey === contentKey && w.state === "minimized");
+      if (minimized) {
+        get().restoreWindow(minimized.id);
+        return;
+      }
     }
 
-    const minimized = windows.find(w => w.contentKey === contentKey && w.state === "minimized");
-    if (minimized) {
-      get().restoreWindow(minimized.id);
-      return;
-    }
-
+    // 新窗口错位显示，避免多个普通窗口完全重叠。
     const offset = windows.filter(w => w.state !== "minimized").length * OFFSET_STEP;
     const newWindow: WindowItem = {
       id: `${contentKey}-${Date.now()}`,
       title,
       contentKey,
-      state: "maximized",
-      prevState: "normal",
+      state: options?.state ?? "maximized",
+      prevState: options?.prevState ?? "normal",
       position: { x: 100 + offset, y: 60 + offset },
-      size: DEFAULT_SIZE,
+      size: options?.size ?? DEFAULT_SIZE,
       zIndex: nextZIndex
     };
     set({ windows: [...windows, newWindow], nextZIndex: nextZIndex + 1 });
@@ -95,6 +108,7 @@ export const useWindowStore = create<WindowStore>()((set, get) => ({
           ? {
               ...w,
               prevState: w.state,
+              // 从最小化恢复时回到之前的正常/最大化状态。
               state: w.prevState === "minimized" ? ("normal" as WindowState) : w.prevState,
               zIndex: nextZIndex
             }

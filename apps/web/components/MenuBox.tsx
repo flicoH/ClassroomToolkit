@@ -17,6 +17,7 @@ interface MenuBoxProps {
   onItemClick?: (contentKey: string) => void;
 }
 
+/** 桌面应用图标容器，负责把菜单数据渲染成可点击的图标矩阵。 */
 export function MenuBox({ items, onItemClick }: MenuBoxProps) {
   return (
     <div className="flex flex-col flex-wrap gap-4 h-[calc(100vh-16rem)]">

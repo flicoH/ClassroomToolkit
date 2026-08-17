@@ -17,40 +17,58 @@ import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
 import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
-import { ClipboardList, GraduationCap, Timer, Users } from "lucide-react";
+import { GraduationCap } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
-import { Countdown } from "@/components/apps/Countdown";
+import { RandomPicker } from "@/components/apps/RandomPicker";
+import { PetPoints } from "@/components/apps/PetPoints";
+import { SeatingChart } from "@/components/apps/SeatingChart";
+import { StickyNoteQuick, StickyNotes } from "@/components/apps/StickyNotes";
 import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
+import {
+  CartoonCountdownIcon,
+  CartoonPetPointsIcon,
+  CartoonRandomPickerIcon,
+  CartoonSeatingIcon,
+  CartoonStickyNoteIcon,
+  CartoonStudentsIcon,
+  CartoonTaskStatsIcon
+} from "@/components/icons/CartoonAppIcons";
 
 const menuItems: MenuItemData[] = [
-  { name: "倒计时", icon: Timer, contentKey: "countdown" },
-  { name: "任务统计", icon: ClipboardList, contentKey: "taskStats" },
-  { name: "学生管理", icon: Users, contentKey: "studentManagement" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown3" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown4" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown5" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown6" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown7" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown8" },
-  { name: "倒计时", icon: Timer, contentKey: "countdown9" }
+  { name: "倒计时", icon: CartoonCountdownIcon, contentKey: "countdown" },
+  { name: "随机点名", icon: CartoonRandomPickerIcon, contentKey: "randomPicker" },
+  { name: "学生管理", icon: CartoonStudentsIcon, contentKey: "studentManagement" },
+  { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
+  { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
+  { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
+  { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" }
 ];
 
-/** 根据 contentKey 渲染弹窗内容 */
+/** 桌面窗口内容路由：菜单只保存 contentKey，实际组件在这里集中映射。 */
 function WindowContent({ contentKey }: { contentKey: string }) {
   switch (contentKey) {
     case "countdown":
       return <CountdownTimer />;
+    case "randomPicker":
+      return <RandomPicker />;
     case "taskStats":
       return <TaskStats />;
+    case "seatingChart":
+      return <SeatingChart />;
+    case "petPoints":
+      return <PetPoints />;
+    case "stickyNotesList":
+      return <StickyNotes />;
     case "studentManagement":
       return <StudentManagement />;
-    case "countdown3":
-      return <Countdown />;
     default:
+      if (contentKey.startsWith("stickyNoteQuick")) {
+        return <StickyNoteQuick />;
+      }
       return (
         <div className="flex flex-col items-center justify-center h-full">
-          <p className="text-muted-foreground mb-4">倒计时功能开发中...</p>
+          <p className="text-muted-foreground mb-4">该功能暂不可用</p>
         </div>
       );
   }
@@ -60,8 +78,18 @@ export default function Home() {
   const { windows, openWindow } = useWindowStore();
   const [panelOpen, setPanelOpen] = useState(false);
 
+  /** 统一处理桌面图标点击；便签需要每次新开独立小窗，所以单独处理。 */
   const handleMenuClick = (contentKey: string) => {
     const item = menuItems.find(m => m.contentKey === contentKey);
+    if (contentKey === "stickyNotes") {
+      openWindow(item?.name || contentKey, `stickyNoteQuick-${Date.now()}`, {
+        allowMultiple: true,
+        state: "normal",
+        prevState: "normal",
+        size: { w: 360, h: 430 }
+      });
+      return;
+    }
     openWindow(item?.name || contentKey, contentKey);
   };
 
@@ -72,14 +100,14 @@ export default function Home() {
         <MenuBox items={menuItems} onItemClick={handleMenuClick} />
       </div>
 
-      {/* Windows Layer */}
+      {/* 所有应用窗口都由 windowStore 驱动，保证层级、最小化、聚焦逻辑统一。 */}
       {windows.map(win => (
         <AppWindow key={win.id} window={win}>
           <WindowContent contentKey={win.contentKey} />
         </AppWindow>
       ))}
 
-      {/* Minimized Taskbar */}
+      {/* 最小化后的窗口入口。 */}
       <Taskbar />
 
       {/* Bottom Bar - always visible */}

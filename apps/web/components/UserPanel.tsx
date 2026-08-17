@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -24,6 +24,7 @@ export function UserPanel({ open, onClose }: UserPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // 面板打开后点击外部自动关闭，行为类似系统开始菜单。
     function handleClickOutside(e: MouseEvent) {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         onClose();
@@ -36,6 +37,7 @@ export function UserPanel({ open, onClose }: UserPanelProps) {
   }, [open, onClose]);
 
   useEffect(() => {
+    // 支持键盘 Esc 快速关闭用户面板。
     function handleEsc(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
@@ -58,6 +60,7 @@ export function UserPanel({ open, onClose }: UserPanelProps) {
   };
 
   const handleLock = () => {
+    // 当前没有单独锁屏页，先复用登录页作为锁定后的入口。
     onClose();
     router.push("/login");
   };

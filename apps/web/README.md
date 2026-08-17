@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 课堂小工具 Web
 
-## Getting Started
+`apps/web` 是一个基于 Next.js 16、React 19 和 Zustand 的桌面式课堂工具箱。当前包含倒计时、随机点名、学生管理、任务统计、座位表、宠物积分和便签七个应用。
 
-First, run the development server:
+## 本地运行
+
+在仓库根目录安装依赖后执行：
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm --filter ClassRoomToolkitWeb dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+开发服务默认监听 `http://127.0.0.1:3001`。启动脚本会记录 Next.js 子进程，并在退出时清理服务和 `.next/dev/lock`。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+如不希望自动打开浏览器：
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+OPEN_BROWSER=0 pnpm --filter ClassRoomToolkitWeb dev
+```
 
-## Learn More
+## 代码检查
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+./node_modules/.bin/tsc -p apps/web/tsconfig.json --noEmit
+./node_modules/.bin/eslint apps/web/app apps/web/components apps/web/lib apps/web/store apps/web/types
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+桌面入口和应用路由位于 `app/page.tsx`，窗口状态由 `store/windowStore.ts` 统一管理，业务组件位于 `components/apps/`。

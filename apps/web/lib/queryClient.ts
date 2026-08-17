@@ -8,7 +8,9 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-18 23:52:20
  */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+
+/** React Query 全局客户端，统一控制缓存时长、窗口聚焦刷新和重试次数。 */
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

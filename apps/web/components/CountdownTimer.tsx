@@ -66,8 +66,9 @@ function WaterDrip({ progress, isRunning }: { progress: number; isRunning: boole
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const maybeCtx = canvas.getContext("2d");
+    if (!maybeCtx) return;
+    const ctx = maybeCtx;
 
     /** 设置 Canvas 缓冲区尺寸（HiDPI 支持） */
     const setupSize = () => {
@@ -359,8 +360,8 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 export function CountdownTimer() {
-  const rawTotal = useCountdownStore(s => s.totalSeconds) || 300;
-  const rawTimeLeft = useCountdownStore(s => s.remainingSeconds) || 300;
+  const rawTotal = useCountdownStore(s => s.totalSeconds);
+  const rawTimeLeft = useCountdownStore(s => s.remainingSeconds);
   const isRunning = useCountdownStore(s => s.isRunning);
   const setTotalSeconds = useCountdownStore(s => s.setTotalSeconds);
   const setRemainingSeconds = useCountdownStore(s => s.setRemainingSeconds);
@@ -369,7 +370,7 @@ export function CountdownTimer() {
 
   // 安全值，永远不为 NaN/undefined/负数
   const totalSeconds = Math.max(1, Number(rawTotal) || 300);
-  const timeLeft = Math.max(0, Number(rawTimeLeft) || totalSeconds);
+  const timeLeft = Math.min(totalSeconds, Math.max(0, Number(rawTimeLeft) || 0));
 
   const [showSettings, setShowSettings] = useState(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -453,7 +454,7 @@ export function CountdownTimer() {
       const currentRemaining = Math.max(0, Number(s.remainingSeconds) || 0);
       const currentTotal = Math.max(1, Number(s.totalSeconds) || totalSeconds);
 
-      if (currentRemaining <= 0 || !s.startTime) {
+      if (currentRemaining <= 0) {
         // 重置为完整的总时长再开始
         s.setTotalSeconds(currentTotal);
         s.setRemainingSeconds(currentTotal);

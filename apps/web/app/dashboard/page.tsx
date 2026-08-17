@@ -50,6 +50,7 @@ const tools = [
   }
 ];
 
+// Dashboard 是早期管理页示例数据，当前桌面版入口主要在 app/page.tsx。
 const recentActivity = [
   { id: 1, text: "完成了随机点名练习", time: "10分钟前" },
   { id: 2, text: "创建了新的计时任务", time: "30分钟前" },
@@ -61,11 +62,13 @@ export default function DashboardPage() {
   const { user, isLoading, logout } = useAuthStore();
 
   useEffect(() => {
+    // 未登录访问 dashboard 时回到登录页。
     if (!isLoading && !user) {
       router.replace("/login");
     }
   }, [user, isLoading, router]);
 
+  /** 退出登录并回到登录页。 */
   const handleLogout = () => {
     logout();
     router.push("/login");

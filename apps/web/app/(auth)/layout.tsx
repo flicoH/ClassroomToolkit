@@ -8,6 +8,7 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-19 02:08:47
  */
+/** 认证页布局：让登录卡片居中显示在桌面背景之上。 */
 export default function Layout({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center justify-center backdrop-blur-xs">{children}</div>;
 }

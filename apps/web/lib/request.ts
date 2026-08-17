@@ -22,7 +22,7 @@ const request = axios.create({
   }
 });
 
-// 请求拦截器
+// 请求拦截器：从 cookie 注入 token，后端接口统一通过 Authorization 识别用户。
 request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = cookieStorage.getToken();
@@ -36,7 +36,7 @@ request.interceptors.request.use(
   }
 );
 
-// 响应拦截器
+// 响应拦截器：业务层直接拿 response.data，错误提示也在这里集中处理。
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     return response.data;

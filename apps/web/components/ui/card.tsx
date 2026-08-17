@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+/** 通用卡片组件组，用于保持 Card/Header/Content/Footer 的结构和间距一致。 */
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
   <div ref={ref} className={cn("rounded-xl border bg-card text-card-foreground shadow", className)} {...props} />
 ));

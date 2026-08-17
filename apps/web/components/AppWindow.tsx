@@ -29,6 +29,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
   // 全屏默认打开时，prevState 也设为 maximized，需要特殊处理
   const isDefaultMaximized = isMaximized && win.prevState === "maximized";
 
+  /** 标题栏按下时记录拖拽起点，移动过程由全局 mousemove 接管。 */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (isMaximized) return;
@@ -45,11 +46,19 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
   );
 
   useEffect(() => {
+    // 将移动/松开监听挂到 document，防止鼠标移出窗口后拖拽中断。
     const handleMouseMove = (e: MouseEvent) => {
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
-      updatePosition(win.id, dragRef.current.origX + dx, dragRef.current.origY + dy);
+      const maxX = Math.max(8, globalThis.innerWidth - Math.min(win.size.w, globalThis.innerWidth - 16) - 8);
+      const visibleHeight = Math.min(win.size.h, globalThis.innerHeight - 56);
+      const maxY = Math.max(8, globalThis.innerHeight - 40 - visibleHeight - 8);
+      updatePosition(
+        win.id,
+        Math.min(maxX, Math.max(8, dragRef.current.origX + dx)),
+        Math.min(maxY, Math.max(8, dragRef.current.origY + dy))
+      );
     };
     const handleMouseUp = () => {
       dragRef.current = null;
@@ -60,7 +69,23 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [win.id, updatePosition]);
+  }, [win.id, win.size.h, win.size.w, updatePosition]);
+
+  useEffect(() => {
+    if (isMaximized) return;
+    const keepWindowVisible = () => {
+      const visibleWidth = Math.min(win.size.w, globalThis.innerWidth - 16);
+      const visibleHeight = Math.min(win.size.h, globalThis.innerHeight - 56);
+      const maxX = Math.max(8, globalThis.innerWidth - visibleWidth - 8);
+      const maxY = Math.max(8, globalThis.innerHeight - 40 - visibleHeight - 8);
+      const x = Math.min(maxX, Math.max(8, win.position.x));
+      const y = Math.min(maxY, Math.max(8, win.position.y));
+      if (x !== win.position.x || y !== win.position.y) updatePosition(win.id, x, y);
+    };
+    keepWindowVisible();
+    globalThis.addEventListener("resize", keepWindowVisible);
+    return () => globalThis.removeEventListener("resize", keepWindowVisible);
+  }, [isMaximized, updatePosition, win.id, win.position.x, win.position.y, win.size.h, win.size.w]);
 
   if (isMinimized) return null;
 
@@ -73,14 +98,14 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           : {
               left: win.position.x,
               top: win.position.y,
-              width: win.size.w,
-              height: win.size.h,
+              width: `min(${win.size.w}px, calc(100% - 16px))`,
+              height: `min(${win.size.h}px, calc(100% - 56px))`,
               zIndex: win.zIndex
             }
       }
       onMouseDown={() => focusWindow(win.id)}
     >
-      {/* Title Bar */}
+      {/* 标题栏负责拖拽窗口，按钮点击会阻止事件冒泡避免触发拖拽。 */}
       <div
         ref={headerRef}
         className="flex items-center justify-between h-9 px-3 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm border-b border-white/20 dark:border-white/10 cursor-move select-none shrink-0"
@@ -90,6 +115,8 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
         <div className="flex items-center gap-1">
           {/* Minimize */}
           <button
+            aria-label={`最小化${win.title}`}
+            title="最小化"
             className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
             onClick={e => {
               e.stopPropagation();
@@ -100,6 +127,8 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           </button>
           {/* Maximize / Restore */}
           <button
+            aria-label={`${isMaximized ? "还原" : "最大化"}${win.title}`}
+            title={isMaximized ? "还原" : "最大化"}
             className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
             onClick={e => {
               e.stopPropagation();
@@ -117,6 +146,8 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           </button>
           {/* Close */}
           <button
+            aria-label={`关闭${win.title}`}
+            title="关闭"
             className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500 hover:text-white transition-colors"
             onClick={e => {
               e.stopPropagation();
@@ -128,7 +159,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
         </div>
       </div>
 
-      {/* Content */}
+      {/* 具体应用内容由父组件传入，窗口只关心外壳能力。 */}
       <div className="flex-1 overflow-auto">{children}</div>
     </div>
   );
