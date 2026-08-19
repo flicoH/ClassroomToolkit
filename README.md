@@ -26,6 +26,33 @@ pnpm dev
 
 - 使用 nestjs+typescript+typeOrm+mysql 开发。
 
+### 数据库迁移
+
+生产和已有数据库禁止开启 TypeORM 自动同步：
+
+```env
+TYPEORM_SYNCHRONIZE=false
+TYPEORM_MIGRATIONS_RUN=false
+```
+
+首次初始化空库使用：
+
+```bash
+pnpm --filter ClassRoomToolkitBackend db:init
+```
+
+已有业务数据首次增加教师隔离字段前，应设置历史数据归属账号，再执行迁移：
+
+```env
+LEGACY_DATA_OWNER_USERNAME=xiaocong
+```
+
+```bash
+pnpm --filter ClassRoomToolkitBackend migration:run
+```
+
+部署流水线应在启动新版本后端前执行 `migration:run`，迁移失败时停止发布。
+
 ## 客户端
 
 - 使用 nextjs+typescript 开发

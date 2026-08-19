@@ -8,33 +8,22 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-19
  */
-import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from "axios";
+import axios, { AxiosError, AxiosResponse } from "axios";
 import { cookieStorage } from "./cookie";
 import toast from "react-hot-toast";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-
 const request = axios.create({
-  baseURL: BASE_URL,
+  // 认证 token 只存在于 HttpOnly Cookie，浏览器请求必须经过同源 Next BFF。
+  baseURL: "",
   timeout: 10000,
   headers: {
     "Content-Type": "application/json"
   }
 });
 
-// 请求拦截器：从 cookie 注入 token，后端接口统一通过 Authorization 识别用户。
-request.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    const token = cookieStorage.getToken();
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error: AxiosError) => {
-    return Promise.reject(error);
-  }
-);
+function isAuthSubmitUrl(url = "") {
+  return url.includes("/api/login") || url.includes("/api/register");
+}
 
 // 响应拦截器：业务层直接拿 response.data，错误提示也在这里集中处理。
 request.interceptors.response.use(
@@ -47,8 +36,14 @@ request.interceptors.response.use(
 
     switch (status) {
       case 401:
+        // 登录页提交账号密码失败时，只把错误交给表单提示，不做页面跳转。
+        if (isAuthSubmitUrl(error.config?.url)) {
+          return Promise.reject(new Error(message));
+        }
         toast.error("登录已过期，请重新登录");
+        void fetch("/api/logout", { method: "POST", keepalive: true });
         cookieStorage.clearAll();
+        localStorage.removeItem("auth-storage");
         window.location.href = "/login";
         break;
       case 403:
@@ -61,6 +56,9 @@ request.interceptors.response.use(
         toast.error("服务器内部错误");
         break;
       default:
+        if (isAuthSubmitUrl(error.config?.url)) {
+          return Promise.reject(new Error(message));
+        }
         toast.error(message);
     }
 

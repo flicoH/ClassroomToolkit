@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUp,
   BarChart3,
@@ -40,10 +40,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 type PetFamily = "图鉴" | "萌芽系" | "焰岩系" | "潮汐系" | "星辉系";
 type PetStage = "初始形态" | "成长形态" | "进阶形态" | "终极形态";
+type ClassName = string;
 
 interface PetOption {
   id: string;
@@ -59,6 +61,8 @@ interface StudentPet {
   id: string;
   name: string;
   studentNo: string;
+  classId: string;
+  className: ClassName;
   group: string;
   score: number;
   maxScore: number;
@@ -114,7 +118,40 @@ type SortMode = "分数降序" | "分数升序" | "姓名排序" | "学号排序
 type SettingsPanel = "指标配置" | "奖品配置" | "等级规则" | "宠物统计" | "最近评分" | "积分统计";
 type ScoreAdjustMode = "add" | "subtract";
 
-const storageKey = "classroom-toolkit:pet-points:v3";
+interface PetPointStudentFilters {
+  classId: string;
+  groupFilter: string;
+  query: string;
+  sortMode: SortMode;
+}
+
+interface ClassroomStudent {
+  id: string;
+  name: string;
+  studentNo: string;
+  group?: string;
+}
+
+interface Classroom {
+  id: string;
+  name: string;
+  students: ClassroomStudent[];
+  groups: string[];
+}
+
+interface PetPointsOverview {
+  students: StudentPet[];
+  rubrics: RubricItem[];
+  rewards: RewardItem[];
+  records: EvaluationRecord[];
+  redemptions: RedemptionRecord[];
+}
+
+const fallbackClassrooms: Classroom[] = [
+  { id: "grade-1", name: "一年级", groups: ["一组", "二组", "三组"], students: [] },
+  { id: "grade-2", name: "二年级", groups: ["一组", "二组"], students: [] },
+  { id: "grade-3", name: "三年级", groups: ["一组"], students: [] }
+];
 const evaluationCategories: EvaluationCategory[] = ["课堂表现", "作业情况", "品德修养", "纪律常规"];
 
 const initialRubrics: RubricItem[] = [
@@ -303,6 +340,8 @@ const initialStudents: StudentPet[] = [
     id: "2026002",
     name: "周杰伦",
     studentNo: "2026002",
+    classId: "grade-1",
+    className: "一年级",
     group: "一组",
     score: 10,
     maxScore: maxEvolutionScore,
@@ -318,6 +357,8 @@ const initialStudents: StudentPet[] = [
     id: "2026001",
     name: "林俊杰",
     studentNo: "2026001",
+    classId: "grade-1",
+    className: "一年级",
     group: "二组",
     score: 6,
     maxScore: maxEvolutionScore,
@@ -333,8 +374,61 @@ const initialStudents: StudentPet[] = [
     id: "2026003",
     name: "陈奕迅",
     studentNo: "2026003",
+    classId: "grade-1",
+    className: "一年级",
     group: "三组",
     score: 6,
+    maxScore: maxEvolutionScore,
+    trophies: 0,
+    level: 1,
+    stage: "初始形态",
+    petProgress: 0,
+    petHatched: false,
+    absent: false,
+    completedPets: 0
+  },
+  {
+    id: "2027001",
+    name: "王力宏",
+    studentNo: "2027001",
+    classId: "grade-2",
+    className: "二年级",
+    group: "一组",
+    score: 8,
+    maxScore: maxEvolutionScore,
+    trophies: 0,
+    level: 1,
+    stage: "初始形态",
+    petProgress: 0,
+    petHatched: false,
+    absent: false,
+    completedPets: 0
+  },
+  {
+    id: "2027002",
+    name: "孙燕姿",
+    studentNo: "2027002",
+    classId: "grade-2",
+    className: "二年级",
+    group: "二组",
+    score: 12,
+    maxScore: maxEvolutionScore,
+    trophies: 1,
+    level: 1,
+    stage: "初始形态",
+    petProgress: 0,
+    petHatched: false,
+    absent: false,
+    completedPets: 0
+  },
+  {
+    id: "2028001",
+    name: "梁静茹",
+    studentNo: "2028001",
+    classId: "grade-3",
+    className: "三年级",
+    group: "一组",
+    score: 9,
     maxScore: maxEvolutionScore,
     trophies: 0,
     level: 1,
@@ -464,12 +558,74 @@ function StatTile({ label, value }: { label: string; value: number }) {
   );
 }
 
-function createRecordId() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function normalizeClassName(value: unknown): ClassName {
+  return typeof value === "string" && value.trim() ? value.trim() : "一年级";
+}
+
+function normalizeClassId(value: unknown, className: ClassName): string {
+  return typeof value === "string" && value.trim() ? value.trim() : className;
+}
+
+function normalizeStudent(student: StudentPet): StudentPet {
+  const petProgress = student.petProgress ?? (student.petId ? student.score : 0);
+  const petHatched = student.petHatched ?? Boolean(student.petId);
+  const evolutionIndex = getPetEvolutionIndex(petProgress);
+  return {
+    ...student,
+    className: normalizeClassName(student.className),
+    classId: normalizeClassId(student.classId, normalizeClassName(student.className)),
+    petProgress,
+    petHatched,
+    level: petHatched ? evolutionIndex + 1 : 1,
+    stage: petHatched ? evolutionStages[evolutionIndex]! : "初始形态",
+    absent: Boolean(student.absent),
+    completedPets: student.completedPets ?? 0
+  };
+}
+
+function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): StudentPet {
+  return {
+    id: student.id,
+    name: student.name,
+    studentNo: student.studentNo,
+    classId: classroom.id,
+    className: classroom.name,
+    group: student.group || "未分组",
+    score: 0,
+    maxScore: maxEvolutionScore,
+    trophies: 0,
+    level: 1,
+    stage: "初始形态",
+    petProgress: 0,
+    petHatched: false,
+    absent: false,
+    completedPets: 0
+  };
+}
+
+function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroom) {
+  const currentById = new Map(currentStudents.map(student => [student.id, student]));
+  const nextClassStudents = classroom.students.map(student => {
+    const apiStudent = toPetPointStudent(classroom, student);
+    const currentStudent = currentById.get(apiStudent.id);
+    return currentStudent
+      ? normalizeStudent({
+          ...currentStudent,
+          name: apiStudent.name,
+          studentNo: apiStudent.studentNo,
+          classId: apiStudent.classId,
+          className: apiStudent.className,
+          group: apiStudent.group
+        })
+      : apiStudent;
+  });
+  return [...currentStudents.filter(student => student.classId !== classroom.id), ...nextClassStudents];
 }
 
 export function PetPoints() {
   const [students, setStudents] = useState<StudentPet[]>(initialStudents);
+  const [classrooms, setClassrooms] = useState<Classroom[]>(fallbackClassrooms);
+  const [activeClassId, setActiveClassId] = useState(fallbackClassrooms[0]?.id ?? "grade-1");
   const [records, setRecords] = useState<EvaluationRecord[]>([]);
   const [rubrics, setRubrics] = useState<RubricItem[]>(initialRubrics);
   const [rewards, setRewards] = useState<RewardItem[]>(initialRewards);
@@ -478,6 +634,9 @@ export function PetPoints() {
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState("全部分组");
   const [sortMode, setSortMode] = useState<SortMode>("分数降序");
+  const [studentDataLoading, setStudentDataLoading] = useState(false);
+  const [studentDataError, setStudentDataError] = useState("");
+  const studentRequestIdRef = useRef(0);
   const [activeFamily, setActiveFamily] = useState<PetFamily>("图鉴");
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [selectedPetId, setSelectedPetId] = useState<string | null>(null);
@@ -516,53 +675,8 @@ export function PetPoints() {
   } | null>(null);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        const saved = window.localStorage.getItem(storageKey);
-        if (saved) {
-          const parsed = JSON.parse(saved) as {
-            students?: StudentPet[];
-            records?: EvaluationRecord[];
-            rubrics?: RubricItem[];
-            rewards?: RewardItem[];
-            redemptions?: RedemptionRecord[];
-          };
-          if (Array.isArray(parsed.students)) {
-            setStudents(
-              parsed.students.map(student => {
-                const petProgress = student.petProgress ?? (student.petId ? student.score : 0);
-                const petHatched = student.petHatched ?? Boolean(student.petId);
-                const evolutionIndex = getPetEvolutionIndex(petProgress);
-                return {
-                  ...student,
-                  petProgress,
-                  petHatched,
-                  level: petHatched ? evolutionIndex + 1 : 1,
-                  stage: petHatched ? evolutionStages[evolutionIndex]! : "初始形态",
-                  absent: Boolean(student.absent),
-                  completedPets: student.completedPets ?? 0
-                };
-              })
-            );
-          }
-          if (Array.isArray(parsed.records)) setRecords(parsed.records);
-          if (Array.isArray(parsed.rubrics)) setRubrics(parsed.rubrics);
-          if (Array.isArray(parsed.rewards)) setRewards(parsed.rewards);
-          if (Array.isArray(parsed.redemptions)) setRedemptions(parsed.redemptions);
-        }
-      } catch {
-        window.localStorage.removeItem(storageKey);
-      } finally {
-        setHydrated(true);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
+    setHydrated(true);
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(storageKey, JSON.stringify({ students, records, rubrics, rewards, redemptions }));
-  }, [hydrated, records, redemptions, rewards, rubrics, students]);
 
   useEffect(() => {
     if (!notice) return;
@@ -576,9 +690,112 @@ export function PetPoints() {
     return () => window.clearTimeout(timer);
   }, [petEffects]);
 
+  const activeClass = useMemo(
+    () => classrooms.find(classroom => classroom.id === activeClassId) ?? classrooms[0] ?? fallbackClassrooms[0]!,
+    [activeClassId, classrooms]
+  );
+
+  const loadPetPointsOverview = useCallback(async () => {
+    const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points");
+    setStudents(overview.students.map(normalizeStudent));
+    setRubrics(overview.rubrics);
+    setRewards(overview.rewards);
+    setRecords(overview.records);
+    setRedemptions(overview.redemptions);
+  }, []);
+
+  const requestClassroomStudents = useCallback(
+    async (filters: PetPointStudentFilters) => {
+      const requestId = studentRequestIdRef.current + 1;
+      studentRequestIdRef.current = requestId;
+      setStudentDataLoading(true);
+      setStudentDataError("");
+      try {
+        const params = new URLSearchParams({
+          group: filters.groupFilter,
+          query: filters.query,
+          sort: filters.sortMode
+        });
+        const classroom = await request<Classroom, Classroom>(`/api/classes/${filters.classId}?${params.toString()}`);
+        await request<StudentPet[], StudentPet[]>({
+          url: "/api/pet-points/students/sync",
+          method: "POST",
+          data: {
+            classId: classroom.id,
+            className: classroom.name,
+            students: classroom.students
+          }
+        });
+        await loadPetPointsOverview();
+        if (studentRequestIdRef.current !== requestId) return;
+        setClassrooms(current =>
+          current.some(item => item.id === classroom.id)
+            ? current.map(item => (item.id === classroom.id ? classroom : item))
+            : [...current, classroom]
+        );
+      } catch {
+        if (studentRequestIdRef.current === requestId) {
+          setStudentDataError("学生数据接口获取失败，请检查后端服务");
+        }
+      } finally {
+        if (studentRequestIdRef.current === requestId) setStudentDataLoading(false);
+      }
+    },
+    [loadPetPointsOverview]
+  );
+
+  const requestClassrooms = useCallback(async () => {
+    setStudentDataLoading(true);
+    setStudentDataError("");
+    try {
+      const data = await request<Classroom[], Classroom[]>("/api/classes");
+      const nextClassrooms = data.length ? data : fallbackClassrooms;
+      const nextActiveClass = nextClassrooms[0]!;
+      setClassrooms(nextClassrooms);
+      setActiveClassId(nextActiveClass.id);
+      setStudents(current =>
+        nextClassrooms.reduce((nextStudents, classroom) => replaceClassStudents(nextStudents, classroom), current)
+      );
+      await requestClassroomStudents({
+        classId: nextActiveClass.id,
+        groupFilter: "全部分组",
+        query: "",
+        sortMode: "分数降序"
+      });
+    } catch {
+      setStudentDataError("班级数据接口获取失败，请检查后端服务");
+    } finally {
+      setStudentDataLoading(false);
+    }
+  }, [requestClassroomStudents]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    requestClassrooms();
+  }, [hydrated, requestClassrooms]);
+
+  const classStudents = useMemo(
+    () => students.filter(student => student.classId === activeClass.id),
+    [activeClass.id, students]
+  );
+
+  const groupOptions = useMemo(
+    () => [
+      "全部分组",
+      ...Array.from(new Set([...(activeClass.groups ?? []), ...classStudents.map(student => student.group)]))
+    ],
+    [activeClass.groups, classStudents]
+  );
+
+  const classStudentIds = useMemo(() => new Set(classStudents.map(student => student.id)), [classStudents]);
+  const classRecords = useMemo(
+    () => records.filter(record => classStudentIds.has(record.studentId)),
+    [classStudentIds, records]
+  );
+
   const filteredStudents = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    const result = students.filter(student => {
+    const result = classStudents.filter(student => {
       const matchesQuery =
         !normalized || student.name.toLowerCase().includes(normalized) || student.studentNo.includes(normalized);
       const matchesGroup = groupFilter === "全部分组" || student.group === groupFilter;
@@ -590,13 +807,13 @@ export function PetPoints() {
       if (sortMode === "学号排序") return a.studentNo.localeCompare(b.studentNo);
       return b.score - a.score;
     });
-  }, [groupFilter, query, sortMode, students]);
+  }, [classStudents, groupFilter, query, sortMode]);
 
   const selectedStudent = students.find(student => student.id === selectedStudentId);
   const historyStudent = students.find(student => student.id === historyStudentId);
   const recordStudent = students.find(student => student.id === recordStudentId);
   const scoreAdjustStudent = students.find(student => student.id === scoreAdjustStudentId);
-  const rewardStudent = students.find(student => student.id === rewardStudentId) ?? students[0];
+  const rewardStudent = classStudents.find(student => student.id === rewardStudentId) ?? classStudents[0];
   const filteredPets = petOptions.filter(pet => activeFamily === "图鉴" || pet.family === activeFamily);
   const selectedPet = petOptions.find(pet => pet.id === selectedPetId);
   const enabledCategoryRubrics = rubrics.filter(item => item.enabled && item.category === activeCategory);
@@ -606,19 +823,57 @@ export function PetPoints() {
   );
   const availableRewards = rewards.filter(item => item.enabled);
   const evaluationTotal = selectedRubrics.reduce((sum, item) => sum + item.score, 0);
-  const totalScore = students.reduce((sum, student) => sum + student.score, 0);
-  const averageScore = students.length ? Math.round((totalScore / students.length) * 10) / 10 : 0;
-  const hatchedCount = students.filter(student => student.petId && student.petHatched).length;
+  const totalScore = classStudents.reduce((sum, student) => sum + student.score, 0);
+  const averageScore = classStudents.length ? Math.round((totalScore / classStudents.length) * 10) / 10 : 0;
+  const hatchedCount = classStudents.filter(student => student.petId && student.petHatched).length;
 
-  const getPetTransition = (oldProgress: number, newProgress: number) => {
-    const oldPhase = getPetPhase(oldProgress);
-    const newPhase = getPetPhase(newProgress);
-    if (oldPhase < 0 && newPhase >= 0) return "hatch" as const;
-    if (newPhase > oldPhase) return "evolve" as const;
-    return null;
+  const requestActiveClassStudents = (nextFilters: Partial<PetPointStudentFilters>) => {
+    const filters = {
+      classId: activeClass.id,
+      groupFilter,
+      query,
+      sortMode,
+      ...nextFilters
+    };
+    requestClassroomStudents(filters);
   };
 
-  const updateStudentScore = (
+  const switchClass = (classId: string) => {
+    const nextClass = classrooms.find(classroom => classroom.id === classId);
+    if (!nextClass) return;
+    setActiveClassId(classId);
+    setQuery("");
+    setGroupFilter("全部分组");
+    setSelectedStudentIds([]);
+    setBatchMode(false);
+    setEvaluationMode(null);
+    setRewardStudentId("");
+    requestClassroomStudents({
+      classId: nextClass.id,
+      groupFilter: "全部分组",
+      query: "",
+      sortMode
+    });
+  };
+
+  const switchGroup = (nextGroup: string) => {
+    setGroupFilter(nextGroup);
+    setSelectedStudentIds([]);
+    requestActiveClassStudents({ groupFilter: nextGroup });
+  };
+
+  const switchSortMode = (nextSortMode: SortMode) => {
+    setSortMode(nextSortMode);
+    requestActiveClassStudents({ sortMode: nextSortMode });
+  };
+
+  const switchQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setSelectedStudentIds([]);
+    requestActiveClassStudents({ query: nextQuery });
+  };
+
+  const updateStudentScore = async (
     studentId: string,
     delta: number,
     label = delta > 0 ? "手动加分" : "手动扣分",
@@ -626,45 +881,12 @@ export function PetPoints() {
   ) => {
     const student = students.find(item => item.id === studentId);
     if (!student) return;
-    const nextScore = Math.max(0, Math.min(student.maxScore, student.score + delta));
-    const actualDelta = nextScore - student.score;
-    const nextPetProgress = student.petId
-      ? Math.max(0, Math.min(maxEvolutionScore, student.petProgress + delta))
-      : student.petProgress;
-    const petDelta = nextPetProgress - student.petProgress;
-    if (!actualDelta && !petDelta) return;
-    const petEvolutionIndex = getPetEvolutionIndex(nextPetProgress);
-    const genericEvolutionIndex = getEvolutionIndex(nextScore);
-    const petHatched = Boolean(student.petId) && nextPetProgress >= hatchThreshold;
-    const effect = student.petId ? getPetTransition(student.petProgress, nextPetProgress) : null;
-    setStudents(current =>
-      current.map(item =>
-        item.id === studentId
-          ? {
-              ...item,
-              score: nextScore,
-              petProgress: nextPetProgress,
-              petHatched,
-              level: student.petId ? petEvolutionIndex + 1 : genericEvolutionIndex + 1,
-              stage: student.petId ? evolutionStages[petEvolutionIndex]! : evolutionStages[genericEvolutionIndex]!
-            }
-          : item
-      )
-    );
-    if (effect) setPetEffects(current => ({ ...current, [studentId]: effect }));
-    setRecords(current => [
-      {
-        id: createRecordId(),
-        studentId,
-        category: "手动调整",
-        label,
-        delta: actualDelta,
-        petDelta,
-        note,
-        createdAt: new Date().toISOString()
-      },
-      ...current
-    ]);
+    await request<StudentPet[], StudentPet[]>({
+      url: "/api/pet-points/scores/adjust",
+      method: "POST",
+      data: { studentIds: [studentId], delta, label, category: "手动调整", note }
+    });
+    await loadPetPointsOverview();
   };
 
   const openScoreAdjust = (studentId: string, mode: ScoreAdjustMode) => {
@@ -686,7 +908,7 @@ export function PetPoints() {
     if (!scoreAdjustStudent) return;
     const normalizedValue = Math.max(1, Math.min(maxEvolutionScore, Math.round(Math.abs(value))));
     const delta = scoreAdjustMode === "add" ? normalizedValue : -normalizedValue;
-    updateStudentScore(
+    void updateStudentScore(
       scoreAdjustStudent.id,
       delta,
       reason.trim() || (delta > 0 ? "手动加分" : "手动扣分"),
@@ -695,124 +917,73 @@ export function PetPoints() {
     closeScoreAdjust();
   };
 
-  const addRubric = () => {
+  const addRubric = async () => {
     const label = newRubricLabel.trim();
     if (!label) return;
-    setRubrics(current => [
-      {
-        id: `custom-rubric-${createRecordId()}`,
+    await request<RubricItem, RubricItem>({
+      url: "/api/pet-points/rubrics",
+      method: "POST",
+      data: {
         category: newRubricCategory,
         label,
-        score: Math.max(-10, Math.min(10, Math.round(newRubricScore))),
-        enabled: true
-      },
-      ...current
-    ]);
+        score: Math.max(-10, Math.min(10, Math.round(newRubricScore)))
+      }
+    });
+    await loadPetPointsOverview();
     setNewRubricLabel("");
     setNewRubricScore(1);
   };
 
-  const addReward = () => {
+  const addReward = async () => {
     const name = newRewardName.trim();
     if (!name) return;
-    setRewards(current => [
-      {
-        id: `custom-reward-${createRecordId()}`,
+    await request<RewardItem, RewardItem>({
+      url: "/api/pet-points/rewards",
+      method: "POST",
+      data: {
         name,
         cost: Math.max(1, Math.round(newRewardCost)),
-        stock: Math.max(0, Math.round(newRewardStock)),
-        enabled: true
-      },
-      ...current
-    ]);
+        stock: Math.max(0, Math.round(newRewardStock))
+      }
+    });
+    await loadPetPointsOverview();
     setNewRewardName("");
     setNewRewardCost(5);
     setNewRewardStock(1);
   };
 
-  const redeemReward = (reward: RewardItem) => {
+  const redeemReward = async (reward: RewardItem) => {
     if (!rewardStudent || reward.stock <= 0 || rewardStudent.score < reward.cost) return;
-    setStudents(current =>
-      current.map(student =>
-        student.id === rewardStudent.id ? { ...student, score: Math.max(0, student.score - reward.cost) } : student
-      )
-    );
-    setRewards(current =>
-      current.map(item => (item.id === reward.id ? { ...item, stock: Math.max(0, item.stock - 1) } : item))
-    );
-    setRedemptions(current => [
-      {
-        id: createRecordId(),
+    await request<RedemptionRecord, RedemptionRecord>({
+      url: "/api/pet-points/rewards/redeem",
+      method: "POST",
+      data: {
         studentId: rewardStudent.id,
-        rewardName: reward.name,
-        cost: reward.cost,
-        createdAt: new Date().toISOString()
-      },
-      ...current
-    ]);
-    setRecords(current => [
-      {
-        id: createRecordId(),
-        studentId: rewardStudent.id,
-        category: "手动调整",
-        label: `兑换${reward.name}`,
-        delta: -reward.cost,
-        petDelta: 0,
-        note: "奖品兑换",
-        createdAt: new Date().toISOString()
-      },
-      ...current
-    ]);
+        rewardId: reward.id
+      }
+    });
+    await loadPetPointsOverview();
     setNotice(`${rewardStudent.name} 已兑换 ${reward.name}`);
   };
 
-  const applyEvaluation = () => {
+  const applyEvaluation = async () => {
     if (!selectedStudentIds.length || !selectedRubrics.length) return;
-    const targetIds = new Set(selectedStudentIds);
-    const nextRecords: EvaluationRecord[] = [];
-    const nextEffects: Record<string, "hatch" | "evolve"> = {};
-    const nextStudents = students.map(student => {
-      if (!targetIds.has(student.id)) return student;
-      let runningScore = student.score;
-      let runningPetProgress = student.petProgress;
-      selectedRubrics.forEach(item => {
-        const nextScore = Math.max(0, Math.min(student.maxScore, runningScore + item.score));
-        const actualDelta = nextScore - runningScore;
-        runningScore = nextScore;
-        const nextPetProgress = student.petId
-          ? Math.max(0, Math.min(maxEvolutionScore, runningPetProgress + item.score))
-          : runningPetProgress;
-        const petDelta = nextPetProgress - runningPetProgress;
-        runningPetProgress = nextPetProgress;
-        if (actualDelta || petDelta) {
-          nextRecords.push({
-            id: createRecordId(),
-            studentId: student.id,
-            category: item.category,
+    await Promise.all(
+      selectedRubrics.map(item =>
+        request<StudentPet[], StudentPet[]>({
+          url: "/api/pet-points/scores/adjust",
+          method: "POST",
+          data: {
+            studentIds: selectedStudentIds,
+            delta: item.score,
             label: item.label,
-            delta: actualDelta,
-            petDelta,
-            note: evaluationNote.trim(),
-            createdAt: new Date().toISOString()
-          });
-        }
-      });
-      const effect = student.petId ? getPetTransition(student.petProgress, runningPetProgress) : null;
-      if (effect) nextEffects[student.id] = effect;
-      const petEvolutionIndex = getPetEvolutionIndex(runningPetProgress);
-      const genericEvolutionIndex = getEvolutionIndex(runningScore);
-      return {
-        ...student,
-        score: runningScore,
-        petProgress: runningPetProgress,
-        petHatched: Boolean(student.petId) && runningPetProgress >= hatchThreshold,
-        level: student.petId ? petEvolutionIndex + 1 : genericEvolutionIndex + 1,
-        stage: student.petId ? evolutionStages[petEvolutionIndex]! : evolutionStages[genericEvolutionIndex]!
-      };
-    });
-    setStudents(nextStudents);
-    if (Object.keys(nextEffects).length) setPetEffects(nextEffects);
-    setRecords(current => [...nextRecords.reverse(), ...current]);
+            category: item.category,
+            note: evaluationNote.trim()
+          }
+        })
+      )
+    );
+    await loadPetPointsOverview();
     setNotice(`已为 ${selectedStudentIds.length} 名学生完成评分`);
     setEvaluationMode(null);
     setSelectedRubricIds([]);
@@ -821,25 +992,12 @@ export function PetPoints() {
     setBatchMode(false);
   };
 
-  const removeRecord = (record: EvaluationRecord) => {
-    setStudents(current =>
-      current.map(student => {
-        if (student.id !== record.studentId) return student;
-        const nextScore = Math.max(0, Math.min(student.maxScore, student.score - record.delta));
-        const nextPetProgress = Math.max(0, Math.min(maxEvolutionScore, student.petProgress - (record.petDelta ?? 0)));
-        const petEvolutionIndex = getPetEvolutionIndex(nextPetProgress);
-        const genericEvolutionIndex = getEvolutionIndex(nextScore);
-        return {
-          ...student,
-          score: nextScore,
-          petProgress: nextPetProgress,
-          petHatched: Boolean(student.petId) && nextPetProgress >= hatchThreshold,
-          level: student.petId ? petEvolutionIndex + 1 : genericEvolutionIndex + 1,
-          stage: student.petId ? evolutionStages[petEvolutionIndex]! : evolutionStages[genericEvolutionIndex]!
-        };
-      })
-    );
-    setRecords(current => current.filter(item => item.id !== record.id));
+  const removeRecord = async (record: EvaluationRecord) => {
+    await request<{ deleted: boolean }, { deleted: boolean }>({
+      url: `/api/pet-points/records/${record.id}`,
+      method: "DELETE"
+    });
+    await loadPetPointsOverview();
     setNotice("评价记录已删除，积分与成长能量已同步回退");
   };
 
@@ -884,24 +1042,15 @@ export function PetPoints() {
     setPetNickname("");
   };
 
-  const confirmPet = () => {
+  const confirmPet = async () => {
     if (!selectedStudent || !selectedPet) return;
     const nickname = petNickname.trim() || selectedPet.name;
-    setStudents(current =>
-      current.map(student =>
-        student.id === selectedStudent.id
-          ? {
-              ...student,
-              petId: selectedPet.id,
-              petName: nickname,
-              petProgress: 0,
-              petHatched: false,
-              level: 1,
-              stage: "初始形态"
-            }
-          : student
-      )
-    );
+    await request<StudentPet, StudentPet>({
+      url: `/api/pet-points/students/${selectedStudent.id}/pet`,
+      method: "PATCH",
+      data: { petId: selectedPet.id, petName: nickname }
+    });
+    await loadPetPointsOverview();
     closePetPicker();
   };
 
@@ -1004,19 +1153,38 @@ export function PetPoints() {
           <PawPrint className="h-5 w-5 text-pink-500" />
           <h2 className="text-lg font-black">宠物积分</h2>
         </div>
-        <button className="flex items-center gap-2 rounded-xl px-3 py-2 text-xl font-black hover:bg-slate-50">
+        <label className="flex h-11 items-center gap-2 rounded-xl bg-slate-50 px-3 text-xl font-black hover:bg-slate-100">
           <span className="h-8 w-1.5 rounded-full bg-orange-500" />
-          一年级
-        </button>
+          <select
+            value={activeClass.id}
+            onChange={event => switchClass(event.target.value)}
+            className="appearance-none bg-transparent pr-5 outline-none"
+            aria-label="切换班级"
+          >
+            {classrooms.map(classroom => (
+              <option key={classroom.id} value={classroom.id}>
+                {classroom.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="relative h-11 min-w-[210px] flex-1 xl:max-w-[340px]">
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <Input
             value={query}
-            onChange={event => setQuery(event.target.value)}
+            onChange={event => switchQuery(event.target.value)}
             placeholder="姓名、拼音、学号"
             className="h-11 rounded-xl border-0 bg-slate-100 pl-12 text-base font-semibold shadow-none"
           />
         </div>
+        {studentDataLoading && (
+          <Badge className="border border-sky-100 bg-sky-50 px-3 py-2 text-sky-600 shadow-none">接口加载中</Badge>
+        )}
+        {studentDataError && (
+          <Badge className="border border-rose-100 bg-rose-50 px-3 py-2 text-rose-600 shadow-none">
+            {studentDataError}
+          </Badge>
+        )}
         {batchMode ? (
           <>
             <span className="rounded-xl bg-orange-50 px-4 py-3 text-sm font-black text-orange-600">
@@ -1055,11 +1223,11 @@ export function PetPoints() {
               <Users className="absolute left-4 h-5 w-5 text-slate-500" />
               <select
                 value={groupFilter}
-                onChange={event => setGroupFilter(event.target.value)}
+                onChange={event => switchGroup(event.target.value)}
                 className="appearance-none bg-transparent pr-5 outline-none"
                 aria-label="筛选分组"
               >
-                {["全部分组", "一组", "二组", "三组"].map(group => (
+                {groupOptions.map(group => (
                   <option key={group}>{group}</option>
                 ))}
               </select>
@@ -1068,7 +1236,7 @@ export function PetPoints() {
               <ArrowDownUp className="absolute left-4 h-5 w-5 text-slate-500" />
               <select
                 value={sortMode}
-                onChange={event => setSortMode(event.target.value as SortMode)}
+                onChange={event => switchSortMode(event.target.value as SortMode)}
                 className="appearance-none bg-transparent pr-5 outline-none"
                 aria-label="排序方式"
               >
@@ -1090,7 +1258,7 @@ export function PetPoints() {
               className="h-11 rounded-xl bg-amber-100 px-4 font-bold text-amber-700 hover:bg-amber-200"
               onClick={() => {
                 setRewardStoreOpen(true);
-                setRewardStudentId(students[0]?.id ?? "");
+                setRewardStudentId(classStudents[0]?.id ?? "");
               }}
             >
               <Gift className="h-5 w-5" />
@@ -1146,23 +1314,17 @@ export function PetPoints() {
                     onClick={() => {
                       setSettingsOpen(false);
                       setConfirmAction({
-                        title: "重置宠物积分数据",
-                        description: "学生积分、宠物、评价记录、奖品和指标配置都会恢复为初始状态。",
-                        confirmLabel: "确认重置",
+                        title: "刷新宠物积分数据",
+                        description: "将重新从后端读取学生积分、宠物、评价记录、奖品和指标配置。",
+                        confirmLabel: "确认刷新",
                         onConfirm: () => {
-                          setStudents(initialStudents);
-                          setRecords([]);
-                          setRubrics(initialRubrics);
-                          setRewards(initialRewards);
-                          setRedemptions([]);
-                          window.localStorage.removeItem(storageKey);
-                          setNotice("本地数据已重置");
+                          void loadPetPointsOverview().then(() => setNotice("后端数据已刷新"));
                         }
                       });
                     }}
-                    className="rounded-lg px-3 py-2 text-left text-sm font-bold text-rose-500 hover:bg-rose-50"
+                    className="rounded-lg px-3 py-2 text-left text-sm font-bold text-sky-600 hover:bg-sky-50"
                   >
-                    重置本地数据
+                    刷新后端数据
                   </button>
                 </div>
               )}
@@ -1393,7 +1555,7 @@ export function PetPoints() {
                 </span>
               </p>
               <Button
-                onClick={applyEvaluation}
+                onClick={() => void applyEvaluation()}
                 disabled={!selectedRubrics.length}
                 className="h-11 rounded-xl bg-orange-500 px-6 font-black text-white hover:bg-orange-600"
               >
@@ -1441,16 +1603,18 @@ export function PetPoints() {
                   <button
                     onClick={() =>
                       setSelectedStudentIds(
-                        selectedStudentIds.length === students.length ? [] : students.map(student => student.id)
+                        selectedStudentIds.length === classStudents.length
+                          ? []
+                          : classStudents.map(student => student.id)
                       )
                     }
                     className="text-sm font-black text-orange-600"
                   >
-                    {selectedStudentIds.length === students.length ? "取消全选" : "全选"}
+                    {selectedStudentIds.length === classStudents.length ? "取消全选" : "全选"}
                   </button>
                 </div>
                 <div className="mt-4 grid gap-2">
-                  {students.map(student => {
+                  {classStudents.map(student => {
                     const selected = selectedStudentIds.includes(student.id);
                     return (
                       <button
@@ -1497,7 +1661,7 @@ export function PetPoints() {
                 </span>
               </p>
               <Button
-                onClick={applyEvaluation}
+                onClick={() => void applyEvaluation()}
                 disabled={!selectedStudentIds.length || !selectedRubrics.length}
                 className="h-11 rounded-xl bg-slate-950 px-7 font-black text-white hover:bg-slate-800"
               >
@@ -1736,7 +1900,7 @@ export function PetPoints() {
                       className="mt-5 h-11 rounded-xl border-0 bg-slate-100 px-4 font-semibold shadow-none"
                     />
                     <Button
-                      onClick={confirmPet}
+                      onClick={() => void confirmPet()}
                       className="mt-4 h-12 rounded-xl bg-slate-950 text-base font-black text-white hover:bg-slate-800"
                     >
                       确认选择宠物蛋
@@ -1932,7 +2096,7 @@ export function PetPoints() {
           <section className="max-h-[84vh] w-full max-w-[900px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-black">一年级学期成长报告</h3>
+                <h3 className="text-xl font-black">{activeClass.name}学期成长报告</h3>
                 <p className="text-sm font-semibold text-slate-400">积分、评价与宠物养成概览</p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setReportOpen(false)} aria-label="关闭学期报告">
@@ -1943,7 +2107,7 @@ export function PetPoints() {
               {[
                 { label: "班级总积分", value: totalScore, icon: BarChart3 },
                 { label: "人均积分", value: averageScore, icon: Sparkles },
-                { label: "评价次数", value: records.length, icon: ClipboardList },
+                { label: "评价次数", value: classRecords.length, icon: ClipboardList },
                 { label: "已孵化宠物", value: hatchedCount, icon: PawPrint }
               ].map(item => (
                 <div key={item.label} className="rounded-xl bg-slate-50 p-4">
@@ -1957,7 +2121,7 @@ export function PetPoints() {
               <div>
                 <h4 className="font-black">积分排行</h4>
                 <div className="mt-3 grid gap-2">
-                  {[...students]
+                  {[...classStudents]
                     .sort((a, b) => b.score - a.score)
                     .map((student, index) => (
                       <div key={student.id} className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
@@ -1982,7 +2146,7 @@ export function PetPoints() {
                 <h4 className="font-black">评价分类统计</h4>
                 <div className="mt-3 grid gap-3">
                   {evaluationCategories.map(category => {
-                    const categoryRecords = records.filter(record => record.category === category);
+                    const categoryRecords = classRecords.filter(record => record.category === category);
                     const categoryScore = categoryRecords.reduce((sum, record) => sum + record.delta, 0);
                     return (
                       <div key={category} className="rounded-xl border border-slate-100 p-4">
@@ -1994,7 +2158,7 @@ export function PetPoints() {
                           <div
                             className="h-full rounded-full bg-orange-400"
                             style={{
-                              width: `${records.length ? Math.max(8, (categoryRecords.length / records.length) * 100) : 0}%`
+                              width: `${classRecords.length ? Math.max(8, (categoryRecords.length / classRecords.length) * 100) : 0}%`
                             }}
                           />
                         </div>
@@ -2109,10 +2273,10 @@ export function PetPoints() {
               <div className="mt-5">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <StatTile label="已孵化" value={hatchedCount} />
-                  <StatTile label="待孵化" value={students.length - hatchedCount} />
+                  <StatTile label="待孵化" value={classStudents.length - hatchedCount} />
                   <StatTile
                     label="终极形态"
-                    value={students.filter(student => student.petHatched && student.level === 4).length}
+                    value={classStudents.filter(student => student.petHatched && student.level === 4).length}
                   />
                 </div>
                 <div className="mt-5 grid gap-2">
@@ -2126,7 +2290,7 @@ export function PetPoints() {
                         </span>
                         <strong>
                           {
-                            students.filter(
+                            classStudents.filter(
                               student => petOptions.find(pet => pet.id === student.petId)?.family === family
                             ).length
                           }{" "}
@@ -2139,7 +2303,7 @@ export function PetPoints() {
             )}
             {settingsPanel === "最近评分" && (
               <div className="mt-5 grid gap-3">
-                {records.slice(0, 10).map(record => {
+                {classRecords.slice(0, 10).map(record => {
                   const student = students.find(item => item.id === record.studentId);
                   const displayDelta = record.delta || record.petDelta || 0;
                   return (
@@ -2155,7 +2319,7 @@ export function PetPoints() {
                     </div>
                   );
                 })}
-                {!records.length && <p className="py-16 text-center font-bold text-slate-400">暂无评分记录</p>}
+                {!classRecords.length && <p className="py-16 text-center font-bold text-slate-400">暂无评分记录</p>}
               </div>
             )}
             {settingsPanel === "积分统计" && (
@@ -2163,10 +2327,10 @@ export function PetPoints() {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <StatTile label="班级总分" value={totalScore} />
                   <StatTile label="平均分" value={averageScore} />
-                  <StatTile label="最高分" value={Math.max(0, ...students.map(student => student.score))} />
+                  <StatTile label="最高分" value={Math.max(0, ...classStudents.map(student => student.score))} />
                 </div>
                 <div className="mt-5 grid gap-3">
-                  {students.map(student => (
+                  {classStudents.map(student => (
                     <div key={student.id}>
                       <div className="flex justify-between text-sm font-bold">
                         <span>{student.name}</span>

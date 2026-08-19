@@ -11,6 +11,7 @@
 /** 登录用户的最小资料结构，供认证 store、cookie 和页面展示共用。 */
 export interface User {
   id: string;
+  username?: string;
   name: string;
   email: string;
   avatar?: string;

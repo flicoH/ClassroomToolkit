@@ -11,18 +11,10 @@
 import Cookies from "js-cookie";
 import type { User } from "@/types";
 
-const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
 
 /** 认证相关 cookie 封装，避免组件层直接依赖 js-cookie 的键名和序列化细节。 */
 export const cookieStorage = {
-  getToken: () => Cookies.get(TOKEN_KEY),
-  setToken: (token: string) => {
-    Cookies.set(TOKEN_KEY, token, { expires: 7, path: "/" });
-  },
-  removeToken: () => {
-    Cookies.remove(TOKEN_KEY, { path: "/" });
-  },
   getUser: () => {
     const userStr = Cookies.get(USER_KEY);
     if (userStr) {
@@ -42,7 +34,6 @@ export const cookieStorage = {
     Cookies.remove(USER_KEY, { path: "/" });
   },
   clearAll: () => {
-    cookieStorage.removeToken();
     cookieStorage.removeUser();
   }
 };

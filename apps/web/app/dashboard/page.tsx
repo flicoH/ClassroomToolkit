@@ -69,8 +69,8 @@ export default function DashboardPage() {
   }, [user, isLoading, router]);
 
   /** 退出登录并回到登录页。 */
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 

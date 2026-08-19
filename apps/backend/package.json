@@ -7,6 +7,11 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "db:init": "pnpm run db:schema && pnpm run migration:run",
+    "db:schema": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; mysql -h ${MYSQL_HOST:-127.0.0.1} -P ${MYSQL_PORT:-3306} -u ${MYSQL_USER:-root} ${MYSQL_PASSWORD:+-p$MYSQL_PASSWORD} < database/schema.sql'",
+    "db:seed": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; mysql -h ${MYSQL_HOST:-127.0.0.1} -P ${MYSQL_PORT:-3306} -u ${MYSQL_USER:-root} ${MYSQL_PASSWORD:+-p$MYSQL_PASSWORD} < database/seed.sql'",
+    "migration:run": "pnpm run build && typeorm migration:run -d dist/database/data-source.js",
+    "migration:revert": "pnpm run build && typeorm migration:revert -d dist/database/data-source.js",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "dev": "nest start --watch --host 0.0.0.0",
@@ -23,8 +28,11 @@
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/typeorm": "^11.0.3",
+    "mysql2": "^3.23.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.31"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

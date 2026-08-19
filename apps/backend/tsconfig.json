@@ -11,6 +11,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
+    "types": ["node"],
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",

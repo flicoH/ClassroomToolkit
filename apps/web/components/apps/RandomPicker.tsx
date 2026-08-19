@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { History, Play, RotateCcw, Shuffle, Sparkles, UserRoundCheck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 interface Student {
@@ -23,58 +24,33 @@ interface ClassGroup {
   students: Student[];
 }
 
-const classes: ClassGroup[] = [
-  {
-    id: "grade-1",
-    name: "一年级",
-    students: [
-      { id: "2026001", name: "周杰伦", studentNo: "2026001" },
-      { id: "2026002", name: "周杰伦", studentNo: "2026002" },
-      { id: "2026003", name: "周杰伦", studentNo: "2026003" },
-      { id: "2026004", name: "林俊杰", studentNo: "2026004" },
-      { id: "2026005", name: "孙燕姿", studentNo: "2026005" },
-      { id: "2026006", name: "王心凌", studentNo: "2026006" }
-    ]
-  },
-  {
-    id: "grade-2",
-    name: "二年级",
-    students: [
-      { id: "2026101", name: "李宇春", studentNo: "2026101" },
-      { id: "2026102", name: "周笔畅", studentNo: "2026102" },
-      { id: "2026103", name: "张靓颖", studentNo: "2026103" },
-      { id: "2026104", name: "陈楚生", studentNo: "2026104" }
-    ]
-  }
-];
+interface PickHistory {
+  id: string;
+  classId: string;
+  selectedCount: number;
+  students: Student[];
+  createdAt: string;
+}
 
-const defaultClass = classes[0]!;
+const fallbackClass: ClassGroup = { id: "", name: "暂无班级", students: [] };
 
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
 
-/** Fisher-Yates 洗牌，保证每名学生被抽中的概率一致。 */
-function shuffleStudents(students: Student[]) {
-  const result = [...students];
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const target = Math.floor(Math.random() * (index + 1));
-    [result[index], result[target]] = [result[target]!, result[index]!];
-  }
-  return result;
-}
-
 export function RandomPicker() {
-  const [activeClassId, setActiveClassId] = useState(defaultClass.id);
+  const [classes, setClasses] = useState<ClassGroup[]>([]);
+  const [activeClassId, setActiveClassId] = useState("");
   const [selectedCount, setSelectedCount] = useState(1);
   const [isRolling, setIsRolling] = useState(false);
-  const [previewStudent, setPreviewStudent] = useState<Student | null>(defaultClass.students[0] ?? null);
+  const [previewStudent, setPreviewStudent] = useState<Student | null>(null);
   const [pickedStudents, setPickedStudents] = useState<Student[]>([]);
-  const [history, setHistory] = useState<Student[][]>([]);
+  const [history, setHistory] = useState<PickHistory[]>([]);
+  const [loading, setLoading] = useState(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const finishTimerRef = useRef<number | null>(null);
 
-  const activeClass = classes.find(item => item.id === activeClassId) ?? defaultClass;
+  const activeClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? fallbackClass;
 
   // 抽取人数不能超过当前班级人数。
   const availableCounts = useMemo(() => {
@@ -94,20 +70,41 @@ export function RandomPicker() {
     setIsRolling(false);
   };
 
+  const loadPickerData = async () => {
+    setLoading(true);
+    try {
+      const [nextClasses, nextHistory] = await Promise.all([
+        request<ClassGroup[], ClassGroup[]>("/api/random-picker/classes"),
+        request<PickHistory[], PickHistory[]>("/api/random-picker/histories")
+      ]);
+      setClasses(nextClasses);
+      setHistory(nextHistory.slice(0, 6));
+      const nextClass = nextClasses.find(item => item.id === activeClassId) ?? nextClasses[0];
+      setActiveClassId(nextClass?.id ?? "");
+      setPreviewStudent(nextClass?.students[0] ?? null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   /** 真正生成点名结果，并写入最近记录。 */
-  const pickStudents = () => {
+  const pickStudents = async () => {
     stopRolling();
-    const shuffled = shuffleStudents(activeClass.students);
-    const result = shuffled.slice(0, selectedCount);
-    setPickedStudents(result);
-    setPreviewStudent(result[0] ?? null);
-    setHistory(current => [result, ...current].slice(0, 6));
+    if (!activeClass.id || !activeClass.students.length) return;
+    const record = await request<PickHistory, PickHistory>({
+      url: "/api/random-picker/pick",
+      method: "POST",
+      data: { classId: activeClass.id, selectedCount }
+    });
+    setPickedStudents(record.students);
+    setPreviewStudent(record.students[0] ?? null);
+    setHistory(current => [record, ...current].slice(0, 6));
   };
 
   /** 先快速滚动预览学生，再延迟落定结果，模拟抽取动画。 */
   const startRolling = () => {
     if (isRolling) {
-      pickStudents();
+      void pickStudents();
       return;
     }
 
@@ -118,10 +115,11 @@ export function RandomPicker() {
       setPreviewStudent(next ?? null);
     }, 72);
 
-    finishTimerRef.current = window.setTimeout(pickStudents, 1800);
+    finishTimerRef.current = window.setTimeout(() => void pickStudents(), 1800);
   };
 
   useEffect(() => {
+    void loadPickerData();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
@@ -137,7 +135,7 @@ export function RandomPicker() {
   /** 切换班级时重置抽取结果，避免旧班级学生残留在预览区。 */
   const handleClassChange = (classId: string) => {
     stopRolling();
-    const nextClass = classes.find(item => item.id === classId) ?? defaultClass;
+    const nextClass = classes.find(item => item.id === classId) ?? fallbackClass;
     setActiveClassId(classId);
     setPickedStudents([]);
     setPreviewStudent(nextClass.students[0] ?? null);
@@ -264,13 +262,10 @@ export function RandomPicker() {
             </div>
             <div className="space-y-3">
               {history.map((record, index) => (
-                <div
-                  key={`${record.map(item => item.id).join("-")}-${index}`}
-                  className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950"
-                >
+                <div key={record.id} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
                   <div className="mb-2 text-xs font-semibold text-slate-400">第 {history.length - index} 次</div>
                   <div className="flex flex-wrap gap-2">
-                    {record.map(student => (
+                    {record.students.map(student => (
                       <span
                         key={student.id}
                         className="rounded-full bg-white px-2.5 py-1 text-xs font-bold dark:bg-slate-900"
@@ -281,7 +276,7 @@ export function RandomPicker() {
                   </div>
                 </div>
               ))}
-              {history.length === 0 && (
+              {!loading && history.length === 0 && (
                 <div className="flex min-h-[180px] flex-col items-center justify-center text-center text-sm text-slate-400">
                   <UserRoundCheck className="mb-3 h-8 w-8" />
                   暂无记录

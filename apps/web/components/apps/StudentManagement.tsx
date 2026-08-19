@@ -6,11 +6,12 @@
  */
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownUp,
   CircleUserRound,
   MoreVertical,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -20,11 +21,13 @@ import {
   X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 type Gender = "男" | "女" | "";
-type ModalType = "student" | "import" | "class" | "groups" | null;
+type ModalType = "student" | "editStudent" | "import" | "class" | "groups" | null;
 
 interface Student {
   id: string;
@@ -91,6 +94,8 @@ function parseImportRows(text: string): Student[] {
 export function StudentManagement() {
   const [classes, setClasses] = useState<ClassRoom[]>(initialClasses);
   const [activeClassId, setActiveClassId] = useState(defaultClass.id);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [query, setQuery] = useState("");
@@ -100,8 +105,36 @@ export function StudentManagement() {
   const [className, setClassName] = useState("");
   const [importText, setImportText] = useState("");
   const [groupName, setGroupName] = useState("");
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
 
   const activeClass = classes.find(item => item.id === activeClassId) ?? defaultClass;
+
+  useEffect(() => {
+    let mounted = true;
+    // 页面打开时从后端 MySQL 读取班级和学生，避免刷新后回到静态示例数据。
+    request<ClassRoom[], ClassRoom[]>("/api/classes")
+      .then(data => {
+        if (!mounted) return;
+        const nextClasses = data.length > 0 ? data : initialClasses;
+        setClasses(nextClasses);
+        setActiveClassId(current =>
+          nextClasses.some(classRoom => classRoom.id === current) ? current : (nextClasses[0]?.id ?? "")
+        );
+        setErrorMessage("");
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setErrorMessage("学生数据加载失败，请确认后端服务和 MySQL 已启动。");
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // 当前班级学生列表：先按搜索过滤，再按学号方向排序。
   const visibleStudents = useMemo(() => {
@@ -133,230 +166,327 @@ export function StudentManagement() {
     setStudentName("");
     setStudentNo("");
     setStudentGender("");
+    setEditingStudentId(null);
     setClassName("");
     setImportText("");
     setGroupName("");
   };
 
   /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
-  const addStudent = () => {
+  const addStudent = async () => {
     const name = studentName.trim();
-    if (!name) return;
-    const nextStudent: Student = {
-      id: `student-${Date.now()}`,
-      name,
-      studentNo: studentNo.trim() || String(2026000 + (activeClass?.students.length ?? 0) + 1),
-      gender: studentGender
-    };
+    if (!name || !activeClass) return;
+    const nextStudent = await request<Student, Student>({
+      url: `/api/classes/${activeClass.id}/students`,
+      method: "POST",
+      data: {
+        name,
+        studentNo: studentNo.trim() || undefined,
+        gender: studentGender || undefined
+      }
+    });
     updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, nextStudent] }));
+    closeModal();
+  };
+
+  const openEditStudent = (student: Student) => {
+    setEditingStudentId(student.id);
+    setStudentName(student.name);
+    setStudentNo(student.studentNo);
+    setStudentGender(student.gender);
+    setModal("editStudent");
+  };
+
+  const updateStudent = async () => {
+    const name = studentName.trim();
+    if (!name || !activeClass || !editingStudentId) return;
+    const updated = await request<Student, Student>({
+      url: `/api/classes/${activeClass.id}/students/${editingStudentId}`,
+      method: "PATCH",
+      data: {
+        name,
+        studentNo: studentNo.trim(),
+        gender: studentGender || undefined
+      }
+    });
+    updateActiveClass(classRoom => ({
+      ...classRoom,
+      students: classRoom.students.map(student => (student.id === updated.id ? updated : student))
+    }));
     closeModal();
   };
 
   /** 删除学生需要二次确认，避免误触删除。 */
   const removeStudent = (studentId: string) => {
-    const student = activeClass?.students.find(item => item.id === studentId);
-    if (!window.confirm(`确定删除学生「${student?.name ?? "未命名学生"}」吗？删除后不可恢复。`)) return;
-    updateActiveClass(classRoom => ({
-      ...classRoom,
-      students: classRoom.students.filter(student => student.id !== studentId)
-    }));
+    if (!activeClass) return;
+    setStudentDeleteTarget({ classId: activeClass.id, studentId });
   };
 
-  const addClass = () => {
+  /** 确认后按记录下来的班级和学生精确删除，避免弹窗期间状态变化导致删除失效。 */
+  const confirmRemoveStudent = async () => {
+    if (!studentDeleteTarget) return;
+    await request<{ deleted: boolean }, { deleted: boolean }>({
+      url: `/api/classes/${studentDeleteTarget.classId}/students/${studentDeleteTarget.studentId}`,
+      method: "DELETE"
+    });
+    setClasses(current =>
+      current.map(classRoom =>
+        classRoom.id === studentDeleteTarget.classId
+          ? {
+              ...classRoom,
+              students: classRoom.students.filter(student => student.id !== studentDeleteTarget.studentId)
+            }
+          : classRoom
+      )
+    );
+    setStudentDeleteTarget(null);
+  };
+
+  const addClass = async () => {
     const name = className.trim();
     if (!name) return;
-    const nextClass: ClassRoom = {
-      id: `class-${Date.now()}`,
-      name,
-      students: [],
-      groups: []
-    };
+    const nextClass = await request<ClassRoom, ClassRoom>({ url: "/api/classes", method: "POST", data: { name } });
     setClasses(current => [...current, nextClass]);
     setActiveClassId(nextClass.id);
     closeModal();
   };
 
-  const importStudents = () => {
-    const imported = parseImportRows(importText);
-    if (imported.length === 0) return;
+  const importStudents = async () => {
+    if (!activeClass || parseImportRows(importText).length === 0) return;
+    const imported = await request<Student[], Student[]>({
+      url: `/api/classes/${activeClass.id}/students/import`,
+      method: "POST",
+      data: { text: importText }
+    });
     updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, ...imported] }));
     closeModal();
   };
 
-  const addGroup = () => {
+  const addGroup = async () => {
     const name = groupName.trim();
     if (!name || activeClass?.groups.includes(name)) return;
-    updateActiveClass(classRoom => ({ ...classRoom, groups: [...classRoom.groups, name] }));
+    const groups = await request<string[], string[]>({
+      url: `/api/classes/${activeClass.id}/groups`,
+      method: "POST",
+      data: { name }
+    });
+    updateActiveClass(classRoom => ({ ...classRoom, groups }));
     setGroupName("");
   };
 
-  return (
-    <div className="flex min-h-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <aside className="w-[230px] shrink-0 border-r border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
-        <div className="mb-6 flex items-center justify-between">
-          <span className="text-sm font-bold text-slate-500 dark:text-slate-400">我的班级</span>
-          <Button size="icon" variant="ghost" aria-label="新建班级" onClick={() => setModal("class")}>
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
+  const deleteStudentName =
+    classes
+      .find(classRoom => classRoom.id === studentDeleteTarget?.classId)
+      ?.students.find(student => student.id === studentDeleteTarget?.studentId)?.name ?? "未命名学生";
 
-        <div className="space-y-2">
-          {classes.map(classRoom => (
-            <button
-              key={classRoom.id}
-              onClick={() => setActiveClassId(classRoom.id)}
-              className={cn(
-                "relative w-full rounded-xl border p-4 text-left transition",
-                activeClassId === classRoom.id
-                  ? "border-blue-100 bg-blue-50 text-blue-700 shadow-sm dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
-                  : "border-transparent hover:bg-slate-50 dark:hover:bg-slate-800"
-              )}
-            >
-              <div
+  return (
+    <>
+      <div className="flex min-h-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <aside className="w-[230px] shrink-0 border-r border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
+          <div className="mb-6 flex items-center justify-between">
+            <span className="text-sm font-bold text-slate-500 dark:text-slate-400">我的班级</span>
+            <Button size="icon" variant="ghost" aria-label="新建班级" onClick={() => setModal("class")}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            {classes.map(classRoom => (
+              <button
+                key={classRoom.id}
+                onClick={() => setActiveClassId(classRoom.id)}
                 className={cn(
-                  "absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-blue-600 transition",
-                  activeClassId === classRoom.id ? "opacity-100" : "opacity-0"
+                  "relative w-full rounded-xl border p-4 text-left transition",
+                  activeClassId === classRoom.id
+                    ? "border-blue-100 bg-blue-50 text-blue-700 shadow-sm dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                    : "border-transparent hover:bg-slate-50 dark:hover:bg-slate-800"
                 )}
-              />
-              <div className="flex items-start justify-between gap-2">
+              >
+                <div
+                  className={cn(
+                    "absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-blue-600 transition",
+                    activeClassId === classRoom.id ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-bold">{classRoom.name}</div>
+                    <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+                      <Users className="h-3.5 w-3.5" />
+                      {classRoom.students.length} 名学生
+                    </div>
+                  </div>
+                  <MoreVertical className="h-4 w-4 text-slate-400" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <section className="flex min-w-0 flex-1 flex-col">
+          <header className="border-b border-slate-200 bg-white/90 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/90">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                  <UserPlus className="h-6 w-6" />
+                </div>
                 <div>
-                  <div className="font-bold">{classRoom.name}</div>
-                  <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
-                    <Users className="h-3.5 w-3.5" />
-                    {classRoom.students.length} 名学生
+                  <h2 className="text-2xl font-bold">{activeClass?.name}</h2>
+                  <p className="text-sm font-medium text-slate-400">{activeClass?.students.length ?? 0} 名学生</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setSortAsc(current => !current)}>
+                  <ArrowDownUp className="h-4 w-4" />
+                  学号排序
+                </Button>
+                <Button variant="ghost" onClick={() => setModal("import")} className="text-blue-700 dark:text-blue-300">
+                  <Upload className="h-4 w-4" />
+                  批量导入
+                </Button>
+                <Button variant="outline" onClick={() => setModal("groups")}>
+                  <Users className="h-4 w-4" />
+                  分组管理
+                </Button>
+                <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => setModal("student")}>
+                  <UserPlus className="h-4 w-4" />
+                  添加学生
+                </Button>
+              </div>
+            </div>
+
+            <div className="relative mt-4 max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+              <Input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="搜索姓名/学号..."
+                className="border-transparent bg-slate-50 pl-9 shadow-none dark:bg-slate-800"
+              />
+            </div>
+            {(loading || errorMessage) && (
+              <p className={cn("mt-3 text-sm font-semibold", errorMessage ? "text-rose-500" : "text-slate-400")}>
+                {errorMessage || "正在加载学生数据..."}
+              </p>
+            )}
+          </header>
+
+          <main className="grid grid-cols-1 gap-4 overflow-auto p-5 pb-20 md:grid-cols-2 xl:grid-cols-3">
+            {visibleStudents.map(student => (
+              <article
+                key={student.id}
+                className="flex min-h-[96px] items-center justify-between gap-4 rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md dark:bg-slate-900"
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                    {getInitial(student.name)}
+                    <CircleUserRound className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-white text-blue-500 dark:bg-slate-900" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate font-bold">{student.name}</h3>
+                    <p className="text-sm font-semibold text-slate-400">{student.studentNo}</p>
+                    {student.group && <p className="mt-1 text-xs text-blue-500">{student.group}</p>}
                   </div>
                 </div>
-                <MoreVertical className="h-4 w-4 text-slate-400" />
-              </div>
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-slate-200 bg-white/90 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/90">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                <UserPlus className="h-6 w-6" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold">{activeClass?.name}</h2>
-                <p className="text-sm font-medium text-slate-400">{activeClass?.students.length ?? 0} 名学生</p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setSortAsc(current => !current)}>
-                <ArrowDownUp className="h-4 w-4" />
-                学号排序
-              </Button>
-              <Button variant="ghost" onClick={() => setModal("import")} className="text-blue-700 dark:text-blue-300">
-                <Upload className="h-4 w-4" />
-                批量导入
-              </Button>
-              <Button variant="outline" onClick={() => setModal("groups")}>
-                <Users className="h-4 w-4" />
-                分组管理
-              </Button>
-              <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => setModal("student")}>
-                <UserPlus className="h-4 w-4" />
-                添加学生
-              </Button>
-            </div>
-          </div>
-
-          <div className="relative mt-4 max-w-sm">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
-            <Input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder="搜索姓名/学号..."
-              className="border-transparent bg-slate-50 pl-9 shadow-none dark:bg-slate-800"
-            />
-          </div>
-        </header>
-
-        <main className="grid grid-cols-1 gap-4 overflow-auto p-5 pb-20 md:grid-cols-2 xl:grid-cols-3">
-          {visibleStudents.map(student => (
-            <article
-              key={student.id}
-              className="flex min-h-[96px] items-center justify-between gap-4 rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md dark:bg-slate-900"
-            >
-              <div className="flex min-w-0 items-center gap-4">
-                <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                  {getInitial(student.name)}
-                  <CircleUserRound className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-white text-blue-500 dark:bg-slate-900" />
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="编辑学生"
+                    onClick={() => openEditStudent(student)}
+                    className="text-blue-500 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="删除学生"
+                    onClick={() => removeStudent(student.id)}
+                    className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
-                <div className="min-w-0">
-                  <h3 className="truncate font-bold">{student.name}</h3>
-                  <p className="text-sm font-semibold text-slate-400">{student.studentNo}</p>
-                  {student.group && <p className="mt-1 text-xs text-blue-500">{student.group}</p>}
-                </div>
+              </article>
+            ))}
+
+            {visibleStudents.length === 0 && (
+              <div className="col-span-full flex min-h-[220px] items-center justify-center rounded-xl border border-dashed bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+                暂无学生
               </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="删除学生"
-                onClick={() => removeStudent(student.id)}
-                className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </article>
-          ))}
+            )}
+          </main>
+        </section>
 
-          {visibleStudents.length === 0 && (
-            <div className="col-span-full flex min-h-[220px] items-center justify-center rounded-xl border border-dashed bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-900">
-              暂无学生
+        {modal && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-6 backdrop-blur-sm">
+            <div className="w-full max-w-[640px] overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+              {modal === "student" && (
+                <StudentModal
+                  title="添加学生"
+                  name={studentName}
+                  studentNo={studentNo}
+                  gender={studentGender}
+                  onNameChange={setStudentName}
+                  onNoChange={setStudentNo}
+                  onGenderChange={setStudentGender}
+                  onClose={closeModal}
+                  onConfirm={addStudent}
+                />
+              )}
+              {modal === "editStudent" && (
+                <StudentModal
+                  title="编辑学生"
+                  name={studentName}
+                  studentNo={studentNo}
+                  gender={studentGender}
+                  onNameChange={setStudentName}
+                  onNoChange={setStudentNo}
+                  onGenderChange={setStudentGender}
+                  onClose={closeModal}
+                  onConfirm={updateStudent}
+                />
+              )}
+              {modal === "import" && (
+                <ImportModal
+                  value={importText}
+                  onChange={setImportText}
+                  onClose={closeModal}
+                  onConfirm={importStudents}
+                />
+              )}
+              {modal === "class" && (
+                <ClassModal value={className} onChange={setClassName} onClose={closeModal} onConfirm={addClass} />
+              )}
+              {modal === "groups" && activeClass && (
+                <GroupModal
+                  groups={activeClass.groups}
+                  value={groupName}
+                  onChange={setGroupName}
+                  onClose={closeModal}
+                  onAdd={addGroup}
+                />
+              )}
             </div>
-          )}
-        </main>
-      </section>
-
-      {modal && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-6 backdrop-blur-sm">
-          <div className="w-full max-w-[640px] overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
-            {modal === "student" && (
-              <StudentModal
-                name={studentName}
-                studentNo={studentNo}
-                gender={studentGender}
-                onNameChange={setStudentName}
-                onNoChange={setStudentNo}
-                onGenderChange={setStudentGender}
-                onClose={closeModal}
-                onConfirm={addStudent}
-              />
-            )}
-            {modal === "import" && (
-              <ImportModal
-                value={importText}
-                onChange={setImportText}
-                onClose={closeModal}
-                onConfirm={importStudents}
-              />
-            )}
-            {modal === "class" && (
-              <ClassModal value={className} onChange={setClassName} onClose={closeModal} onConfirm={addClass} />
-            )}
-            {modal === "groups" && activeClass && (
-              <GroupModal
-                groups={activeClass.groups}
-                value={groupName}
-                onChange={setGroupName}
-                onClose={closeModal}
-                onAdd={addGroup}
-              />
-            )}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      <ConfirmDialog
+        open={Boolean(studentDeleteTarget)}
+        title="删除学生"
+        description={`确定删除学生「${deleteStudentName}」吗？删除后不可恢复。`}
+        confirmText="删除"
+        onConfirm={confirmRemoveStudent}
+        onCancel={() => setStudentDeleteTarget(null)}
+      />
+    </>
   );
 }
 
 interface StudentModalProps {
+  title: string;
   name: string;
   studentNo: string;
   gender: Gender;
@@ -368,6 +498,7 @@ interface StudentModalProps {
 }
 
 function StudentModal({
+  title,
   name,
   studentNo,
   gender,
@@ -379,7 +510,7 @@ function StudentModal({
 }: StudentModalProps) {
   return (
     <>
-      <ModalHeader title="添加学生" onClose={onClose} />
+      <ModalHeader title={title} onClose={onClose} />
       <div className="space-y-5 p-7">
         <label className="block space-y-2">
           <span className="text-sm font-bold">姓名 *</span>

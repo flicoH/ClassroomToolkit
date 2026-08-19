@@ -127,3 +127,17 @@ export function CartoonPetPointsIcon(props: IconProps) {
     </IconShell>
   );
 }
+
+export function CartoonGachaIcon(props: IconProps) {
+  return (
+    <IconShell {...props} from="#22C55E" to="#0F766E">
+      <rect x="19" y="15" width="26" height="34" rx="9" fill="#ECFDF5" />
+      <circle cx="32" cy="31" r="12" fill="#A7F3D0" />
+      <path d="M20 32h24" stroke="#0F766E" strokeWidth="3" strokeLinecap="round" />
+      <circle cx="32" cy="31" r="5" fill="white" />
+      <path d="M26 49h12" stroke="#BBF7D0" strokeWidth="5" strokeLinecap="round" />
+      <path d="M24 17c3-4 13-5 18 1" stroke="white" strokeWidth="3" strokeLinecap="round" />
+      <path d="M47 39l2 3.5 3.5 2-3.5 2-2 3.5-2-3.5-3.5-2 3.5-2 2-3.5Z" fill="#FDE68A" />
+    </IconShell>
+  );
+}

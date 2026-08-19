@@ -19,6 +19,7 @@ import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { GraduationCap } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
+import { GachaMachine } from "@/components/apps/GachaMachine";
 import { RandomPicker } from "@/components/apps/RandomPicker";
 import { PetPoints } from "@/components/apps/PetPoints";
 import { SeatingChart } from "@/components/apps/SeatingChart";
@@ -27,6 +28,7 @@ import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
 import {
   CartoonCountdownIcon,
+  CartoonGachaIcon,
   CartoonPetPointsIcon,
   CartoonRandomPickerIcon,
   CartoonSeatingIcon,
@@ -42,6 +44,7 @@ const menuItems: MenuItemData[] = [
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
+  { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" }
 ];
 
@@ -58,6 +61,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <SeatingChart />;
     case "petPoints":
       return <PetPoints />;
+    case "gachaMachine":
+      return <GachaMachine />;
     case "stickyNotesList":
       return <StickyNotes />;
     case "studentManagement":

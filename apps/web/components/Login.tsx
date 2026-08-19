@@ -13,7 +13,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { cookieStorage } from "@/lib/cookie";
 import request from "@/lib/request";
 import type { User } from "@/types";
 import toast from "react-hot-toast";
@@ -24,24 +23,58 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { GraduationCap, Loader2 } from "lucide-react";
 
 export const LoginForm = () => {
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUesrname] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { setUser } = useAuthStore();
 
-  /** 提交登录表单，成功后写入全局登录态和 token。 */
+  const resetForm = () => {
+    setUesrname("");
+    setPassword("");
+    setConfirmPassword("");
+    setName("");
+    setEmail("");
+  };
+
+  const switchMode = () => {
+    setMode(current => (current === "login" ? "register" : "login"));
+    resetForm();
+  };
+
+  /** 提交登录/注册表单，token 由服务端写入 HttpOnly Cookie。 */
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (mode === "register" && password !== confirmPassword) {
+      toast.error("两次输入的密码不一致");
+      return;
+    }
+    if (mode === "register" && password.length < 6) {
+      toast.error("密码至少需要 6 位");
+      return;
+    }
     setLoading(true);
     try {
-      const data = await request.post<unknown, User>("/api/login", {
-        username,
-        password
-      });
+      const data = await request.post<unknown, User>(
+        mode === "login" ? "/api/login" : "/api/register",
+        mode === "login"
+          ? {
+              username,
+              password
+            }
+          : {
+              username,
+              password,
+              name: name.trim() || username.trim(),
+              email: email.trim() || undefined
+            }
+      );
       setUser(data);
-      cookieStorage.setToken(data.id);
-      toast.success("登录成功");
+      toast.success(mode === "login" ? "登录成功" : "注册成功");
       router.push("/");
     } catch (error: unknown) {
       const err = error as Error;
@@ -59,7 +92,7 @@ export const LoginForm = () => {
             <GraduationCap className="h-10 w-10 text-primary" />
           </div>
         </div>
-        <CardTitle className="text-2xl font-bold">课堂小工具</CardTitle>
+        <CardTitle className="text-2xl font-bold">{mode === "login" ? "课堂小工具" : "注册教师账号"}</CardTitle>
         {/* <CardDescription>输入您的账号信息登录系统</CardDescription> */}
       </CardHeader>
       <CardContent>
@@ -76,6 +109,32 @@ export const LoginForm = () => {
               disabled={loading}
             />
           </div>
+          {mode === "register" && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="name">教师姓名</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="请输入教师姓名"
+                  disabled={loading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">邮箱</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="可选"
+                  disabled={loading}
+                />
+              </div>
+            </>
+          )}
           <div className="space-y-2">
             <Label htmlFor="password">密码</Label>
             <Input
@@ -85,21 +144,42 @@ export const LoginForm = () => {
               onChange={e => setPassword(e.target.value)}
               placeholder="请输入密码"
               required
+              minLength={mode === "register" ? 6 : undefined}
               disabled={loading}
             />
           </div>
+          {mode === "register" && (
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">确认密码</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="请再次输入密码"
+                required
+                minLength={6}
+                disabled={loading}
+              />
+            </div>
+          )}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {loading ? "登录中..." : "登录"}
+            {loading ? (mode === "login" ? "登录中..." : "注册中...") : mode === "login" ? "登录" : "注册并登录"}
           </Button>
         </form>
       </CardContent>
       <CardFooter>
         <p className="text-center text-sm text-muted-foreground">
-          没有账号？
-          {/* <Link href="/register"> */}
-          <a className="text-primary underline underline-offset-2 hover:no-underline">注册</a>
-          {/* </Link> */}
+          {mode === "login" ? "没有账号？" : "已有账号？"}
+          <button
+            type="button"
+            className="text-primary underline underline-offset-2 hover:no-underline"
+            onClick={switchMode}
+            disabled={loading}
+          >
+            {mode === "login" ? "注册" : "返回登录"}
+          </button>
         </p>
       </CardFooter>
     </Card>

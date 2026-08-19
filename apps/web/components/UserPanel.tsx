@@ -47,14 +47,14 @@ export function UserPanel({ open, onClose }: UserPanelProps) {
     return () => document.removeEventListener("keydown", handleEsc);
   }, [open, onClose]);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     onClose();
     router.push("/login");
   };
 
-  const handleSwitchAccount = () => {
-    logout();
+  const handleSwitchAccount = async () => {
+    await logout();
     onClose();
     router.push("/login");
   };

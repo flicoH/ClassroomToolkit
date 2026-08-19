@@ -9,9 +9,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ExternalLink, Pin, Plus, Search, StickyNote, Trash2, X } from "lucide-react";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 import { useWindowStore } from "@/store/windowStore";
 
@@ -39,10 +40,11 @@ interface NoteWindow {
 
 interface StickyNotesState {
   notes: Note[];
-  addNote: (note: Omit<Note, "id" | "updatedAt" | "pinned"> & { pinned?: boolean }) => string;
-  updateNote: (noteId: string, patch: Partial<Pick<Note, "title" | "content" | "color" | "pinned">>) => void;
-  deleteNote: (noteId: string) => void;
-  togglePinned: (noteId: string) => void;
+  loadNotes: () => Promise<void>;
+  addNote: (note: Omit<Note, "id" | "updatedAt" | "pinned"> & { pinned?: boolean }) => Promise<string>;
+  updateNote: (noteId: string, patch: Partial<Pick<Note, "title" | "content" | "color" | "pinned">>) => Promise<void>;
+  deleteNote: (noteId: string) => Promise<void>;
+  togglePinned: (noteId: string) => Promise<void>;
 }
 
 const colorStyles: Record<NoteColor, { label: string; card: string; chip: string; dot: string }> = {
@@ -78,33 +80,6 @@ const colorStyles: Record<NoteColor, { label: string; card: string; chip: string
   }
 };
 
-const initialNotes: Note[] = [
-  {
-    id: "note-1",
-    title: "课前提醒",
-    content: "检查投屏、计时器和随机点名名单，提前打开课堂小工具。",
-    color: "yellow",
-    pinned: true,
-    updatedAt: "09:10"
-  },
-  {
-    id: "note-2",
-    title: "作业反馈",
-    content: "第三组需要补交阅读记录，课后提醒组长统一收齐。",
-    color: "blue",
-    pinned: false,
-    updatedAt: "10:25"
-  },
-  {
-    id: "note-3",
-    title: "课堂观察",
-    content: "今天回答积极的同学：周杰伦、林俊杰、孙燕姿。",
-    color: "green",
-    pinned: false,
-    updatedAt: "11:05"
-  }
-];
-
 const colors = Object.keys(colorStyles) as NoteColor[];
 
 function nowLabel() {
@@ -116,65 +91,55 @@ function nowLabel() {
 }
 
 /** 便签数据使用 zustand 共享，让完整列表和多个小窗口看到同一份内容。 */
-const useStickyNotesStore = create<StickyNotesState>()(
-  persist(
-    (set, get) => ({
-      notes: initialNotes,
+const useStickyNotesStore = create<StickyNotesState>(set => ({
+  notes: [],
 
-      addNote: note => {
-        const id = `note-${Date.now()}`;
-        set(current => ({
-          notes: [
-            {
-              ...note,
-              id,
-              pinned: note.pinned ?? false,
-              updatedAt: nowLabel()
-            },
-            ...current.notes
-          ]
-        }));
-        return id;
-      },
+  loadNotes: async () => {
+    const notes = await request<Note[], Note[]>("/api/sticky-notes");
+    set({ notes });
+  },
 
-      updateNote: (noteId, patch) => {
-        set(current => ({
-          notes: current.notes.map(note =>
-            note.id === noteId
-              ? {
-                  ...note,
-                  ...patch,
-                  updatedAt: nowLabel()
-                }
-              : note
-          )
-        }));
-      },
+  addNote: async note => {
+    const created = await request<Note, Note>({
+      url: "/api/sticky-notes",
+      method: "POST",
+      data: note
+    });
+    set(current => ({ notes: [created, ...current.notes] }));
+    return created.id;
+  },
 
-      deleteNote: noteId => {
-        set(current => ({ notes: current.notes.filter(note => note.id !== noteId) }));
-      },
+  updateNote: async (noteId, patch) => {
+    const updated = await request<Note, Note>({
+      url: `/api/sticky-notes/${noteId}`,
+      method: "PATCH",
+      data: patch
+    });
+    set(current => ({ notes: current.notes.map(note => (note.id === noteId ? updated : note)) }));
+  },
 
-      togglePinned: noteId => {
-        const note = get().notes.find(item => item.id === noteId);
-        if (!note) return;
-        get().updateNote(noteId, { pinned: !note.pinned });
-      }
-    }),
-    {
-      name: "classroom-toolkit-sticky-notes",
-      storage: createJSONStorage(() => localStorage),
-      partialize: state => ({ notes: state.notes }),
-      // 服务端先渲染默认内容，客户端挂载后再读取存储，避免 hydration 不一致。
-      skipHydration: true
-    }
-  )
-);
+  deleteNote: async noteId => {
+    await request<{ deleted: boolean }, { deleted: boolean }>({
+      url: `/api/sticky-notes/${noteId}`,
+      method: "DELETE"
+    });
+    set(current => ({ notes: current.notes.filter(note => note.id !== noteId) }));
+  },
+
+  togglePinned: async noteId => {
+    const updated = await request<Note, Note>({
+      url: `/api/sticky-notes/${noteId}/toggle-pinned`,
+      method: "POST"
+    });
+    set(current => ({ notes: current.notes.map(note => (note.id === noteId ? updated : note)) }));
+  }
+}));
 
 function useHydrateStickyNotes() {
+  const loadNotes = useStickyNotesStore(state => state.loadNotes);
   useEffect(() => {
-    void useStickyNotesStore.persist.rehydrate();
-  }, []);
+    void loadNotes();
+  }, [loadNotes]);
 }
 
 export function StickyNotes() {
@@ -188,6 +153,7 @@ export function StickyNotes() {
   const [filter, setFilter] = useState<NoteFilter>("全部");
   const [noteWindows, setNoteWindows] = useState<NoteWindow[]>([]);
   const [nextZIndex, setNextZIndex] = useState(30);
+  const [noteDeleteId, setNoteDeleteId] = useState<string | null>(null);
   const dragRef = useRef<{
     windowId: string;
     startX: number;
@@ -284,7 +250,7 @@ export function StickyNotes() {
   };
 
   /** 保存浮窗草稿；新便签先创建，已有便签则更新标题/正文/颜色。 */
-  const saveNoteWindow = (windowId: string) => {
+  const saveNoteWindow = async (windowId: string) => {
     const noteWindow = noteWindows.find(item => item.windowId === windowId);
     if (!noteWindow) return;
 
@@ -293,9 +259,9 @@ export function StickyNotes() {
     if (!noteWindow.title.trim() && !content) return;
 
     if (noteWindow.noteId) {
-      updateNote(noteWindow.noteId, { title, content, color: noteWindow.color });
+      await updateNote(noteWindow.noteId, { title, content, color: noteWindow.color });
     } else {
-      const newNoteId = addNote({ title, content, color: noteWindow.color });
+      const newNoteId = await addNote({ title, content, color: noteWindow.color });
       setNoteWindows(current =>
         current.map(item => (item.windowId === windowId ? { ...item, noteId: newNoteId, title, content } : item))
       );
@@ -303,250 +269,270 @@ export function StickyNotes() {
   };
 
   const togglePinned = (noteId: string) => {
-    togglePinnedInStore(noteId);
+    void togglePinnedInStore(noteId);
   };
 
-  /** 删除便签前二次确认，并同步关闭对应浮窗。 */
+  /** 打开自定义删除确认弹窗，避免使用浏览器原生 confirm。 */
   const deleteNote = (noteId: string) => {
-    const note = notes.find(item => item.id === noteId);
-    if (!window.confirm(`确定删除便签「${note?.title || "未命名便签"}」吗？删除后不可恢复。`)) return;
-    removeNote(noteId);
-    setNoteWindows(current => current.filter(noteWindow => noteWindow.noteId !== noteId));
+    setNoteDeleteId(noteId);
   };
+
+  /** 删除便签后同步关闭对应浮窗。 */
+  const confirmDeleteNote = async () => {
+    if (!noteDeleteId) return;
+    await removeNote(noteDeleteId);
+    setNoteWindows(current => current.filter(noteWindow => noteWindow.noteId !== noteDeleteId));
+    setNoteDeleteId(null);
+  };
+
+  const deleteNoteTitle = notes.find(item => item.id === noteDeleteId)?.title || "未命名便签";
 
   return (
-    <div className="relative min-h-full overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <header className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
-              <StickyNote className="h-6 w-6" />
+    <>
+      <div className="relative min-h-full overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <header className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
+                <StickyNote className="h-6 w-6" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold">便签</h1>
+                <p className="text-sm font-medium text-slate-400">记录课堂提醒和临时想法</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">便签</h1>
-              <p className="text-sm font-medium text-slate-400">记录课堂提醒和临时想法</p>
-            </div>
-          </div>
-          <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => openNoteWindow()}>
-            <Plus className="h-4 w-4" />
-            新建便签
-          </Button>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-3">
-          <div className="relative min-w-[220px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
-            <Input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder="搜索标题/内容..."
-              className="border-transparent bg-slate-50 pl-9 shadow-none dark:bg-slate-800"
-            />
-          </div>
-          {(["全部", "置顶"] as const).map(item => (
-            <Button
-              key={item}
-              variant={filter === item ? "default" : "outline"}
-              onClick={() => setFilter(item)}
-              className={cn(filter === item && "bg-blue-600 hover:bg-blue-700")}
-            >
-              {item}
+            <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => openNoteWindow()}>
+              <Plus className="h-4 w-4" />
+              新建便签
             </Button>
-          ))}
-        </div>
-      </header>
-
-      <main className="grid grid-cols-1 gap-4 overflow-auto p-5 sm:grid-cols-2 xl:grid-cols-3">
-        {filteredNotes.map(note => (
-          <article
-            key={note.id}
-            onClick={() => openNoteWindow(note)}
-            className={cn(
-              "min-h-[190px] cursor-pointer rounded-2xl border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-              colorStyles[note.color].card
-            )}
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="mb-2 flex items-center gap-2">
-                  {note.pinned && <Pin className="h-4 w-4 shrink-0" />}
-                  <h3 className="truncate text-lg font-black">{note.title}</h3>
-                </div>
-                <span
-                  className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold", colorStyles[note.color].chip)}
-                >
-                  {note.updatedAt}
-                </span>
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <button
-                  onClick={event => {
-                    event.stopPropagation();
-                    togglePinned(note.id);
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/45 transition hover:bg-white/70 dark:bg-black/20 dark:hover:bg-black/30"
-                  aria-label="置顶便签"
-                >
-                  <Pin className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={event => {
-                    event.stopPropagation();
-                    deleteNote(note.id);
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/45 text-rose-600 transition hover:bg-white/70 dark:bg-black/20 dark:hover:bg-black/30"
-                  aria-label="删除便签"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <p className="whitespace-pre-wrap text-sm font-medium leading-7 opacity-80">{note.content}</p>
-          </article>
-        ))}
-
-        {filteredNotes.length === 0 && (
-          <div className="col-span-full flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-dashed bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-900">
-            <StickyNote className="mb-3 h-10 w-10" />
-            暂无便签
           </div>
-        )}
-      </main>
 
-      {noteWindows.map(noteWindow => (
-        <div
-          key={noteWindow.windowId}
-          className={cn(
-            "absolute w-[340px] overflow-hidden rounded-2xl border shadow-2xl",
-            colorStyles[noteWindow.color].card
-          )}
-          style={{
-            left: noteWindow.position.x,
-            top: noteWindow.position.y,
-            zIndex: noteWindow.zIndex
-          }}
-          onMouseDown={() => focusWindow(noteWindow.windowId)}
-        >
-          <div
-            className="flex h-11 cursor-move items-center justify-between border-b border-black/5 bg-white/30 px-3 dark:border-white/10 dark:bg-black/10"
-            onMouseDown={event => {
-              focusWindow(noteWindow.windowId);
-              dragRef.current = {
-                windowId: noteWindow.windowId,
-                startX: event.clientX,
-                startY: event.clientY,
-                origX: noteWindow.position.x,
-                origY: noteWindow.position.y
-              };
-            }}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <StickyNote className="h-4 w-4 shrink-0" />
-              <input
-                value={noteWindow.title}
-                onChange={event => updateNoteWindow(noteWindow.windowId, { title: event.target.value })}
-                onMouseDown={event => event.stopPropagation()}
-                onClick={event => event.stopPropagation()}
-                placeholder="便签"
-                className="min-w-0 flex-1 cursor-text rounded-md bg-transparent px-1 text-sm font-black outline-none placeholder:text-current/55 focus:bg-white/45 dark:focus:bg-black/15"
+          <div className="mt-4 flex flex-wrap gap-3">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+              <Input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="搜索标题/内容..."
+                className="border-transparent bg-slate-50 pl-9 shadow-none dark:bg-slate-800"
               />
             </div>
-            <div className="flex gap-1">
-              <button
-                onClick={event => {
-                  event.stopPropagation();
-                  openNoteWindow();
-                }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
-                aria-label="新建便签"
+            {(["全部", "置顶"] as const).map(item => (
+              <Button
+                key={item}
+                variant={filter === item ? "default" : "outline"}
+                onClick={() => setFilter(item)}
+                className={cn(filter === item && "bg-blue-600 hover:bg-blue-700")}
               >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={event => {
-                  event.stopPropagation();
-                  setFilter("全部");
-                  setQuery("");
-                  focusWindow(noteWindow.windowId);
-                }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
-                aria-label="进入便签列表"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={event => {
-                  event.stopPropagation();
-                  closeNoteWindow(noteWindow.windowId);
-                }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
-                aria-label="关闭"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+                {item}
+              </Button>
+            ))}
           </div>
+        </header>
 
-          <div className="space-y-3 p-4">
-            <textarea
-              value={noteWindow.content}
-              onChange={event => updateNoteWindow(noteWindow.windowId, { content: event.target.value })}
-              placeholder="马上记录..."
-              className="min-h-[150px] w-full resize-none rounded-xl border border-black/10 bg-white/45 p-3 text-sm font-medium leading-6 outline-none transition placeholder:text-current/45 focus:border-blue-400 dark:border-white/10 dark:bg-black/10"
-            />
-
-            <div className="flex flex-wrap gap-1.5">
-              {colors.map(color => (
-                <button
-                  key={color}
-                  onClick={() => updateNoteWindow(noteWindow.windowId, { color })}
-                  className={cn(
-                    "flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition",
-                    noteWindow.color === color
-                      ? "border-blue-500 bg-white/60 text-blue-700 dark:bg-black/20 dark:text-blue-300"
-                      : "border-black/10 bg-white/30 dark:border-white/10 dark:bg-black/10"
-                  )}
-                >
-                  <span className={cn("h-2.5 w-2.5 rounded-full", colorStyles[color].dot)} />
-                  {noteWindow.color === color && <Check className="h-3 w-3" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between border-t border-black/5 bg-white/25 px-4 py-3 dark:border-white/10 dark:bg-black/10">
-            <button
-              onClick={() => noteWindow.noteId && togglePinned(noteWindow.noteId)}
-              disabled={!noteWindow.noteId}
-              className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-bold transition hover:bg-white/35 disabled:opacity-40 dark:hover:bg-black/20"
+        <main className="grid grid-cols-1 gap-4 overflow-auto p-5 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredNotes.map(note => (
+            <article
+              key={note.id}
+              onClick={() => openNoteWindow(note)}
+              className={cn(
+                "min-h-[190px] cursor-pointer rounded-2xl border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                colorStyles[note.color].card
+              )}
             >
-              <Pin className="h-3.5 w-3.5" />
-              置顶
-            </button>
-            <div className="flex gap-2">
-              {noteWindow.noteId && (
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="mb-2 flex items-center gap-2">
+                    {note.pinned && <Pin className="h-4 w-4 shrink-0" />}
+                    <h3 className="truncate text-lg font-black">{note.title}</h3>
+                  </div>
+                  <span
+                    className={cn(
+                      "inline-flex rounded-full px-2.5 py-1 text-xs font-bold",
+                      colorStyles[note.color].chip
+                    )}
+                  >
+                    {note.updatedAt}
+                  </span>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    onClick={event => {
+                      event.stopPropagation();
+                      togglePinned(note.id);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/45 transition hover:bg-white/70 dark:bg-black/20 dark:hover:bg-black/30"
+                    aria-label="置顶便签"
+                  >
+                    <Pin className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={event => {
+                      event.stopPropagation();
+                      deleteNote(note.id);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/45 text-rose-600 transition hover:bg-white/70 dark:bg-black/20 dark:hover:bg-black/30"
+                    aria-label="删除便签"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <p className="whitespace-pre-wrap text-sm font-medium leading-7 opacity-80">{note.content}</p>
+            </article>
+          ))}
+
+          {filteredNotes.length === 0 && (
+            <div className="col-span-full flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-dashed bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+              <StickyNote className="mb-3 h-10 w-10" />
+              暂无便签
+            </div>
+          )}
+        </main>
+
+        {noteWindows.map(noteWindow => (
+          <div
+            key={noteWindow.windowId}
+            className={cn(
+              "absolute w-[340px] overflow-hidden rounded-2xl border shadow-2xl",
+              colorStyles[noteWindow.color].card
+            )}
+            style={{
+              left: noteWindow.position.x,
+              top: noteWindow.position.y,
+              zIndex: noteWindow.zIndex
+            }}
+            onMouseDown={() => focusWindow(noteWindow.windowId)}
+          >
+            <div
+              className="flex h-11 cursor-move items-center justify-between border-b border-black/5 bg-white/30 px-3 dark:border-white/10 dark:bg-black/10"
+              onMouseDown={event => {
+                focusWindow(noteWindow.windowId);
+                dragRef.current = {
+                  windowId: noteWindow.windowId,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  origX: noteWindow.position.x,
+                  origY: noteWindow.position.y
+                };
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <StickyNote className="h-4 w-4 shrink-0" />
+                <input
+                  value={noteWindow.title}
+                  onChange={event => updateNoteWindow(noteWindow.windowId, { title: event.target.value })}
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => event.stopPropagation()}
+                  placeholder="便签"
+                  className="min-w-0 flex-1 cursor-text rounded-md bg-transparent px-1 text-sm font-black outline-none placeholder:text-current/55 focus:bg-white/45 dark:focus:bg-black/15"
+                />
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={event => {
+                    event.stopPropagation();
+                    openNoteWindow();
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
+                  aria-label="新建便签"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={event => {
+                    event.stopPropagation();
+                    setFilter("全部");
+                    setQuery("");
+                    focusWindow(noteWindow.windowId);
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
+                  aria-label="进入便签列表"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={event => {
+                    event.stopPropagation();
+                    closeNoteWindow(noteWindow.windowId);
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
+                  aria-label="关闭"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3 p-4">
+              <textarea
+                value={noteWindow.content}
+                onChange={event => updateNoteWindow(noteWindow.windowId, { content: event.target.value })}
+                placeholder="马上记录..."
+                className="min-h-[150px] w-full resize-none rounded-xl border border-black/10 bg-white/45 p-3 text-sm font-medium leading-6 outline-none transition placeholder:text-current/45 focus:border-blue-400 dark:border-white/10 dark:bg-black/10"
+              />
+
+              <div className="flex flex-wrap gap-1.5">
+                {colors.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => updateNoteWindow(noteWindow.windowId, { color })}
+                    className={cn(
+                      "flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition",
+                      noteWindow.color === color
+                        ? "border-blue-500 bg-white/60 text-blue-700 dark:bg-black/20 dark:text-blue-300"
+                        : "border-black/10 bg-white/30 dark:border-white/10 dark:bg-black/10"
+                    )}
+                  >
+                    <span className={cn("h-2.5 w-2.5 rounded-full", colorStyles[color].dot)} />
+                    {noteWindow.color === color && <Check className="h-3 w-3" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-black/5 bg-white/25 px-4 py-3 dark:border-white/10 dark:bg-black/10">
+              <button
+                onClick={() => noteWindow.noteId && togglePinned(noteWindow.noteId)}
+                disabled={!noteWindow.noteId}
+                className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-bold transition hover:bg-white/35 disabled:opacity-40 dark:hover:bg-black/20"
+              >
+                <Pin className="h-3.5 w-3.5" />
+                置顶
+              </button>
+              <div className="flex gap-2">
+                {noteWindow.noteId && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-rose-600 hover:text-rose-700"
+                    onClick={() => noteWindow.noteId && deleteNote(noteWindow.noteId)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   size="sm"
-                  variant="ghost"
-                  className="text-rose-600 hover:text-rose-700"
-                  onClick={() => noteWindow.noteId && deleteNote(noteWindow.noteId)}
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={() => void saveNoteWindow(noteWindow.windowId)}
+                  disabled={!noteWindow.title.trim() && !noteWindow.content.trim()}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  保存
                 </Button>
-              )}
-              <Button
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-700"
-                onClick={() => saveNoteWindow(noteWindow.windowId)}
-                disabled={!noteWindow.title.trim() && !noteWindow.content.trim()}
-              >
-                保存
-              </Button>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+      <ConfirmDialog
+        open={Boolean(noteDeleteId)}
+        title="删除便签"
+        description={`确定删除便签「${deleteNoteTitle}」吗？删除后不可恢复。`}
+        confirmText="删除"
+        onCancel={() => setNoteDeleteId(null)}
+        onConfirm={confirmDeleteNote}
+      />
+    </>
   );
 }
 
@@ -571,15 +557,16 @@ export function StickyNoteQuick({ noteId }: StickyNoteQuickProps) {
   const isPinned = Boolean(currentNote?.pinned);
   const hasDraft = Boolean(title.trim() || content.trim());
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   /** 菜单打开的小便签：允许只填标题或正文即可保存。 */
-  const save = () => {
+  const save = async () => {
     if (!hasDraft) return;
     const trimmedContent = content.trim();
     const trimmedTitle = title.trim() || "未命名便签";
 
     if (currentNoteId) {
-      updateNote(currentNoteId, {
+      await updateNote(currentNoteId, {
         title: trimmedTitle,
         content: trimmedContent,
         color
@@ -588,7 +575,7 @@ export function StickyNoteQuick({ noteId }: StickyNoteQuickProps) {
       return;
     }
 
-    const createdNoteId = addNote({
+    const createdNoteId = await addNote({
       title: trimmedTitle,
       content: trimmedContent,
       color
@@ -618,24 +605,29 @@ export function StickyNoteQuick({ noteId }: StickyNoteQuickProps) {
   /** 删除当前便签；未保存草稿没有 noteId，因此不做删除动作。 */
   const deleteCurrent = () => {
     if (!currentNoteId) return;
-    const note = notes.find(item => item.id === currentNoteId);
-    if (!window.confirm(`确定删除便签「${note?.title || title || "未命名便签"}」吗？删除后不可恢复。`)) return;
-    removeNote(currentNoteId);
+    setDeleteConfirmOpen(true);
+  };
+
+  /** 确认后再执行删除，使用项目内弹窗组件承接二次确认。 */
+  const confirmDeleteCurrent = async () => {
+    if (!currentNoteId) return;
+    await removeNote(currentNoteId);
     setCurrentNoteId(null);
     setTitle("");
     setContent("");
     setColor("yellow");
+    setDeleteConfirmOpen(false);
   };
 
   /** 未保存草稿点置顶时先创建便签，再设为置顶。 */
-  const handleTogglePinned = () => {
+  const handleTogglePinned = async () => {
     if (currentNoteId) {
-      togglePinned(currentNoteId);
+      await togglePinned(currentNoteId);
       return;
     }
 
     if (!hasDraft) return;
-    const createdNoteId = addNote({
+    const createdNoteId = await addNote({
       title: title.trim() || "未命名便签",
       content: content.trim(),
       color,
@@ -645,87 +637,104 @@ export function StickyNoteQuick({ noteId }: StickyNoteQuickProps) {
     setSavedAt(nowLabel());
   };
 
+  const currentDeleteTitle = currentNote?.title || title || "未命名便签";
+
   return (
-    <div className={cn("flex h-full flex-col overflow-hidden", colorStyles[color].card)}>
-      <div className="flex items-center justify-between border-b border-black/5 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-black/10">
-        <div className="flex min-w-0 items-center gap-2">
-          <StickyNote className="h-4 w-4 shrink-0" />
-          <input
-            value={title}
-            onChange={event => setTitle(event.target.value)}
-            placeholder="便签"
-            className="min-w-0 flex-1 rounded-md bg-transparent px-1 text-sm font-black outline-none placeholder:text-current/55 focus:bg-white/45 dark:focus:bg-black/15"
-            autoFocus
-          />
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={createAnother}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
-            aria-label="新增便签"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-          <button
-            onClick={openNotesList}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
-            aria-label="进入便签列表"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-3 overflow-auto p-4">
-        <textarea
-          value={content}
-          onChange={event => setContent(event.target.value)}
-          placeholder="马上记录..."
-          className="min-h-[170px] w-full resize-none rounded-xl border border-black/10 bg-white/45 p-3 text-sm font-medium leading-6 outline-none transition placeholder:text-current/45 focus:border-blue-400 dark:border-white/10 dark:bg-black/10"
-        />
-        <div className="flex flex-wrap gap-1.5">
-          {colors.map(item => (
+    <>
+      <div className={cn("flex h-full flex-col overflow-hidden", colorStyles[color].card)}>
+        <div className="flex items-center justify-between border-b border-black/5 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-black/10">
+          <div className="flex min-w-0 items-center gap-2">
+            <StickyNote className="h-4 w-4 shrink-0" />
+            <input
+              value={title}
+              onChange={event => setTitle(event.target.value)}
+              placeholder="便签"
+              className="min-w-0 flex-1 rounded-md bg-transparent px-1 text-sm font-black outline-none placeholder:text-current/55 focus:bg-white/45 dark:focus:bg-black/15"
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-1">
             <button
-              key={item}
-              onClick={() => setColor(item)}
-              className={cn(
-                "flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition",
-                color === item
-                  ? "border-blue-500 bg-white/60 text-blue-700 dark:bg-black/20 dark:text-blue-300"
-                  : "border-black/10 bg-white/30 dark:border-white/10 dark:bg-black/10"
-              )}
+              onClick={createAnother}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
+              aria-label="新增便签"
             >
-              <span className={cn("h-2.5 w-2.5 rounded-full", colorStyles[item].dot)} />
-              {color === item && <Check className="h-3 w-3" />}
+              <Plus className="h-4 w-4" />
             </button>
-          ))}
+            <button
+              onClick={openNotesList}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/35 transition hover:bg-white/60 dark:bg-black/10 dark:hover:bg-black/20"
+              aria-label="进入便签列表"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-between border-t border-black/5 bg-white/25 px-4 py-3 dark:border-white/10 dark:bg-black/10">
-        <button
-          onClick={handleTogglePinned}
-          disabled={!currentNoteId && !hasDraft}
-          className={cn(
-            "flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-bold transition hover:bg-white/35 disabled:opacity-40 dark:hover:bg-black/20",
-            isPinned && "bg-white/55 text-blue-700 shadow-sm dark:bg-black/25 dark:text-blue-300"
-          )}
-        >
-          <Pin className={cn("h-3.5 w-3.5", isPinned && "fill-current")} />
-          {isPinned ? "已置顶" : "置顶"}
-        </button>
-        <div className="flex gap-2">
-          {savedAt && <span className="flex h-8 items-center text-xs font-bold opacity-60">已保存 {savedAt}</span>}
-          {currentNoteId && (
-            <Button size="sm" variant="ghost" className="text-rose-600 hover:text-rose-700" onClick={deleteCurrent}>
-              <Trash2 className="h-4 w-4" />
+        <div className="flex-1 space-y-3 overflow-auto p-4">
+          <textarea
+            value={content}
+            onChange={event => setContent(event.target.value)}
+            placeholder="马上记录..."
+            className="min-h-[170px] w-full resize-none rounded-xl border border-black/10 bg-white/45 p-3 text-sm font-medium leading-6 outline-none transition placeholder:text-current/45 focus:border-blue-400 dark:border-white/10 dark:bg-black/10"
+          />
+          <div className="flex flex-wrap gap-1.5">
+            {colors.map(item => (
+              <button
+                key={item}
+                onClick={() => setColor(item)}
+                className={cn(
+                  "flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition",
+                  color === item
+                    ? "border-blue-500 bg-white/60 text-blue-700 dark:bg-black/20 dark:text-blue-300"
+                    : "border-black/10 bg-white/30 dark:border-white/10 dark:bg-black/10"
+                )}
+              >
+                <span className={cn("h-2.5 w-2.5 rounded-full", colorStyles[item].dot)} />
+                {color === item && <Check className="h-3 w-3" />}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-black/5 bg-white/25 px-4 py-3 dark:border-white/10 dark:bg-black/10">
+          <button
+            onClick={() => void handleTogglePinned()}
+            disabled={!currentNoteId && !hasDraft}
+            className={cn(
+              "flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-bold transition hover:bg-white/35 disabled:opacity-40 dark:hover:bg-black/20",
+              isPinned && "bg-white/55 text-blue-700 shadow-sm dark:bg-black/25 dark:text-blue-300"
+            )}
+          >
+            <Pin className={cn("h-3.5 w-3.5", isPinned && "fill-current")} />
+            {isPinned ? "已置顶" : "置顶"}
+          </button>
+          <div className="flex gap-2">
+            {savedAt && <span className="flex h-8 items-center text-xs font-bold opacity-60">已保存 {savedAt}</span>}
+            {currentNoteId && (
+              <Button size="sm" variant="ghost" className="text-rose-600 hover:text-rose-700" onClick={deleteCurrent}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => void save()}
+              disabled={!hasDraft}
+            >
+              保存
             </Button>
-          )}
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={save} disabled={!hasDraft}>
-            保存
-          </Button>
+          </div>
         </div>
       </div>
-    </div>
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="删除便签"
+        description={`确定删除便签「${currentDeleteTitle}」吗？删除后不可恢复。`}
+        confirmText="删除"
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => void confirmDeleteCurrent()}
+      />
+    </>
   );
 }

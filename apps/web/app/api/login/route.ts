@@ -9,27 +9,30 @@
  * @LastEditTime: 2026-04-19 00:30:00
  */
 import { NextResponse } from "next/server";
+import { setAuthCookie } from "../auth-cookie";
 
-/** 本地模拟登录接口；后续接后端时只需要替换这里的校验逻辑。 */
+const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
+
+/** 登录接口代理到 Nest 教师认证模块，由后端完成真实密码校验。 */
 export async function POST(request: Request) {
   try {
     const { username, password } = await request.json();
+    const response = await fetch(`${BACKEND_URL}/auth/teacher/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
 
-    // 简单的模拟登录验证
-    // TODO: 替换为真实的认证逻辑
-    if (username && password) {
-      return NextResponse.json(
-        {
-          id: "1",
-          name: username,
-          email: `${username}@example.com`,
-          avatar: ""
-        },
-        { status: 200 }
-      );
+    const data = await response.json().catch(() => ({ message: "登录服务响应异常" }));
+    if (!response.ok) {
+      return NextResponse.json({ message: data.message || "用户名或密码错误" }, { status: response.status });
     }
 
-    return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
+    const { token, ...profile } = data;
+    if (!token) return NextResponse.json({ message: "登录服务未返回会话" }, { status: 502 });
+    const result = NextResponse.json(profile, { status: 200 });
+    setAuthCookie(result, token);
+    return result;
   } catch {
     return NextResponse.json({ message: "服务器内部错误" }, { status: 500 });
   }
