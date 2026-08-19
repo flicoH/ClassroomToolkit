@@ -19,7 +19,7 @@ import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card";
 import { GraduationCap, Loader2 } from "lucide-react";
 
 export const LoginForm = () => {
@@ -92,7 +92,7 @@ export const LoginForm = () => {
             <GraduationCap className="h-10 w-10 text-primary" />
           </div>
         </div>
-        <CardTitle className="text-2xl font-bold">{mode === "login" ? "课堂小工具" : "注册教师账号"}</CardTitle>
+        <h1 className="text-2xl font-bold leading-tight">{mode === "login" ? "课堂小工具" : "注册教师账号"}</h1>
         {/* <CardDescription>输入您的账号信息登录系统</CardDescription> */}
       </CardHeader>
       <CardContent>

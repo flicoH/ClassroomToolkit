@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const TOKEN_KEY = "auth_token";
 const authRoutes = new Set(["/login"]);
+const publicSeoRoutes = new Set(["/icon", "/opengraph-image"]);
 
 /**
  * Web 端访问守卫：
@@ -12,8 +13,9 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(TOKEN_KEY)?.value;
   const isAuthRoute = authRoutes.has(pathname);
+  const isPublicRoute = isAuthRoute || publicSeoRoutes.has(pathname);
 
-  if (!token && !isAuthRoute) {
+  if (!token && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("redirect", pathname);
