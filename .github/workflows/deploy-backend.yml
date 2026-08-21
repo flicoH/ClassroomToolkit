@@ -155,6 +155,14 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          
+      - name: Test SSH connection
+        run: |
+          ssh -v -i ~/.ssh/ssh_key -p "${SERVER_PORT:-22}" -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "echo 'SSH success'"
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
 
       - name: Deploy backend containers
         env:
