@@ -128,7 +128,7 @@ jobs:
 
       - name: Configure SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
         run: |
@@ -136,9 +136,9 @@ jobs:
           test -n "$SERVER_HOST"
           test -n "$SERVER_KNOWN_HOSTS"
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ssh_key
           printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/ssh_key ~/.ssh/known_hosts
 
       - name: Deploy frontend containers
         env:
@@ -148,7 +148,7 @@ jobs:
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         run: |
           IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          ssh -i ~/.ssh/deploy_key \
+          ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
             "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' FRONTEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
