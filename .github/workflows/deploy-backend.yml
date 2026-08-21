@@ -181,6 +181,7 @@ jobs:
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         run: |
           IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sed 's/compose up -d --wait mysql/compose up -d --wait --no-pull mysql/g' backend-deploy.sh | \
           ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
