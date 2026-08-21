@@ -231,11 +231,20 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-DNS 生效后，使用系统中已经安装且仍受维护的 Certbot 签发 HTTPS 证书：
+DNS 生效后，先安装 Certbot，再签发 HTTPS 证书。`classroom.example.com` 和 `admin.classroom.example.com` 必须替换成你的真实域名：
+
+```bash
+sudo yum install -y certbot python2-certbot-nginx || sudo yum install -y certbot-nginx
+certbot --version
+```
+
+然后签发证书：
 
 ```bash
 sudo certbot --nginx -d classroom.example.com -d admin.classroom.example.com
 ```
+
+如果 CentOS 7.8 的 EPEL 源已经无法安装 Certbot，先跳过 HTTPS，保持 80 端口把业务跑通；证书可在迁移到 Rocky Linux 9、AlmaLinux 9 或 Ubuntu Server 24.04 LTS 后再配置。
 
 防火墙只开放 SSH、HTTP 和 HTTPS。Backend 和 MySQL 不应直接暴露公网。
 
