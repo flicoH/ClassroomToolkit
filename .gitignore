@@ -6,6 +6,12 @@ dist/
 .env
 .env.*
 !.env.example
+!deploy/.env.frontend.example
+!deploy/.env.backend.example
+deploy/.frontend-release.env
+deploy/.frontend-candidate.env
+deploy/.backend-release.env
+deploy/.backend-candidate.env
 npm-debug.log
 
 .git/

@@ -1,5 +1,7 @@
 # GitHub CI/CD 部署
 
+> 当前推荐使用 [2C2G 单服务器 Docker 部署方案](single-server-docker-deployment.md)。本页保留原 PM2 方案，仅供不使用 Docker 时参考。
+
 本方案使用 GitHub Actions 验证代码，通过 SSH 登录 Linux 服务器，并在服务器的专用部署目录中使用 Git 快进更新代码。Backend 和 Web 由 PM2 管理，Admin 构建产物由 Nginx 托管。
 
 ## 部署结构

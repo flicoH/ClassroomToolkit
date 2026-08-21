@@ -1,0 +1,99 @@
+name: classroom-backend
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-backend-environment: &backend-environment
+  NODE_ENV: production
+  NODE_OPTIONS: --max-old-space-size=256
+  HOST: 0.0.0.0
+  PORT: 3000
+  MYSQL_HOST: mysql
+  MYSQL_PORT: 3306
+  MYSQL_USER: ${MYSQL_USER:-classroom_app}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+  MYSQL_DATABASE: classroom_toolkit
+  TYPEORM_SYNCHRONIZE: "false"
+  TYPEORM_MIGRATIONS_RUN: "false"
+  LEGACY_DATA_OWNER_USERNAME: ${LEGACY_DATA_OWNER_USERNAME:-}
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    mem_limit: 640m
+    cpus: 0.55
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: classroom_toolkit
+      MYSQL_USER: ${MYSQL_USER:-classroom_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    volumes:
+      - classroom_mysql_data:/var/lib/mysql
+      - ../apps/backend/database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro,Z
+      - ./mysql/low-memory.cnf:/etc/mysql/conf.d/low-memory.cnf:ro,Z
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      classroom_internal:
+        aliases: [mysql]
+
+  migrate:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    profiles: [tools]
+    init: true
+    mem_limit: 384m
+    cpus: 0.5
+    environment: *backend-environment
+    command: ["node", "node_modules/typeorm/cli.js", "migration:run", "-d", "dist/database/data-source.js"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - classroom_internal
+
+  backend:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    mem_limit: 384m
+    cpus: 0.45
+    environment: *backend-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${BACKEND_PORT:-3000}:3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    logging: *default-logging
+    networks:
+      classroom_internal:
+        aliases: [backend]
+
+networks:
+  classroom_internal:
+    external: true
+
+volumes:
+  classroom_mysql_data:
+    name: classroom_mysql_data

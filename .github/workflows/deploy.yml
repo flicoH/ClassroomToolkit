@@ -1,4 +1,4 @@
-name: CI and Deploy
+name: CI
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -81,43 +81,3 @@ jobs:
           pnpm --filter ClassRoomToolkitBackend build
           pnpm --filter ClassRoomToolkitWeb build
           pnpm --filter ClassRoomToolkitAdmin build
-
-  deploy:
-    name: Deploy production
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: production
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
-        run: |
-          test -n "$SSH_PRIVATE_KEY"
-          test -n "$SERVER_HOST"
-          test -n "$SERVER_KNOWN_HOSTS"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Deploy through Git
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
-        run: |
-          ssh -i ~/.ssh/deploy_key \
-            -p "${SERVER_PORT:-22}" \
-            "$SERVER_USER@$SERVER_HOST" \
-            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' bash -s" \
-            < deploy/deploy.sh

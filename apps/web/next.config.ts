@@ -14,6 +14,7 @@ const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 /** Next.js 应用配置；允许本机和当前局域网地址加载开发模式资源。 */
 const nextConfig: NextConfig = {
+  output: "standalone",
   poweredByHeader: false,
   compress: true,
   allowedDevOrigins: ["127.0.0.1", "localhost", "192.168.1.177"],

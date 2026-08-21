@@ -1,0 +1,171 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/backend/**
+      - deploy/docker/backend.Dockerfile
+      - deploy/mysql/**
+      - deploy/compose.backend.yml
+      - deploy/backend-deploy.sh
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
+      - .dockerignore
+      - .github/workflows/deploy-backend.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      HOST: 127.0.0.1
+      PORT: 3000
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ci_password
+      MYSQL_DATABASE: classroom_toolkit
+      TYPEORM_SYNCHRONIZE: "false"
+      TYPEORM_MIGRATIONS_RUN: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Initialize CI database
+        run: pnpm --filter ClassRoomToolkitBackend db:init
+
+      - name: Test backend
+        run: pnpm --filter ClassRoomToolkitBackend exec jest --runInBand --no-watchman
+
+      - name: Test backend E2E
+        run: pnpm --filter ClassRoomToolkitBackend exec jest --config ./test/jest-e2e.json --runInBand --forceExit --no-watchman
+
+      - name: Build backend
+        run: pnpm --filter ClassRoomToolkitBackend build
+
+      - name: Validate backend Compose
+        env:
+          BACKEND_IMAGE_TAG: validation
+        run: docker compose --env-file deploy/.env.backend.example -f deploy/compose.backend.yml config --quiet
+
+  publish:
+    name: Publish backend image
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize image namespace
+        id: image
+        shell: bash
+        run: echo "namespace=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/backend.Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.namespace }}-backend:latest
+            ${{ steps.image.outputs.namespace }}-backend:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  deploy:
+    name: Deploy backend
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: classroom-production-server
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SERVER_HOST"
+          test -n "$SERVER_KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Deploy backend containers
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+        run: |
+          IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ssh -i ~/.ssh/deploy_key \
+            -p "${SERVER_PORT:-22}" \
+            "$SERVER_USER@$SERVER_HOST" \
+            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
+            < deploy/backend-deploy.sh

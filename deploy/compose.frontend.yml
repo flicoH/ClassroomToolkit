@@ -1,0 +1,61 @@
+name: classroom-frontend
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  web:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-web:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    mem_limit: 512m
+    cpus: 0.7
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=320
+      HOSTNAME: 0.0.0.0
+      PORT: 3001
+      BACKEND_URL: http://backend:3000
+    ports:
+      - 127.0.0.1:${WEB_PORT:-3001}:3001
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    logging: *default-logging
+    networks:
+      classroom_internal:
+        aliases: [web]
+
+  admin:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-admin:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.1
+    ports:
+      - 127.0.0.1:${ADMIN_PORT:-3002}:80
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *default-logging
+    networks:
+      classroom_internal:
+        aliases: [admin]
+
+networks:
+  classroom_internal:
+    external: true

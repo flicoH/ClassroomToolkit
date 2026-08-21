@@ -63,4 +63,4 @@ pnpm --filter ClassRoomToolkitBackend migration:run
 
 ## CI/CD 部署
 
-仓库已配置 GitHub Actions，在 Pull Request 中执行测试和构建，合并到 `main` 后通过 SSH 自动部署到生产服务器。服务器初始化、GitHub Secrets、Nginx、PM2 和回滚步骤见 [GitHub CI/CD 部署文档](docs/deployment.md)。
+仓库已配置 GitHub Actions：Pull Request 执行完整测试和构建；合并到 `main` 后，Frontend 与 Backend 根据代码路径独立构建 Docker 镜像并部署到同一台服务器，互不重启。生产配置见 [2C2G 单服务器 Docker 部署方案](docs/single-server-docker-deployment.md)，不使用 Docker 时可参考 [PM2 备选方案](docs/deployment.md)。
