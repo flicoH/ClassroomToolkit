@@ -157,17 +157,17 @@ jobs:
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ssh_key
+          chmod 600 ~/.ssh/ssh_key
           ls -la ~/.ssh/
           echo "First 20 chars:"
-          head -c 20 ~/.ssh/authorized_keys
+          head -c 20 ~/.ssh/ssh_key
           echo ""
           echo "=== Configure SSH done ==="
 
       - name: Test SSH connection
         run: |
-          ssh -v -i ~/.ssh/authorized_keys -p "${SERVER_PORT:-22}" -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "echo 'SSH success'"
+          ssh -v -i ~/.ssh/ssh_key -p "${SERVER_PORT:-22}" -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "echo 'SSH success'"
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -181,7 +181,7 @@ jobs:
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         run: |
           IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          ssh -i ~/.ssh/deploy_key \
+          ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
             "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
