@@ -184,5 +184,5 @@ jobs:
           ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
-            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
+            "docker pull mysql:8.0 || true && APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
             < deploy/backend-deploy.sh
