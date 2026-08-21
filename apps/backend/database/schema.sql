@@ -239,10 +239,6 @@ CREATE TABLE IF NOT EXISTS pet_points_students (
   completed_pets INT NOT NULL DEFAULT 0 COMMENT '已完成宠物数量'
 ) ENGINE=InnoDB COMMENT='宠物积分学生表';
 
-ALTER TABLE pet_points_students
-  ADD COLUMN IF NOT EXISTS class_id VARCHAR(64) NOT NULL DEFAULT 'grade-1' COMMENT '班级ID',
-  ADD COLUMN IF NOT EXISTS class_name VARCHAR(64) NOT NULL DEFAULT '一年级' COMMENT '班级名称';
-
 CREATE TABLE IF NOT EXISTS pet_points_rubrics (
   teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',
   id VARCHAR(64) PRIMARY KEY COMMENT '评价指标ID',
