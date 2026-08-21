@@ -2,6 +2,8 @@
 
 /* 全局设计变量：提供亮色模式下的基础颜色和圆角 token。 */
 @theme {
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --color-background: hsl(0 0% 100%);
   --color-foreground: hsl(222.2 84% 4.9%);
   --color-card: hsl(0 0% 100%);
@@ -53,6 +55,7 @@
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
+  font-family: var(--font-sans);
 }
 
 /* 默认边框色统一接入主题 token。 */
@@ -62,32 +65,75 @@ body {
 
 /* 宠物蛋待机、破壳和进化动效只使用 transform/opacity，避免触发布局重排。 */
 @keyframes pet-egg-idle {
-  0%, 100% { transform: translateY(0) rotate(-1deg); }
-  50% { transform: translateY(-4px) rotate(1deg); }
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(1deg);
+  }
 }
 
 @keyframes pet-hatch-flash {
-  0% { background-color: rgb(255 255 255 / 0); opacity: 0; }
-  28% { background-color: rgb(255 251 235 / 0.96); opacity: 1; }
-  100% { background-color: rgb(255 255 255 / 0); opacity: 1; }
+  0% {
+    background-color: rgb(255 255 255 / 0);
+    opacity: 0;
+  }
+  28% {
+    background-color: rgb(255 251 235 / 0.96);
+    opacity: 1;
+  }
+  100% {
+    background-color: rgb(255 255 255 / 0);
+    opacity: 1;
+  }
 }
 
 @keyframes pet-evolve-flash {
-  0% { background-color: rgb(14 165 233 / 0); opacity: 0; }
-  35% { background-color: rgb(240 249 255 / 0.92); opacity: 1; }
-  100% { background-color: rgb(255 255 255 / 0); opacity: 1; }
+  0% {
+    background-color: rgb(14 165 233 / 0);
+    opacity: 0;
+  }
+  35% {
+    background-color: rgb(240 249 255 / 0.92);
+    opacity: 1;
+  }
+  100% {
+    background-color: rgb(255 255 255 / 0);
+    opacity: 1;
+  }
 }
 
 @keyframes pet-effect-ring {
-  0% { opacity: 0; transform: scale(0.25); }
-  35% { opacity: 1; }
-  100% { opacity: 0; transform: scale(1.8); }
+  0% {
+    opacity: 0;
+    transform: scale(0.25);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
 }
 
 @keyframes pet-evolution-pop {
-  0% { filter: brightness(2.1) saturate(0); opacity: 0; transform: scale(0.5); }
-  45% { filter: brightness(1.45) saturate(1.35); opacity: 1; transform: scale(1.16); }
-  100% { filter: brightness(1) saturate(1); opacity: 1; transform: scale(1); }
+  0% {
+    filter: brightness(2.1) saturate(0);
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  45% {
+    filter: brightness(1.45) saturate(1.35);
+    opacity: 1;
+    transform: scale(1.16);
+  }
+  100% {
+    filter: brightness(1) saturate(1);
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .pet-egg-idle {

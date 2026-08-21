@@ -60,3 +60,7 @@ pnpm --filter ClassRoomToolkitBackend migration:run
 ## 管理端
 
 - 使用 vue3+typescript 开发
+
+## CI/CD 部署
+
+仓库已配置 GitHub Actions，在 Pull Request 中执行测试和构建，合并到 `main` 后通过 SSH 自动部署到生产服务器。服务器初始化、GitHub Secrets、Nginx、PM2 和回滚步骤见 [GitHub CI/CD 部署文档](docs/deployment.md)。
