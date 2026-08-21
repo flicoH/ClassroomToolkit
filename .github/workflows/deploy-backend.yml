@@ -144,7 +144,7 @@ jobs:
 
       - name: Configure SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
         run: |
