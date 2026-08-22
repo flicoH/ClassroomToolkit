@@ -149,7 +149,7 @@ jobs:
         run: |
           IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
           cat deploy/frontend-deploy.sh | \
-          sed 's/compose up -d --wait --remove-orphans web admin/compose up -d --wait --remove-orphans --no-pull web admin/g' | \
+          sed 's/compose up -d --wait --remove-orphans web admin/compose up -d --wait --remove-orphans --pull=never web admin/g'
           ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
