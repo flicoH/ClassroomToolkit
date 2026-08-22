@@ -148,8 +148,9 @@ jobs:
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         run: |
           IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          cat deploy/frontend-deploy.sh | \
+          sed 's/compose up -d --wait --remove-orphans web admin/compose up -d --wait --remove-orphans --no-pull web admin/g' | \
           ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
-            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' FRONTEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s" \
-            < deploy/frontend-deploy.sh
+            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' FRONTEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s"
