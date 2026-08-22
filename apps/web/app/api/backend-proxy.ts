@@ -2,13 +2,23 @@
  * **********************************************************************************************
  *  CopyRight (C) 2026 huangqinjia(flicoH)。
  *  Rights Reserved.
+ *  其他任何个人、公司不得使用、复制、传播、修改或商业使用。
+ * **********************************************************************************************
+ * @Date: 2026-08-17 13:02:29
+ * @LastEditors: flicoH
+ * @LastEditTime: 2026-08-22 15:55:21
+ */
+/*
+ * **********************************************************************************************
+ *  CopyRight (C) 2026 huangqinjia(flicoH)。
+ *  Rights Reserved.
  * **********************************************************************************************
  */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { AUTH_COOKIE_NAME, clearAuthCookie } from "./auth-cookie";
-
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
+// process.env.BACKEND_URL ||
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
 
 export interface ProxyRouteContext {
   params: Promise<{ path?: string[] }>;
