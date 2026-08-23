@@ -2,7 +2,7 @@
  * @Author: huangqinjia huangqinjia
  * @Date: 2026-04-21 12:03:58
  * @LastEditors: flicoH
- * @LastEditTime: 2026-08-23 12:06:42
+ * @LastEditTime: 2026-08-23 21:53:21
  * @FilePath: /ClassroomToolkit/apps/web/next.config.ts
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://119.23.147.212:3000/:path*" // 注意去掉 /api
+        destination: "http://backend:3000/api/:path*" // 注意去掉 /api
       }
     ];
   },
