@@ -321,6 +321,52 @@ curl -I http://127.0.0.1:3001/login
 curl -I http://127.0.0.1:3002/
 ```
 
+检查 Web 登录 Cookie 与业务接口代理：
+
+```bash
+# HTTP 临时部署时，Set-Cookie 不应包含 Secure；HTTPS 正式部署时应包含 Secure。
+curl -i http://127.0.0.1:3001/api/login \
+  -H 'content-type: application/json' \
+  --data '{"username":"你的账号","password":"你的密码"}'
+
+# 业务接口必须由 Web 容器代理到 backend:3000，不能连接 127.0.0.1:3000。
+docker compose -p classroom-frontend \
+  --env-file deploy/.env.frontend \
+  --env-file deploy/.frontend-release.env \
+  -f deploy/compose.frontend.yml \
+  exec web node -e "console.log(process.env.BACKEND_URL, process.env.AUTH_COOKIE_SECURE)"
+```
+
+确认每次 GitHub Actions 部署后的服务器镜像版本：
+
+```bash
+cd /opt/classroom-toolkit
+
+cat deploy/.backend-release.env
+cat deploy/.frontend-release.env
+
+docker compose -p classroom-backend \
+  --env-file deploy/.env.backend \
+  --env-file deploy/.backend-release.env \
+  -f deploy/compose.backend.yml \
+  images
+
+docker compose -p classroom-frontend \
+  --env-file deploy/.env.frontend \
+  --env-file deploy/.frontend-release.env \
+  -f deploy/compose.frontend.yml \
+  images
+
+docker inspect classroom-backend-backend-1 \
+  --format 'backend image={{.Config.Image}} imageID={{.Image}} created={{.Created}}'
+docker inspect classroom-frontend-web-1 \
+  --format 'web image={{.Config.Image}} imageID={{.Image}} created={{.Created}}'
+docker inspect classroom-frontend-admin-1 \
+  --format 'admin image={{.Config.Image}} imageID={{.Image}} created={{.Created}}'
+```
+
+`*.release.env` 里的 `sha-...` 必须等于本次 Actions 页面显示的 commit SHA。`docker inspect` 的 `image=` 也应显示同一个 `sha-...` 标签；如果还是旧 sha，说明部署脚本没有跑成功或服务器没有拉到新镜像。
+
 ## 数据库备份
 
 ```bash

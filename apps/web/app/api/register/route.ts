@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const { token, ...profile } = data;
     if (!token) return NextResponse.json({ message: "注册服务未返回会话" }, { status: 502 });
     const result = NextResponse.json(profile, { status: 200 });
-    setAuthCookie(result, token);
+    setAuthCookie(result, token, request);
     return result;
   } catch {
     return NextResponse.json({ message: "服务器内部错误" }, { status: 500 });

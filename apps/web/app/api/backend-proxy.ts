@@ -17,8 +17,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { AUTH_COOKIE_NAME, clearAuthCookie } from "./auth-cookie";
-// process.env.BACKEND_URL ||
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
+
+const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
 
 export interface ProxyRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -47,7 +47,7 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
     });
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
-    if (response.status === 401) clearAuthCookie(result);
+    if (response.status === 401) clearAuthCookie(result, request);
     return result;
   } catch {
     return NextResponse.json({ message: "后端服务连接失败" }, { status: 500 });
