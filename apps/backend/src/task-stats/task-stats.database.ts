@@ -35,6 +35,7 @@ export class TaskStatsDatabase {
 
   async save(task: TaskItem) {
     const teacherId = this.teacherContext.teacherId;
+    const students = this.normalizeStudents(task);
     await this.tasks.save(
       this.tasks.create({
         id: task.id,
@@ -46,21 +47,25 @@ export class TaskStatsDatabase {
         createdAt: task.createdAt,
       }),
     );
-    await this.students.delete({ taskId: task.id, teacherId });
-    await this.students.save(
-      task.students.map((student) =>
-        this.students.create({
-          id: `${task.id}-${student.id}`,
-          teacherId,
-          taskId: task.id,
-          studentId: student.id,
-          name: student.name,
-          studentNo: student.studentNo,
-          status: student.status,
-          score: student.score === undefined ? null : String(student.score),
-        }),
-      ),
+    await this.students
+      .createQueryBuilder()
+      .delete()
+      .from(TaskStudentEntity)
+      .where('task_id = :taskId', { taskId: task.id })
+      .execute();
+    const entities = students.map((student) =>
+      this.students.create({
+        id: `${task.id}-${student.id}`,
+        teacherId,
+        taskId: task.id,
+        studentId: student.id,
+        name: student.name,
+        studentNo: student.studentNo,
+        status: student.status,
+        score: student.score === undefined ? null : String(student.score),
+      }),
     );
+    if (entities.length) await this.students.upsert(entities, ['id']);
     return (await this.findById(task.id))!;
   }
 
@@ -132,5 +137,14 @@ export class TaskStatsDatabase {
           score: student.score === null ? undefined : Number(student.score),
         })),
     };
+  }
+
+  private normalizeStudents(task: TaskItem) {
+    const seen = new Set<string>();
+    return task.students.filter((student) => {
+      if (seen.has(student.id)) return false;
+      seen.add(student.id);
+      return true;
+    });
   }
 }

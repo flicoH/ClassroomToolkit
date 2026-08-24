@@ -168,10 +168,7 @@ CREATE TABLE IF NOT EXISTS random_picker_histories (
   id VARCHAR(64) PRIMARY KEY COMMENT '点名历史ID',
   class_id VARCHAR(64) NOT NULL COMMENT '班级ID',
   selected_count INT NOT NULL COMMENT '抽取人数',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '抽取时间',
-  CONSTRAINT fk_random_picker_histories_class
-    FOREIGN KEY (class_id) REFERENCES random_picker_classes(id)
-    ON DELETE CASCADE
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '抽取时间'
 ) ENGINE=InnoDB COMMENT='随机点名历史表';
 
 CREATE TABLE IF NOT EXISTS random_picker_history_students (
