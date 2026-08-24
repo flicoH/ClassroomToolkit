@@ -44,6 +44,13 @@ export class RandomPickerDatabase {
   }
 
   async saveHistory(history: PickHistory) {
+    await this.classes.save(
+      this.classes.create({
+        id: history.classId,
+        teacherId: this.teacherContext.teacherId,
+        name: history.className ?? history.classId,
+      }),
+    );
     await this.histories.save(
       this.histories.create({
         id: history.id,

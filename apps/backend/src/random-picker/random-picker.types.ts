@@ -13,6 +13,7 @@ export interface PickerClass {
 export interface PickHistory {
   id: string;
   classId: string;
+  className?: string;
   selectedCount: number;
   students: PickerStudent[];
   createdAt: string;

@@ -31,6 +31,7 @@ export class RandomPickerService {
     const history = {
       id: createEntityId('pick'),
       classId: dto.classId,
+      className: classGroup.name,
       selectedCount,
       students,
       createdAt: new Date().toISOString(),

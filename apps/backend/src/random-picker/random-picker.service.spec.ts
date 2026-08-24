@@ -32,6 +32,7 @@ describe('RandomPickerService', () => {
       expect.objectContaining({
         id: expect.stringMatching(/^pick-/),
         classId: 'grade-1',
+        className: '一年级',
         selectedCount: 2,
         students: expect.arrayContaining(students),
         createdAt: expect.any(String),
