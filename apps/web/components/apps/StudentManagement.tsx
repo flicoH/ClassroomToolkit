@@ -109,8 +109,9 @@ export function StudentManagement() {
   const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
 
   const displayClasses = classes.length ? classes : defaultClasses;
-  const activeClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? defaultClass;
-  const canUseBackendClass = !loading && classes.some(item => item.id === activeClass.id);
+  const activeBackendClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? null;
+  const activeClass = activeBackendClass ?? defaultClass;
+  const canUseBackendClass = !loading && Boolean(activeBackendClass);
 
   useEffect(() => {
     let mounted = true;
@@ -138,6 +139,11 @@ export function StudentManagement() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!classes.length) return;
+    setActiveClassId(current => (classes.some(classRoom => classRoom.id === current) ? current : classes[0]!.id));
+  }, [classes]);
+
   // 当前班级学生列表：先按搜索过滤，再按学号方向排序。
   const visibleStudents = useMemo(() => {
     if (!activeClass) return [];
@@ -157,8 +163,9 @@ export function StudentManagement() {
 
   /** 所有学生/分组变更都通过这个 helper 只更新当前班级。 */
   const updateActiveClass = (updater: (classRoom: ClassRoom) => ClassRoom) => {
+    if (!activeBackendClass) return;
     setClasses(current =>
-      current.map(classRoom => (classRoom.id === activeClass?.id ? updater(classRoom) : classRoom))
+      current.map(classRoom => (classRoom.id === activeBackendClass.id ? updater(classRoom) : classRoom))
     );
   };
 
@@ -178,9 +185,9 @@ export function StudentManagement() {
   /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
   const addStudent = async () => {
     const name = studentName.trim();
-    if (!name || !canUseBackendClass) return;
+    if (!name || !activeBackendClass) return;
     const nextStudent = await request<Student, Student>({
-      url: `/api/classes/${activeClass.id}/students`,
+      url: `/api/classes/${activeBackendClass.id}/students`,
       method: "POST",
       data: {
         name,
@@ -202,9 +209,9 @@ export function StudentManagement() {
 
   const updateStudent = async () => {
     const name = studentName.trim();
-    if (!name || !canUseBackendClass || !editingStudentId) return;
+    if (!name || !activeBackendClass || !editingStudentId) return;
     const updated = await request<Student, Student>({
-      url: `/api/classes/${activeClass.id}/students/${editingStudentId}`,
+      url: `/api/classes/${activeBackendClass.id}/students/${editingStudentId}`,
       method: "PATCH",
       data: {
         name,
@@ -221,8 +228,8 @@ export function StudentManagement() {
 
   /** 删除学生需要二次确认，避免误触删除。 */
   const removeStudent = (studentId: string) => {
-    if (!canUseBackendClass) return;
-    setStudentDeleteTarget({ classId: activeClass.id, studentId });
+    if (!activeBackendClass) return;
+    setStudentDeleteTarget({ classId: activeBackendClass.id, studentId });
   };
 
   /** 确认后按记录下来的班级和学生精确删除，避免弹窗期间状态变化导致删除失效。 */
@@ -274,9 +281,9 @@ export function StudentManagement() {
   };
 
   const importStudents = async () => {
-    if (!canUseBackendClass || parseImportRows(importText).length === 0) return;
+    if (!activeBackendClass || parseImportRows(importText).length === 0) return;
     const imported = await request<Student[], Student[]>({
-      url: `/api/classes/${activeClass.id}/students/import`,
+      url: `/api/classes/${activeBackendClass.id}/students/import`,
       method: "POST",
       data: { text: importText }
     });
@@ -285,10 +292,11 @@ export function StudentManagement() {
   };
 
   const addGroup = async () => {
+    if (!activeBackendClass) return;
     const name = groupName.trim();
-    if (!name || !canUseBackendClass || activeClass.groups.includes(name)) return;
+    if (!name || activeBackendClass.groups.includes(name)) return;
     const groups = await request<string[], string[]>({
-      url: `/api/classes/${activeClass.id}/groups`,
+      url: `/api/classes/${activeBackendClass.id}/groups`,
       method: "POST",
       data: { name }
     });
@@ -337,7 +345,7 @@ export function StudentManagement() {
                 />
                 <div className="flex items-start justify-between gap-2">
                   <button
-                    className="min-w-0 text-left"
+                    className="min-w-0 flex-1 text-left"
                     disabled={loading}
                     onClick={() => setActiveClassId(classRoom.id)}
                   >

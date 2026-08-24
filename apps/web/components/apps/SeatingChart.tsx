@@ -28,6 +28,7 @@ interface Seat {
 
 interface SeatingChartData {
   id: string;
+  classId?: string;
   className: string;
   rows: number;
   cols: number;
@@ -48,6 +49,8 @@ function getInitial(name: string) {
 
 export function SeatingChart() {
   const [chart, setChart] = useState<SeatingChartData | null>(null);
+  const [classes, setClasses] = useState<ClassRoom[]>([]);
+  const [activeClassId, setActiveClassId] = useState("");
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
   const [draggingStudentId, setDraggingStudentId] = useState<string | null>(null);
   const [draggingSeatId, setDraggingSeatId] = useState<string | null>(null);
@@ -66,27 +69,70 @@ export function SeatingChart() {
   const seatedIds = new Set(seats.map(seat => seat.studentId).filter(Boolean));
   const unseatedStudents = students.filter(student => !seatedIds.has(student.id));
 
-  const loadChart = async () => {
+  const toSeatingStudents = (classRoom: ClassRoom): Student[] =>
+    classRoom.students.map(student => ({
+      id: student.id,
+      name: student.name,
+      studentNo: student.studentNo
+    }));
+
+  const findChartForClass = (charts: SeatingChartData[], classRoom: ClassRoom) => {
+    return (
+      charts.find(item => item.classId === classRoom.id) ??
+      charts.find(item => !item.classId && item.className === classRoom.name)
+    );
+  };
+
+  const syncChartWithClass = async (nextChart: SeatingChartData, classRoom: ClassRoom) => {
+    return request<SeatingChartData, SeatingChartData>({
+      url: `/api/seating-charts/${nextChart.id}/classroom`,
+      method: "PATCH",
+      data: {
+        classId: classRoom.id,
+        className: classRoom.name,
+        students: toSeatingStudents(classRoom)
+      }
+    });
+  };
+
+  const createChartForClass = async (classRoom: ClassRoom) => {
+    return request<SeatingChartData, SeatingChartData>({
+      url: "/api/seating-charts",
+      method: "POST",
+      data: {
+        classId: classRoom.id,
+        className: classRoom.name,
+        rows: chart?.rows ?? 4,
+        cols: chart?.cols ?? 4,
+        students: toSeatingStudents(classRoom)
+      }
+    });
+  };
+
+  const loadChart = async (preferredClassId?: string) => {
     setLoading(true);
     try {
-      const charts = await request<SeatingChartData[], SeatingChartData[]>("/api/seating-charts");
-      if (charts.length) {
-        setChart(charts[0]!);
+      const [charts, nextClasses] = await Promise.all([
+        request<SeatingChartData[], SeatingChartData[]>("/api/seating-charts"),
+        request<ClassRoom[], ClassRoom[]>("/api/classes")
+      ]);
+      setClasses(nextClasses);
+      const nextClass =
+        nextClasses.find(classRoom => classRoom.id === preferredClassId) ??
+        nextClasses.find(classRoom => classRoom.id === activeClassId) ??
+        nextClasses[0];
+      if (!nextClass) {
+        setActiveClassId("");
+        setChart(null);
         return;
       }
-      const classes = await request<ClassRoom[], ClassRoom[]>("/api/classes");
-      const firstClass = classes[0];
-      const created = await request<SeatingChartData, SeatingChartData>({
-        url: "/api/seating-charts",
-        method: "POST",
-        data: {
-          className: firstClass?.name ?? "默认班级",
-          rows: 4,
-          cols: 4,
-          students: firstClass?.students ?? []
-        }
-      });
-      setChart(created);
+      setActiveClassId(nextClass.id);
+      const matchedChart = findChartForClass(charts, nextClass);
+      const nextChart = matchedChart
+        ? await syncChartWithClass(matchedChart, nextClass)
+        : await createChartForClass(nextClass);
+      setChart(nextChart);
+      setSelectedSeatId(null);
     } finally {
       setLoading(false);
     }
@@ -95,6 +141,11 @@ export function SeatingChart() {
   useEffect(() => {
     void loadChart();
   }, []);
+
+  const switchClass = (classId: string) => {
+    setActiveClassId(classId);
+    void loadChart(classId);
+  };
 
   /** 调整行列时重建座位，同时尽量保留原座位上的学生。 */
   const rebuildSeats = async (nextRows: number, nextCols: number) => {
@@ -200,6 +251,17 @@ export function SeatingChart() {
               </div>
 
               <div className="flex flex-wrap gap-2">
+                {classes.map(classRoom => (
+                  <Button
+                    key={classRoom.id}
+                    variant={activeClassId === classRoom.id ? "default" : "outline"}
+                    onClick={() => switchClass(classRoom.id)}
+                    disabled={loading}
+                    className={cn(activeClassId === classRoom.id && "bg-blue-600 hover:bg-blue-700")}
+                  >
+                    {classRoom.name}
+                  </Button>
+                ))}
                 <Button variant="outline" onClick={deleteRow}>
                   删除行
                 </Button>

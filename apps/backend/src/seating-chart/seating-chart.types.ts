@@ -13,6 +13,7 @@ export interface Seat {
 
 export interface SeatingChart {
   id: string;
+  classId?: string;
   className: string;
   rows: number;
   cols: number;

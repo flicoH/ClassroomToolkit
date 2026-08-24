@@ -20,6 +20,9 @@ export class SeatingChartEntity {
   @Column({ name: 'class_name', length: 64 })
   className!: string;
 
+  @Column({ name: 'class_id', length: 64, nullable: true })
+  classId!: string | null;
+
   @Column({ name: 'rows_count', type: 'int' })
   rows!: number;
 

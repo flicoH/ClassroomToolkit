@@ -109,6 +109,7 @@ export function TaskStats() {
   const [view, setView] = useState<TaskView>("list");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [query, setQuery] = useState("");
   const [activeStatus, setActiveStatus] = useState<StudentStatus | "全部">("全部");
@@ -121,19 +122,33 @@ export function TaskStats() {
   const [taskDeleteId, setTaskDeleteId] = useState<string | null>(null);
 
   const activeTask = tasks.find(task => task.id === activeTaskId) ?? tasks[0];
-  const draftClass = classes.find(classRoom => classRoom.id === draftClassId) ?? classes[0];
+  const draftClass = classes.find(classRoom => classRoom.id === draftClassId);
 
-  const loadTasks = async () => {
-    const [nextTasks, nextClasses] = await Promise.all([
-      request<TaskItem[], TaskItem[]>("/api/task-stats"),
-      request<ClassRoom[], ClassRoom[]>("/api/classes")
-    ]);
-    setTasks(nextTasks);
+  const refreshClasses = async () => {
+    const nextClasses = await request<ClassRoom[], ClassRoom[]>("/api/classes");
     setClasses(nextClasses);
-    setActiveTaskId(current => (nextTasks.some(task => task.id === current) ? current : (nextTasks[0]?.id ?? "")));
     setDraftClassId(current =>
       nextClasses.some(classRoom => classRoom.id === current) ? current : (nextClasses[0]?.id ?? "")
     );
+    return nextClasses;
+  };
+
+  const loadTasks = async () => {
+    setLoading(true);
+    try {
+      const [nextTasks, nextClasses] = await Promise.all([
+        request<TaskItem[], TaskItem[]>("/api/task-stats"),
+        request<ClassRoom[], ClassRoom[]>("/api/classes")
+      ]);
+      setTasks(nextTasks);
+      setClasses(nextClasses);
+      setActiveTaskId(current => (nextTasks.some(task => task.id === current) ? current : (nextTasks[0]?.id ?? "")));
+      setDraftClassId(current =>
+        nextClasses.some(classRoom => classRoom.id === current) ? current : (nextClasses[0]?.id ?? "")
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -157,21 +172,32 @@ export function TaskStats() {
   /** 基于表单草稿创建新任务，并进入新任务详情。 */
   const handleCreateTask = async () => {
     const title = draftTitle.trim() || "课后作业完成情况统计";
+    const availableClasses = classes.some(classRoom => classRoom.id === draftClassId)
+      ? classes
+      : await refreshClasses();
+    const selectedClass = availableClasses.find(classRoom => classRoom.id === draftClassId) ?? availableClasses[0];
+    if (!selectedClass) return;
+    const freshClass = await request<ClassRoom, ClassRoom>(`/api/classes/${selectedClass.id}`);
+    setClasses(current =>
+      current.some(classRoom => classRoom.id === freshClass.id)
+        ? current.map(classRoom => (classRoom.id === freshClass.id ? freshClass : classRoom))
+        : [freshClass, ...current]
+    );
+    setDraftClassId(freshClass.id);
     const nextTask = await request<TaskItem, TaskItem>({
       url: "/api/task-stats",
       method: "POST",
       data: {
         title,
-        className: draftClass?.name ?? "未选择班级",
+        className: freshClass.name,
         type: draftType,
         statusCount: draftStatusCount,
-        students:
-          draftClass?.students.map(student => ({
-            id: student.id,
-            name: student.name,
-            studentNo: student.studentNo,
-            status: "未完成" as StudentStatus
-          })) ?? []
+        students: freshClass.students.map(student => ({
+          id: student.id,
+          name: student.name,
+          studentNo: student.studentNo,
+          status: "未完成" as StudentStatus
+        }))
       }
     });
 
@@ -199,7 +225,7 @@ export function TaskStats() {
       method: "PATCH",
       data: {
         title,
-        className: draftClass?.name ?? "未选择班级",
+        className: draftClass?.name ?? classes[0]?.name ?? "未选择班级",
         type: draftType,
         statusCount: draftStatusCount
       }
@@ -224,6 +250,15 @@ export function TaskStats() {
   /** 删除任务是不可恢复操作，统一先做二次确认。 */
   const deleteTask = (taskId: string) => {
     setTaskDeleteId(taskId);
+  };
+
+  const openCreateTask = () => {
+    setEditingTaskId(null);
+    setDraftTitle("");
+    setDraftType("status");
+    setDraftStatusCount(2);
+    void refreshClasses();
+    setView("create");
   };
 
   const confirmDeleteTask = async () => {
@@ -337,6 +372,7 @@ export function TaskStats() {
               <Button
                 className="h-12 w-full bg-cyan-600 text-base font-bold hover:bg-cyan-700"
                 onClick={() => void (editing ? handleUpdateTask() : handleCreateTask())}
+                disabled={!editing && (loading || classes.length === 0)}
               >
                 {editing ? "保存任务" : "开始统计"}
               </Button>
@@ -519,7 +555,7 @@ export function TaskStats() {
                 <p className="text-sm font-medium text-slate-400">最近 {tasks.length} 个任务</p>
               </div>
             </div>
-            <Button className="bg-cyan-600 font-bold hover:bg-cyan-700" onClick={() => setView("create")}>
+            <Button className="bg-cyan-600 font-bold hover:bg-cyan-700" onClick={openCreateTask}>
               <Plus className="h-4 w-4" />
               新建任务
             </Button>

@@ -10,8 +10,15 @@ export class AssignSeatDto {
 }
 
 export class CreateSeatingChartDto {
+  classId?: string;
   className!: string;
   rows!: number;
   cols!: number;
+  students?: SeatingStudent[];
+}
+
+export class SyncSeatingChartClassroomDto {
+  classId?: string;
+  className!: string;
   students?: SeatingStudent[];
 }

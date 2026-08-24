@@ -42,6 +42,7 @@ export class SeatingChartDatabase {
       this.charts.create({
         id: chart.id,
         teacherId,
+        classId: chart.classId ?? null,
         className: chart.className,
         rows: chart.rows,
         cols: chart.cols,
@@ -57,6 +58,7 @@ export class SeatingChartDatabase {
           id: `${chart.id}:${student.id}`.slice(0, 64),
           teacherId,
           chartId: chart.id,
+          sourceStudentId: student.id,
           name: student.name,
           studentNo: student.studentNo,
         }),
@@ -80,6 +82,7 @@ export class SeatingChartDatabase {
   private toChart(entity: SeatingChartEntity): SeatingChart {
     return {
       id: entity.id,
+      classId: entity.classId ?? undefined,
       className: entity.className,
       rows: entity.rows,
       cols: entity.cols,
@@ -87,7 +90,7 @@ export class SeatingChartDatabase {
         .filter((item) => item.teacherId === this.teacherContext.teacherId)
         .sort((a, b) => a.studentNo.localeCompare(b.studentNo))
         .map((student) => ({
-          id: student.studentNo,
+          id: student.sourceStudentId ?? student.studentNo,
           name: student.name,
           studentNo: student.studentNo,
         })),

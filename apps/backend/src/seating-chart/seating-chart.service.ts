@@ -4,6 +4,7 @@ import {
   AssignSeatDto,
   CreateSeatingChartDto,
   ResizeSeatingChartDto,
+  SyncSeatingChartClassroomDto,
 } from './seating-chart.dto';
 import { SeatingChartDatabase } from './seating-chart.database';
 
@@ -22,6 +23,7 @@ export class SeatingChartService {
   create(dto: CreateSeatingChartDto) {
     const chart = {
       id: createEntityId('seating'),
+      classId: dto.classId,
       className: dto.className,
       rows: dto.rows,
       cols: dto.cols,
@@ -33,6 +35,26 @@ export class SeatingChartService {
       ),
     };
     return this.database.save(chart);
+  }
+
+  async syncClassroom(chartId: string, dto: SyncSeatingChartClassroomDto) {
+    const chart = await this.getChartOrThrow(chartId);
+    const students = dto.students ?? [];
+    const validStudentIds = new Set(students.map((student) => student.id));
+    const seats = chart.seats.map((seat) => ({
+      ...seat,
+      studentId:
+        seat.studentId && validStudentIds.has(seat.studentId)
+          ? seat.studentId
+          : null,
+    }));
+    return this.database.save({
+      ...chart,
+      classId: dto.classId,
+      className: dto.className,
+      students,
+      seats,
+    });
   }
 
   async resize(chartId: string, dto: ResizeSeatingChartDto) {

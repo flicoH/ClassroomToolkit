@@ -3,6 +3,7 @@ import {
   AssignSeatDto,
   CreateSeatingChartDto,
   ResizeSeatingChartDto,
+  SyncSeatingChartClassroomDto,
 } from './seating-chart.dto';
 import { SeatingChartService } from './seating-chart.service';
 
@@ -31,6 +32,14 @@ export class SeatingChartController {
     @Body() dto: ResizeSeatingChartDto,
   ) {
     return this.seatingChartService.resize(chartId, dto);
+  }
+
+  @Patch(':chartId/classroom')
+  syncClassroom(
+    @Param('chartId') chartId: string,
+    @Body() dto: SyncSeatingChartClassroomDto,
+  ) {
+    return this.seatingChartService.syncClassroom(chartId, dto);
   }
 
   @Patch(':chartId/seats/:seatId')
