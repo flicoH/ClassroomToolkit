@@ -152,4 +152,142 @@ describe('StudentsService', () => {
     ]);
     expect(database.saveClassroom).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects duplicate student numbers in the same classroom', async () => {
+    const classroom: Classroom = {
+      id: 'class-1',
+      name: '一年级',
+      groups: ['一组'],
+      students: [
+        {
+          id: '1001',
+          name: '张三',
+          studentNo: '1001',
+          gender: '男',
+        },
+      ],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    await expect(
+      service.addStudent('class-1', {
+        name: '李四',
+        studentNo: '1001',
+        gender: '女',
+      }),
+    ).rejects.toThrow('学生学号 1001 已存在');
+    expect(database.saveClassroom).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate student numbers during import', async () => {
+    const classroom: Classroom = {
+      id: 'class-1',
+      name: '一年级',
+      groups: ['一组'],
+      students: [
+        {
+          id: '1001',
+          name: '张三',
+          studentNo: '1001',
+          gender: '男',
+        },
+      ],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    await expect(
+      service.importStudents('class-1', {
+        text: '李四 1002 女\n王五 1002 男',
+      }),
+    ).rejects.toThrow('学生学号 1002 已存在');
+    expect(database.saveClassroom).not.toHaveBeenCalled();
+  });
+
+  it('assigns and removes a student group', async () => {
+    const classroom: Classroom = {
+      id: 'class-1',
+      name: '一年级',
+      groups: ['一组'],
+      students: [
+        {
+          id: '1001',
+          name: '张三',
+          studentNo: '1001',
+          gender: '男',
+        },
+      ],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    const assigned = await service.updateStudentGroup('class-1', '1001', {
+      group: '一组',
+    });
+    expect(assigned.group).toBe('一组');
+
+    const removed = await service.updateStudentGroup('class-1', '1001', {
+      group: null,
+    });
+    expect(removed.group).toBeUndefined();
+  });
+
+  it('deletes a group and clears students in that group', async () => {
+    const classroom: Classroom = {
+      id: 'class-1',
+      name: '一年级',
+      groups: ['一组', '二组'],
+      students: [
+        {
+          id: '1001',
+          name: '张三',
+          studentNo: '1001',
+          gender: '男',
+          group: '一组',
+        },
+        {
+          id: '1002',
+          name: '李四',
+          studentNo: '1002',
+          gender: '女',
+          group: '二组',
+        },
+      ],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    const updated = await service.deleteGroup('class-1', '一组');
+
+    expect(updated.groups).toEqual(['二组']);
+    expect(updated.students).toEqual([
+      {
+        id: '1001',
+        name: '张三',
+        studentNo: '1001',
+        gender: '男',
+        group: undefined,
+      },
+      {
+        id: '1002',
+        name: '李四',
+        studentNo: '1002',
+        gender: '女',
+        group: '二组',
+      },
+    ]);
+  });
 });

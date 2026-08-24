@@ -21,7 +21,7 @@ describe('PetPointsService', () => {
     };
     const database = {
       deleteClassStudentsExcept: jest.fn().mockResolvedValue(undefined),
-      findStudentById: jest.fn().mockResolvedValue(existing),
+      findStudentForSync: jest.fn().mockResolvedValue(existing),
       saveStudent: jest.fn().mockImplementation(async (student) => student),
     };
     const service = new PetPointsService(database as never);
@@ -30,16 +30,23 @@ describe('PetPointsService', () => {
       classId: 'grade-1',
       className: '一年级',
       students: [
-        { id: '2026001', name: '周杰伦', studentNo: '2026001', group: '一组' },
+        {
+          id: 'class-1:2026001',
+          name: '周杰伦',
+          studentNo: '2026001',
+          group: '一组',
+        },
       ],
     });
 
-    expect(database.deleteClassStudentsExcept).toHaveBeenCalledWith('grade-1', [
+    expect(database.findStudentForSync).toHaveBeenCalledWith(
+      'class-1:2026001',
       '2026001',
-    ]);
+      'grade-1',
+    );
     expect(database.saveStudent).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: '2026001',
+        id: 'class-1:2026001',
         name: '周杰伦',
         classId: 'grade-1',
         className: '一年级',
@@ -48,6 +55,9 @@ describe('PetPointsService', () => {
         petProgress: 10,
       }),
     );
+    expect(database.deleteClassStudentsExcept).toHaveBeenCalledWith('grade-1', [
+      'class-1:2026001',
+    ]);
     expect(synced[0].score).toBe(12);
   });
 

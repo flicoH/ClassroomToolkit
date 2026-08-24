@@ -62,6 +62,24 @@ export class PetPointsDatabase {
     return row ? this.toStudent(row) : undefined;
   }
 
+  async findStudentForSync(
+    studentId: string,
+    studentNo: string,
+    classId: string,
+  ) {
+    const row = await this.students.findOne({
+      where: [
+        ...this.studentWhere(studentId),
+        {
+          teacherId: this.teacherContext.teacherId,
+          classId,
+          studentNo,
+        },
+      ],
+    });
+    return row ? this.toStudent(row) : undefined;
+  }
+
   async deleteClassStudentsExcept(classId: string, studentIds: string[]) {
     if (studentIds.length) {
       await this.students.delete({
@@ -230,7 +248,7 @@ export class PetPointsDatabase {
 
   private toStudent(entity: PetStudentEntity): StudentPet {
     return {
-      id: entity.studentNo,
+      id: this.logicalStudentId(entity.id),
       name: entity.name,
       studentNo: entity.studentNo,
       classId: entity.classId,

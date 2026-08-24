@@ -633,7 +633,7 @@ export function PetPoints() {
         );
       } catch {
         if (studentRequestIdRef.current === requestId) {
-          setStudentDataError("学生数据接口获取失败，请检查后端服务");
+          setStudentDataError("学生同步失败，请检查后端服务");
         }
       } finally {
         if (studentRequestIdRef.current === requestId) setStudentDataLoading(false);
@@ -665,7 +665,8 @@ export function PetPoints() {
         await loadPetPointsOverview();
       }
     } catch {
-      setStudentDataError("班级数据接口获取失败，请检查后端服务");
+      await loadPetPointsOverview().catch(() => undefined);
+      setStudentDataError("班级数据接口获取失败，已显示现有宠物积分数据");
     } finally {
       setStudentDataLoading(false);
     }

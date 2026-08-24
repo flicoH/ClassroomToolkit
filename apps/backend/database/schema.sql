@@ -112,7 +112,6 @@ CREATE TABLE IF NOT EXISTS seating_chart_charts (
   teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',
   id VARCHAR(64) PRIMARY KEY COMMENT '座位表ID',
   class_name VARCHAR(64) NOT NULL COMMENT '班级名称',
-  class_id VARCHAR(64) NULL COMMENT '关联班级ID',
   rows_count INT NOT NULL COMMENT '行数',
   cols_count INT NOT NULL COMMENT '列数',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -123,7 +122,6 @@ CREATE TABLE IF NOT EXISTS seating_chart_students (
   teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',
   id VARCHAR(64) PRIMARY KEY COMMENT '座位表学生ID',
   chart_id VARCHAR(64) NOT NULL COMMENT '座位表ID',
-  source_student_id VARCHAR(64) NULL COMMENT '学生管理模块中的学生ID',
   name VARCHAR(64) NOT NULL COMMENT '学生姓名',
   student_no VARCHAR(64) NOT NULL COMMENT '学号',
   CONSTRAINT fk_seating_chart_students_chart

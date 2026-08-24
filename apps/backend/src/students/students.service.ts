@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { createEntityId } from '../common/id';
 import {
   CreateClassroomDto,
@@ -6,6 +10,7 @@ import {
   CreateStudentDto,
   ImportStudentsDto,
   UpdateClassroomDto,
+  UpdateStudentGroupDto,
   UpdateStudentDto,
 } from './students.dto';
 import { StudentsDatabase } from './students.database';
@@ -72,17 +77,23 @@ export class StudentsService {
 
   async addStudent(classroomId: string, dto: CreateStudentDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
+    const studentNo =
+      dto.studentNo?.trim() || this.createNextStudentNo(classroom.students);
+    this.assertStudentNoAvailable(classroom.students, studentNo);
     const student: Student = {
-      id: dto.studentNo || createEntityId('student'),
+      id: studentNo,
       name: dto.name.trim(),
-      studentNo:
-        dto.studentNo || String(2026000 + classroom.students.length + 1),
+      studentNo,
       gender: dto.gender ?? '',
       group: dto.group,
     };
     classroom.students.push(student);
-    await this.database.saveClassroom(classroom);
-    return student;
+    const savedClassroom = await this.database.saveClassroom(classroom);
+    return (
+      savedClassroom.students.find(
+        (savedStudent) => savedStudent.studentNo === studentNo,
+      ) ?? student
+    );
   }
 
   async updateStudent(
@@ -96,9 +107,24 @@ export class StudentsService {
     );
     if (index < 0) throw new NotFoundException('学生不存在');
     const currentStudent = classroom.students[index]!;
-    classroom.students[index] = { ...currentStudent, ...dto, id: studentId };
-    await this.database.saveClassroom(classroom);
-    return classroom.students[index];
+    const studentNo =
+      dto.studentNo === undefined
+        ? currentStudent.studentNo
+        : dto.studentNo.trim() ||
+          this.createNextStudentNo(classroom.students, index);
+    this.assertStudentNoAvailable(classroom.students, studentNo, index);
+    classroom.students[index] = {
+      ...currentStudent,
+      ...dto,
+      id: studentId,
+      name: dto.name?.trim() || currentStudent.name,
+      studentNo,
+    };
+    const savedClassroom = await this.database.saveClassroom(classroom);
+    return (
+      savedClassroom.students.find((student) => student.id === studentId) ??
+      classroom.students[index]
+    );
   }
 
   async deleteStudent(classroomId: string, studentId: string) {
@@ -112,10 +138,15 @@ export class StudentsService {
 
   async importStudents(classroomId: string, dto: ImportStudentsDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
-    const students = this.parseImportRows(dto.text, classroom.students.length);
+    const students = this.parseImportRows(dto.text, classroom.students);
     classroom.students.push(...students);
-    await this.database.saveClassroom(classroom);
-    return students;
+    const savedClassroom = await this.database.saveClassroom(classroom);
+    const importedStudentNos = new Set(
+      students.map((student) => student.studentNo),
+    );
+    return savedClassroom.students.filter((student) =>
+      importedStudentNos.has(student.studentNo),
+    );
   }
 
   async addGroup(classroomId: string, dto: CreateGroupDto) {
@@ -124,6 +155,39 @@ export class StudentsService {
     if (name && !classroom.groups.includes(name)) classroom.groups.push(name);
     await this.database.saveClassroom(classroom);
     return classroom.groups;
+  }
+
+  async updateStudentGroup(
+    classroomId: string,
+    studentId: string,
+    dto: UpdateStudentGroupDto,
+  ) {
+    const classroom = await this.getClassroomOrThrow(classroomId);
+    const student = classroom.students.find((item) => item.id === studentId);
+    if (!student) throw new NotFoundException('学生不存在');
+
+    const group = dto.group?.trim();
+    if (group && !classroom.groups.includes(group)) {
+      throw new NotFoundException('分组不存在');
+    }
+
+    student.group = group || undefined;
+    const savedClassroom = await this.database.saveClassroom(classroom);
+    return (
+      savedClassroom.students.find((item) => item.id === studentId) ?? student
+    );
+  }
+
+  async deleteGroup(classroomId: string, groupName: string) {
+    const classroom = await this.getClassroomOrThrow(classroomId);
+    const name = groupName.trim();
+    if (!name) throw new BadRequestException('分组名称不能为空');
+
+    classroom.groups = classroom.groups.filter((group) => group !== name);
+    classroom.students = classroom.students.map((student) =>
+      student.group === name ? { ...student, group: undefined } : student,
+    );
+    return this.database.saveClassroom(classroom);
   }
 
   private applyStudentQuery(
@@ -176,7 +240,13 @@ export class StudentsService {
   }
 
   /** 保持与前端导入框一致：每行 “姓名 学号 性别”，学号缺省则自动生成。 */
-  private parseImportRows(text: string, offset: number): Student[] {
+  private parseImportRows(
+    text: string,
+    existingStudents: Student[],
+  ): Student[] {
+    const usedStudentNos = new Set(
+      existingStudents.map((student) => student.studentNo),
+    );
     return text
       .split('\n')
       .map((row) => row.trim())
@@ -188,8 +258,50 @@ export class StudentsService {
           maybeGender === '男' || maybeGender === '女' ? maybeGender : '';
         const studentNo = /^\d+$/.test(maybeNo)
           ? maybeNo
-          : String(2026000 + offset + index + 1);
+          : this.createNextStudentNoFromSet(
+              usedStudentNos,
+              existingStudents.length + index,
+            );
+        if (usedStudentNos.has(studentNo)) {
+          throw new BadRequestException(`学生学号 ${studentNo} 已存在`);
+        }
+        usedStudentNos.add(studentNo);
         return { id: studentNo, name, studentNo, gender };
       });
+  }
+
+  private createNextStudentNo(students: Student[], excludeIndex?: number) {
+    const usedStudentNos = new Set(
+      students
+        .filter((_, index) => index !== excludeIndex)
+        .map((student) => student.studentNo),
+    );
+    return this.createNextStudentNoFromSet(usedStudentNos, students.length);
+  }
+
+  private createNextStudentNoFromSet(
+    usedStudentNos: Set<string>,
+    offset: number,
+  ) {
+    let nextStudentNo = String(2026000 + offset + 1);
+    while (usedStudentNos.has(nextStudentNo)) {
+      nextStudentNo = String(Number(nextStudentNo) + 1);
+    }
+    return nextStudentNo;
+  }
+
+  private assertStudentNoAvailable(
+    students: Student[],
+    studentNo: string,
+    excludeIndex?: number,
+  ) {
+    if (
+      students.some(
+        (student, index) =>
+          index !== excludeIndex && student.studentNo === studentNo,
+      )
+    ) {
+      throw new BadRequestException(`学生学号 ${studentNo} 已存在`);
+    }
   }
 }

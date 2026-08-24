@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskStudentEntity } from './entities/task-student.entity';
 import { TaskEntity } from './entities/task.entity';
-import { TaskItem } from './task-stats.types';
+import { StudentStatus, TaskItem } from './task-stats.types';
 import { TeacherContext } from '../auth/teacher-context';
 
 @Injectable()
@@ -62,6 +62,45 @@ export class TaskStatsDatabase {
       ),
     );
     return (await this.findById(task.id))!;
+  }
+
+  async updateStudentStatus(
+    taskId: string,
+    studentId: string,
+    status: StudentStatus,
+    score?: number,
+  ) {
+    const result = await this.students.update(
+      {
+        taskId,
+        teacherId: this.teacherContext.teacherId,
+        studentId,
+      },
+      {
+        status,
+        score: score === undefined ? undefined : String(score),
+      },
+    );
+    return Boolean(result.affected);
+  }
+
+  async cycleStudentStatus(taskId: string, studentId: string) {
+    const result = await this.students.query(
+      `
+        UPDATE task_stats_students
+        SET status = CASE status
+          WHEN '未完成' THEN '已完成'
+          WHEN '已完成' THEN '需订正'
+          ELSE '未完成'
+        END
+        WHERE task_id = ? AND teacher_id = ? AND student_id = ?
+      `,
+      [taskId, this.teacherContext.teacherId, studentId],
+    );
+    const affectedRows = Array.isArray(result)
+      ? result[0]?.affectedRows
+      : result?.affectedRows;
+    return Number(affectedRows ?? 0) > 0;
   }
 
   async delete(id: string) {

@@ -23,6 +23,10 @@ export class UpdateStudentDto {
   group?: string;
 }
 
+export class UpdateStudentGroupDto {
+  group?: string | null;
+}
+
 export class ImportStudentsDto {
   text!: string;
 }

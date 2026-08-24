@@ -14,6 +14,7 @@ import {
   CreateStudentDto,
   ImportStudentsDto,
   UpdateClassroomDto,
+  UpdateStudentGroupDto,
   UpdateStudentDto,
 } from './students.dto';
 import { StudentsService } from './students.service';
@@ -93,5 +94,22 @@ export class StudentsController {
     @Body() dto: CreateGroupDto,
   ) {
     return this.studentsService.addGroup(classroomId, dto);
+  }
+
+  @Patch(':classroomId/students/:studentId/group')
+  updateStudentGroup(
+    @Param('classroomId') classroomId: string,
+    @Param('studentId') studentId: string,
+    @Body() dto: UpdateStudentGroupDto,
+  ) {
+    return this.studentsService.updateStudentGroup(classroomId, studentId, dto);
+  }
+
+  @Delete(':classroomId/groups/:groupName')
+  deleteGroup(
+    @Param('classroomId') classroomId: string,
+    @Param('groupName') groupName: string,
+  ) {
+    return this.studentsService.deleteGroup(classroomId, groupName);
   }
 }

@@ -104,7 +104,7 @@ export class StudentsDatabase {
 
   private toStudent(entity: StudentEntity): Student {
     return {
-      id: entity.studentNo,
+      id: entity.id,
       name: entity.name,
       studentNo: entity.studentNo,
       gender: entity.gender,
@@ -113,6 +113,7 @@ export class StudentsDatabase {
   }
 
   private studentStorageId(classroomId: string, studentId: string) {
+    if (studentId.startsWith(`${classroomId}:`)) return studentId.slice(0, 64);
     return `${classroomId}:${studentId}`.slice(0, 64);
   }
 }

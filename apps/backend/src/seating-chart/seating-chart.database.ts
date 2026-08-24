@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SeatingChartSeatEntity } from './entities/seating-chart-seat.entity';
@@ -9,6 +9,8 @@ import { TeacherContext } from '../auth/teacher-context';
 
 @Injectable()
 export class SeatingChartDatabase {
+  private readonly logger = new Logger(SeatingChartDatabase.name);
+
   constructor(
     @InjectRepository(SeatingChartEntity)
     private readonly charts: Repository<SeatingChartEntity>,
@@ -20,12 +22,19 @@ export class SeatingChartDatabase {
   ) {}
 
   async findAll() {
-    const rows = await this.charts.find({
-      where: { teacherId: this.teacherContext.teacherId },
-      relations: { students: true, seats: true },
-      order: { createdAt: 'ASC' },
-    });
-    return rows.map((row) => this.toChart(row));
+    try {
+      const rows = await this.charts.find({
+        where: { teacherId: this.teacherContext.teacherId },
+        relations: { students: true, seats: true },
+        order: { createdAt: 'ASC' },
+      });
+      return rows.map((row) => this.toChart(row));
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load seating charts, falling back to empty list: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
   }
 
   async findById(id: string) {
@@ -42,7 +51,6 @@ export class SeatingChartDatabase {
       this.charts.create({
         id: chart.id,
         teacherId,
-        classId: chart.classId ?? null,
         className: chart.className,
         rows: chart.rows,
         cols: chart.cols,
@@ -53,12 +61,11 @@ export class SeatingChartDatabase {
       this.seats.delete({ chartId: chart.id, teacherId }),
     ]);
     await this.students.save(
-      chart.students.map((student) =>
+      chart.students.map((student, index) =>
         this.students.create({
-          id: `${chart.id}:${student.id}`.slice(0, 64),
+          id: `${chart.id}:${index}:${student.studentNo}`.slice(0, 64),
           teacherId,
           chartId: chart.id,
-          sourceStudentId: student.id,
           name: student.name,
           studentNo: student.studentNo,
         }),
@@ -82,7 +89,6 @@ export class SeatingChartDatabase {
   private toChart(entity: SeatingChartEntity): SeatingChart {
     return {
       id: entity.id,
-      classId: entity.classId ?? undefined,
       className: entity.className,
       rows: entity.rows,
       cols: entity.cols,
@@ -90,7 +96,7 @@ export class SeatingChartDatabase {
         .filter((item) => item.teacherId === this.teacherContext.teacherId)
         .sort((a, b) => a.studentNo.localeCompare(b.studentNo))
         .map((student) => ({
-          id: student.sourceStudentId ?? student.studentNo,
+          id: student.studentNo,
           name: student.name,
           studentNo: student.studentNo,
         })),

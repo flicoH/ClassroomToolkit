@@ -7,7 +7,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Grid3X3, Move, Plus, RotateCcw, Shuffle, Trash2, Users } from "lucide-react";
+import { Grid3X3, Loader2, Move, Plus, RotateCcw, Shuffle, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import request from "@/lib/request";
@@ -65,13 +65,14 @@ export function SeatingChart() {
   const seats = chart?.seats ?? [];
   const rows = chart?.rows ?? 4;
   const cols = chart?.cols ?? 4;
+  const loadingSeats = Array.from({ length: rows * cols }, (_, index) => index);
   const studentMap = useMemo(() => new Map(students.map(student => [student.id, student])), [students]);
   const seatedIds = new Set(seats.map(seat => seat.studentId).filter(Boolean));
   const unseatedStudents = students.filter(student => !seatedIds.has(student.id));
 
   const toSeatingStudents = (classRoom: ClassRoom): Student[] =>
     classRoom.students.map(student => ({
-      id: student.id,
+      id: student.studentNo,
       name: student.name,
       studentNo: student.studentNo
     }));
@@ -112,10 +113,8 @@ export function SeatingChart() {
   const loadChart = async (preferredClassId?: string) => {
     setLoading(true);
     try {
-      const [charts, nextClasses] = await Promise.all([
-        request<SeatingChartData[], SeatingChartData[]>("/api/seating-charts"),
-        request<ClassRoom[], ClassRoom[]>("/api/classes")
-      ]);
+      const nextClasses = await request<ClassRoom[], ClassRoom[]>("/api/classes");
+      const charts = await request<SeatingChartData[], SeatingChartData[]>("/api/seating-charts").catch(() => []);
       setClasses(nextClasses);
       const nextClass =
         nextClasses.find(classRoom => classRoom.id === preferredClassId) ??
@@ -149,14 +148,19 @@ export function SeatingChart() {
 
   /** 调整行列时重建座位，同时尽量保留原座位上的学生。 */
   const rebuildSeats = async (nextRows: number, nextCols: number) => {
-    if (!chart) return;
-    const nextChart = await request<SeatingChartData, SeatingChartData>({
-      url: `/api/seating-charts/${chart.id}/resize`,
-      method: "PATCH",
-      data: { rows: nextRows, cols: nextCols }
-    });
-    setChart(nextChart);
-    setSelectedSeatId(null);
+    if (!chart || loading) return;
+    setLoading(true);
+    try {
+      const nextChart = await request<SeatingChartData, SeatingChartData>({
+        url: `/api/seating-charts/${chart.id}/resize`,
+        method: "PATCH",
+        data: { rows: nextRows, cols: nextCols }
+      });
+      setChart(nextChart);
+      setSelectedSeatId(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   /** 删除行会丢失最后一行座位，因此需要确认。 */
@@ -178,13 +182,18 @@ export function SeatingChart() {
 
   /** 随机排座会覆盖当前座位安排。 */
   const shuffleSeats = async () => {
-    if (!chart) return;
-    const nextChart = await request<SeatingChartData, SeatingChartData>({
-      url: `/api/seating-charts/${chart.id}/shuffle`,
-      method: "POST"
-    });
-    setChart(nextChart);
-    setSelectedSeatId(null);
+    if (!chart || loading) return;
+    setLoading(true);
+    try {
+      const nextChart = await request<SeatingChartData, SeatingChartData>({
+        url: `/api/seating-charts/${chart.id}/shuffle`,
+        method: "POST"
+      });
+      setChart(nextChart);
+      setSelectedSeatId(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   /** 清空单个座位，同样走二次确认。 */
@@ -195,12 +204,17 @@ export function SeatingChart() {
       title: "清空座位",
       description: `确定清空${student ? `「${student.name}」的` : "当前"}座位吗？`,
       onConfirm: async () => {
-        if (!chart) return;
-        const nextChart = await request<SeatingChartData, SeatingChartData>({
-          url: `/api/seating-charts/${chart.id}/seats/${seatId}/clear`,
-          method: "POST"
-        });
-        setChart(nextChart);
+        if (!chart || loading) return;
+        setLoading(true);
+        try {
+          const nextChart = await request<SeatingChartData, SeatingChartData>({
+            url: `/api/seating-charts/${chart.id}/seats/${seatId}/clear`,
+            method: "POST"
+          });
+          setChart(nextChart);
+        } finally {
+          setLoading(false);
+        }
       }
     });
   };
@@ -212,15 +226,20 @@ export function SeatingChart() {
 
   /** 将学生放入目标座位；如果来源是另一个座位，则支持移动/交换。 */
   const assignStudent = async (seatId: string, studentId: string) => {
-    if (!chart) return;
-    const nextChart = await request<SeatingChartData, SeatingChartData>({
-      url: `/api/seating-charts/${chart.id}/seats/${seatId}`,
-      method: "PATCH",
-      data: { studentId }
-    });
-    setChart(nextChart);
-    setDraggingStudentId(null);
-    setDraggingSeatId(null);
+    if (!chart || loading) return;
+    setLoading(true);
+    try {
+      const nextChart = await request<SeatingChartData, SeatingChartData>({
+        url: `/api/seating-charts/${chart.id}/seats/${seatId}`,
+        method: "PATCH",
+        data: { studentId }
+      });
+      setChart(nextChart);
+      setDraggingStudentId(null);
+      setDraggingSeatId(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   /** 拖拽已安排学生到另一个座位时，空座移动，有人则交换。 */
@@ -262,26 +281,38 @@ export function SeatingChart() {
                     {classRoom.name}
                   </Button>
                 ))}
-                <Button variant="outline" onClick={deleteRow}>
+                <Button variant="outline" onClick={deleteRow} disabled={loading || !chart}>
                   删除行
                 </Button>
-                <Button variant="outline" onClick={() => void rebuildSeats(rows + 1, cols)}>
+                <Button
+                  variant="outline"
+                  onClick={() => void rebuildSeats(rows + 1, cols)}
+                  disabled={loading || !chart}
+                >
                   <Plus className="h-4 w-4" />
                   添加行
                 </Button>
-                <Button variant="outline" onClick={deleteColumn}>
+                <Button variant="outline" onClick={deleteColumn} disabled={loading || !chart}>
                   删除列
                 </Button>
-                <Button variant="outline" onClick={() => void rebuildSeats(rows, cols + 1)}>
+                <Button
+                  variant="outline"
+                  onClick={() => void rebuildSeats(rows, cols + 1)}
+                  disabled={loading || !chart}
+                >
                   <Plus className="h-4 w-4" />
                   添加列
                 </Button>
-                <Button variant="outline" onClick={() => void rebuildSeats(rows, cols)}>
+                <Button variant="outline" onClick={() => void rebuildSeats(rows, cols)} disabled={loading || !chart}>
                   <RotateCcw className="h-4 w-4" />
                   重置
                 </Button>
-                <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => void shuffleSeats()}>
-                  <Shuffle className="h-4 w-4" />
+                <Button
+                  className="bg-blue-600 font-bold hover:bg-blue-700"
+                  onClick={() => void shuffleSeats()}
+                  disabled={loading || !chart}
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shuffle className="h-4 w-4" />}
                   随机排座
                 </Button>
               </div>
@@ -293,58 +324,72 @@ export function SeatingChart() {
               讲台
             </div>
 
-            <div className="mx-auto w-full max-w-[860px] rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <div className="relative mx-auto w-full max-w-[860px] rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900">
               <div
                 className="grid gap-3"
                 style={{
                   gridTemplateColumns: `repeat(${cols}, minmax(90px, 1fr))`
                 }}
               >
-                {seats.map(seat => {
-                  const student = seat.studentId ? studentMap.get(seat.studentId) : null;
-                  const isSelected = selectedSeatId === seat.id;
-                  return (
-                    <button
-                      key={seat.id}
-                      draggable={Boolean(student)}
-                      onClick={() => setSelectedSeatId(seat.id)}
-                      onDragStart={() => {
-                        if (!student) return;
-                        setDraggingStudentId(student.id);
-                        setDraggingSeatId(seat.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggingStudentId(null);
-                        setDraggingSeatId(null);
-                      }}
-                      onDragOver={event => event.preventDefault()}
-                      onDrop={() => moveOrSwapSeat(seat.id)}
-                      className={cn(
-                        "min-h-[92px] rounded-xl border p-3 text-center transition",
-                        isSelected
-                          ? "border-blue-400 bg-blue-50 shadow-md dark:border-blue-700 dark:bg-blue-950/50"
-                          : student
-                            ? "border-slate-100 bg-white shadow-sm hover:border-blue-200 dark:border-slate-800 dark:bg-slate-950"
-                            : "border-dashed border-slate-200 bg-slate-50 text-slate-300 dark:border-slate-800 dark:bg-slate-950/60"
-                      )}
-                    >
-                      {student ? (
-                        <>
-                          <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                            {getInitial(student.name)}
-                          </div>
-                          <div className="truncate font-bold">{student.name}</div>
-                          <div className="mt-1 text-xs font-semibold text-slate-400">#{student.studentNo}</div>
-                        </>
-                      ) : (
-                        <div className="flex h-full min-h-[66px] items-center justify-center text-sm font-semibold">
-                          空座位
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+                {loading && !chart
+                  ? loadingSeats.map(item => (
+                      <div
+                        key={item}
+                        className="min-h-[92px] animate-pulse rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/60"
+                      />
+                    ))
+                  : seats.map(seat => {
+                      const student = seat.studentId ? studentMap.get(seat.studentId) : null;
+                      const isSelected = selectedSeatId === seat.id;
+                      return (
+                        <button
+                          key={seat.id}
+                          draggable={Boolean(student) && !loading}
+                          disabled={loading}
+                          onClick={() => setSelectedSeatId(seat.id)}
+                          onDragStart={() => {
+                            if (!student) return;
+                            setDraggingStudentId(student.id);
+                            setDraggingSeatId(seat.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingStudentId(null);
+                            setDraggingSeatId(null);
+                          }}
+                          onDragOver={event => event.preventDefault()}
+                          onDrop={() => moveOrSwapSeat(seat.id)}
+                          className={cn(
+                            "min-h-[92px] rounded-xl border p-3 text-center transition",
+                            isSelected
+                              ? "border-blue-400 bg-blue-50 shadow-md dark:border-blue-700 dark:bg-blue-950/50"
+                              : student
+                                ? "border-slate-100 bg-white shadow-sm hover:border-blue-200 dark:border-slate-800 dark:bg-slate-950"
+                                : "border-dashed border-slate-200 bg-slate-50 text-slate-300 dark:border-slate-800 dark:bg-slate-950/60"
+                          )}
+                        >
+                          {student ? (
+                            <>
+                              <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                {getInitial(student.name)}
+                              </div>
+                              <div className="truncate font-bold">{student.name}</div>
+                              <div className="mt-1 text-xs font-semibold text-slate-400">#{student.studentNo}</div>
+                            </>
+                          ) : (
+                            <div className="flex h-full min-h-[66px] items-center justify-center text-sm font-semibold">
+                              空座位
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
               </div>
+              {loading && chart && (
+                <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-white/70 text-sm font-bold text-blue-600 backdrop-blur-[1px] dark:bg-slate-900/70 dark:text-blue-300">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  正在更新座位表...
+                </div>
+              )}
             </div>
           </main>
         </section>
@@ -358,14 +403,15 @@ export function SeatingChart() {
             {unseatedStudents.map(student => (
               <button
                 key={student.id}
-                draggable
+                draggable={!loading}
+                disabled={loading}
                 onDragStart={() => setDraggingStudentId(student.id)}
                 onDragEnd={() => {
                   setDraggingStudentId(null);
                   setDraggingSeatId(null);
                 }}
                 onClick={() => selectedSeat && void assignStudent(selectedSeat.id, student.id)}
-                className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-blue-200 hover:bg-blue-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-blue-950/40"
+                className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-blue-950/40"
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white font-bold text-blue-700 dark:bg-slate-900 dark:text-blue-300">
                   {getInitial(student.name)}
@@ -378,7 +424,7 @@ export function SeatingChart() {
             ))}
             {unseatedStudents.length === 0 && (
               <div className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-400 dark:bg-slate-950">
-                全部学生已安排
+                {loading ? "正在加载学生..." : "全部学生已安排"}
               </div>
             )}
           </div>
@@ -401,7 +447,7 @@ export function SeatingChart() {
                 variant="outline"
                 className="mt-3 w-full text-rose-500 hover:text-rose-600"
                 onClick={() => clearSeat(selectedSeat.id)}
-                disabled={!selectedSeat.studentId}
+                disabled={loading || !selectedSeat.studentId}
               >
                 <Trash2 className="h-4 w-4" />
                 清空座位

@@ -48,24 +48,22 @@ export class TaskStatsService {
     studentId: string,
     dto: UpdateTaskStudentStatusDto,
   ) {
-    const task = await this.getTaskOrThrow(taskId);
-    const students = task.students.map((student) =>
-      student.id === studentId ? { ...student, ...dto } : student,
+    await this.getTaskOrThrow(taskId);
+    const updated = await this.database.updateStudentStatus(
+      taskId,
+      studentId,
+      dto.status,
+      dto.score,
     );
-    if (!students.some((student) => student.id === studentId))
-      throw new NotFoundException('任务学生不存在');
-    return this.withSummary(await this.database.save({ ...task, students }));
+    if (!updated) throw new NotFoundException('任务学生不存在');
+    return this.withSummary(await this.getTaskOrThrow(taskId));
   }
 
   async cycleStudentStatus(taskId: string, studentId: string) {
-    const task = await this.getTaskOrThrow(taskId);
-    const students = task.students.map((student) => {
-      if (student.id !== studentId) return student;
-      const nextIndex =
-        (statusOrder.indexOf(student.status) + 1) % statusOrder.length;
-      return { ...student, status: statusOrder[nextIndex] ?? '未完成' };
-    });
-    return this.withSummary(await this.database.save({ ...task, students }));
+    await this.getTaskOrThrow(taskId);
+    const updated = await this.database.cycleStudentStatus(taskId, studentId);
+    if (!updated) throw new NotFoundException('任务学生不存在');
+    return this.withSummary(await this.getTaskOrThrow(taskId));
   }
 
   async delete(taskId: string) {

@@ -24,31 +24,28 @@ describe('TaskStatsService', () => {
         },
       ],
     };
+    const updatedTask = {
+      ...task,
+      students: task.students.map((student) =>
+        student.id === '2026001'
+          ? { ...student, status: '已完成' as const }
+          : student,
+      ),
+    };
     const database = {
-      findById: jest.fn().mockResolvedValue(task),
-      save: jest.fn().mockImplementation(async (nextTask) => nextTask),
+      findById: jest
+        .fn()
+        .mockResolvedValueOnce(task)
+        .mockResolvedValueOnce(updatedTask),
+      cycleStudentStatus: jest.fn().mockResolvedValue(true),
     };
     const service = new TaskStatsService(database as never);
 
     const nextTask = await service.cycleStudentStatus('task-1', '2026001');
 
-    expect(database.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        students: [
-          {
-            id: '2026001',
-            name: '周杰伦',
-            studentNo: '2026001',
-            status: '已完成',
-          },
-          {
-            id: '2026002',
-            name: '林俊杰',
-            studentNo: '2026002',
-            status: '已完成',
-          },
-        ],
-      }),
+    expect(database.cycleStudentStatus).toHaveBeenCalledWith(
+      'task-1',
+      '2026001',
     );
     expect(nextTask.summary).toEqual(
       expect.objectContaining({

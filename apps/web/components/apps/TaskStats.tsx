@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -120,6 +120,8 @@ export function TaskStats() {
   const [draftStatusCount, setDraftStatusCount] = useState(2);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskDeleteId, setTaskDeleteId] = useState<string | null>(null);
+  const [updatingStudentIds, setUpdatingStudentIds] = useState<Set<string>>(new Set());
+  const updatingStudentIdsRef = useRef<Set<string>>(new Set());
 
   const activeTask = tasks.find(task => task.id === activeTaskId) ?? tasks[0];
   const draftClass = classes.find(classRoom => classRoom.id === draftClassId);
@@ -240,11 +242,24 @@ export function TaskStats() {
   /** 点击学生卡片时按固定顺序轮转任务状态。 */
   const updateStudentStatus = async (studentId: string) => {
     if (!activeTask) return;
-    const nextTask = await request<TaskItem, TaskItem>({
-      url: `/api/task-stats/${activeTask.id}/students/${studentId}/cycle-status`,
-      method: "POST"
-    });
-    setTasks(current => current.map(task => (task.id === nextTask.id ? nextTask : task)));
+    const updateKey = `${activeTask.id}:${studentId}`;
+    if (updatingStudentIdsRef.current.has(updateKey)) return;
+    updatingStudentIdsRef.current.add(updateKey);
+    setUpdatingStudentIds(current => new Set(current).add(updateKey));
+    try {
+      const nextTask = await request<TaskItem, TaskItem>({
+        url: `/api/task-stats/${activeTask.id}/students/${studentId}/cycle-status`,
+        method: "POST"
+      });
+      setTasks(current => current.map(task => (task.id === nextTask.id ? nextTask : task)));
+    } finally {
+      updatingStudentIdsRef.current.delete(updateKey);
+      setUpdatingStudentIds(current => {
+        const next = new Set(current);
+        next.delete(updateKey);
+        return next;
+      });
+    }
   };
 
   /** 删除任务是不可恢复操作，统一先做二次确认。 */
@@ -488,11 +503,14 @@ export function TaskStats() {
           >
             {filteredStudents.map(student => {
               const style = statusStyles[student.status];
+              const updateKey = `${activeTask.id}:${student.id}`;
+              const updating = updatingStudentIds.has(updateKey);
               return (
                 <button
                   key={student.id}
                   onClick={() => void updateStudentStatus(student.id)}
-                  className="group min-h-[120px] rounded-xl bg-white p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900"
+                  disabled={updating}
+                  className="group min-h-[120px] rounded-xl bg-white p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-wait disabled:opacity-70 dark:bg-slate-900"
                 >
                   <div
                     className={cn(

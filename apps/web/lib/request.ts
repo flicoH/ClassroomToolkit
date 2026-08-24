@@ -8,9 +8,10 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-19
  */
-import axios, { AxiosError, AxiosResponse } from "axios";
+import axios, { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import { cookieStorage } from "./cookie";
 import toast from "react-hot-toast";
+import { useRequestLoadingStore } from "@/store/requestLoadingStore";
 
 const request = axios.create({
   // 认证 token 只存在于 HttpOnly Cookie，浏览器请求必须经过同源 Next BFF。
@@ -25,12 +26,28 @@ function isAuthSubmitUrl(url = "") {
   return url.includes("/api/login") || url.includes("/api/register");
 }
 
+function startGlobalLoading(config: InternalAxiosRequestConfig) {
+  useRequestLoadingStore.getState().startRequest();
+  return config;
+}
+
+function endGlobalLoading() {
+  useRequestLoadingStore.getState().endRequest();
+}
+
+request.interceptors.request.use(startGlobalLoading, error => {
+  endGlobalLoading();
+  return Promise.reject(error);
+});
+
 // 响应拦截器：业务层直接拿 response.data，错误提示也在这里集中处理。
 request.interceptors.response.use(
   (response: AxiosResponse) => {
+    endGlobalLoading();
     return response.data;
   },
   (error: AxiosError<{ message?: string }>) => {
+    endGlobalLoading();
     const status = error.response?.status;
     const message = error.response?.data?.message || error.message || "请求失败";
 

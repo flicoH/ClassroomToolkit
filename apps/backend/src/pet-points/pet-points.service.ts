@@ -65,12 +65,12 @@ export class PetPointsService {
 
   async syncClassStudents(dto: SyncPetClassDto) {
     const synced: StudentPet[] = [];
-    await this.database.deleteClassStudentsExcept(
-      dto.classId,
-      dto.students.map((student) => student.id),
-    );
     for (const item of dto.students) {
-      const current = await this.database.findStudentById(item.id);
+      const current = await this.database.findStudentForSync(
+        item.id,
+        item.studentNo,
+        dto.classId,
+      );
       synced.push(
         await this.database.saveStudent({
           id: item.id,
@@ -93,6 +93,10 @@ export class PetPointsService {
         }),
       );
     }
+    await this.database.deleteClassStudentsExcept(
+      dto.classId,
+      dto.students.map((student) => student.id),
+    );
     return synced;
   }
 
