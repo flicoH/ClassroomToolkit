@@ -90,4 +90,36 @@ describe('StudentsService', () => {
       },
     ]);
   });
+
+  it('updates classroom name without changing students or groups', async () => {
+    const classroom = {
+      id: 'grade-1',
+      name: '一年级',
+      groups: ['一组'],
+      students: [
+        {
+          id: '2026001',
+          name: '周杰伦',
+          studentNo: '2026001',
+          gender: '男',
+          group: '一组',
+        },
+      ],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    const updated = await service.updateClassroom('grade-1', {
+      name: '一年级 1 班',
+    });
+
+    expect(database.saveClassroom).toHaveBeenCalledWith({
+      ...classroom,
+      name: '一年级 1 班',
+    });
+    expect(updated.students).toHaveLength(1);
+  });
 });

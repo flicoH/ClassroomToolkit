@@ -5,6 +5,7 @@ import {
   CreateGroupDto,
   CreateStudentDto,
   ImportStudentsDto,
+  UpdateClassroomDto,
   UpdateStudentDto,
 } from './students.dto';
 import { StudentsDatabase } from './students.database';
@@ -62,6 +63,13 @@ export class StudentsService {
       groups: dto.groups ?? [],
       students: [],
     };
+    return this.database.saveClassroom(classroom);
+  }
+
+  async updateClassroom(classroomId: string, dto: UpdateClassroomDto) {
+    const classroom = await this.getClassroomOrThrow(classroomId);
+    const name = dto.name?.trim();
+    if (name) classroom.name = name;
     return this.database.saveClassroom(classroom);
   }
 

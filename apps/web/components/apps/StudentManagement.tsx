@@ -27,7 +27,7 @@ import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 type Gender = "男" | "女" | "";
-type ModalType = "student" | "editStudent" | "import" | "class" | "groups" | null;
+type ModalType = "student" | "editStudent" | "import" | "class" | "editClass" | "groups" | null;
 
 interface Student {
   id: string;
@@ -105,6 +105,7 @@ export function StudentManagement() {
   const [importText, setImportText] = useState("");
   const [groupName, setGroupName] = useState("");
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
 
   const activeClass = classes.find(item => item.id === activeClassId) ?? defaultClass;
@@ -166,6 +167,7 @@ export function StudentManagement() {
     setStudentNo("");
     setStudentGender("");
     setEditingStudentId(null);
+    setEditingClassId(null);
     setClassName("");
     setImportText("");
     setGroupName("");
@@ -250,6 +252,25 @@ export function StudentManagement() {
     closeModal();
   };
 
+  const openEditClass = (classRoom: ClassRoom) => {
+    setEditingClassId(classRoom.id);
+    setClassName(classRoom.name);
+    setModal("editClass");
+  };
+
+  const updateClass = async () => {
+    const name = className.trim();
+    if (!name || !editingClassId) return;
+    const updated = await request<ClassRoom, ClassRoom>({
+      url: `/api/classes/${editingClassId}`,
+      method: "PATCH",
+      data: { name }
+    });
+    setClasses(current => current.map(classRoom => (classRoom.id === updated.id ? updated : classRoom)));
+    setActiveClassId(updated.id);
+    closeModal();
+  };
+
   const importStudents = async () => {
     if (!activeClass || parseImportRows(importText).length === 0) return;
     const imported = await request<Student[], Student[]>({
@@ -291,9 +312,8 @@ export function StudentManagement() {
 
           <div className="space-y-2">
             {classes.map(classRoom => (
-              <button
+              <div
                 key={classRoom.id}
-                onClick={() => setActiveClassId(classRoom.id)}
                 className={cn(
                   "relative w-full rounded-xl border p-4 text-left transition",
                   activeClassId === classRoom.id
@@ -308,16 +328,24 @@ export function StudentManagement() {
                   )}
                 />
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <button className="min-w-0 text-left" onClick={() => setActiveClassId(classRoom.id)}>
                     <div className="font-bold">{classRoom.name}</div>
                     <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
                       <Users className="h-3.5 w-3.5" />
                       {classRoom.students.length} 名学生
                     </div>
-                  </div>
-                  <MoreVertical className="h-4 w-4 text-slate-400" />
+                  </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="编辑班级名称"
+                    onClick={() => openEditClass(classRoom)}
+                    className="h-8 w-8 shrink-0 text-slate-400 hover:bg-white/70 hover:text-blue-600 dark:hover:bg-slate-800"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </aside>
@@ -459,6 +487,15 @@ export function StudentManagement() {
               {modal === "class" && (
                 <ClassModal value={className} onChange={setClassName} onClose={closeModal} onConfirm={addClass} />
               )}
+              {modal === "editClass" && (
+                <ClassModal
+                  title="编辑班级名称"
+                  value={className}
+                  onChange={setClassName}
+                  onClose={closeModal}
+                  onConfirm={updateClass}
+                />
+              )}
               {modal === "groups" && activeClass && (
                 <GroupModal
                   groups={activeClass.groups}
@@ -574,11 +611,13 @@ function ImportModal({
 }
 
 function ClassModal({
+  title = "新建班级",
   value,
   onChange,
   onClose,
   onConfirm
 }: {
+  title?: string;
   value: string;
   onChange: (value: string) => void;
   onClose: () => void;
@@ -586,7 +625,7 @@ function ClassModal({
 }) {
   return (
     <>
-      <ModalHeader title="新建班级" onClose={onClose} />
+      <ModalHeader title={title} onClose={onClose} />
       <div className="p-7">
         <label className="block space-y-2">
           <span className="text-sm font-bold">班级名称</span>

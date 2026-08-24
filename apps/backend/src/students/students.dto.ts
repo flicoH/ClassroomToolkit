@@ -5,6 +5,10 @@ export class CreateClassroomDto {
   groups?: string[];
 }
 
+export class UpdateClassroomDto {
+  name?: string;
+}
+
 export class CreateStudentDto {
   name!: string;
   studentNo?: string;

@@ -13,6 +13,7 @@ import {
   CreateGroupDto,
   CreateStudentDto,
   ImportStudentsDto,
+  UpdateClassroomDto,
   UpdateStudentDto,
 } from './students.dto';
 import { StudentsService } from './students.service';
@@ -43,6 +44,14 @@ export class StudentsController {
   @Post()
   createClassroom(@Body() dto: CreateClassroomDto) {
     return this.studentsService.createClassroom(dto);
+  }
+
+  @Patch(':classroomId')
+  updateClassroom(
+    @Param('classroomId') classroomId: string,
+    @Body() dto: UpdateClassroomDto,
+  ) {
+    return this.studentsService.updateClassroom(classroomId, dto);
   }
 
   @Post(':classroomId/students')
