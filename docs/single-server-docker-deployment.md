@@ -324,6 +324,9 @@ curl -I http://127.0.0.1:3002/
 检查 Web 登录 Cookie 与业务接口代理：
 
 ```bash
+# 使用 HTTP + IP 临时访问时，必须显式关闭 Secure Cookie。
+grep AUTH_COOKIE_SECURE deploy/.env.frontend || echo 'AUTH_COOKIE_SECURE=false' >> deploy/.env.frontend
+
 # HTTP 临时部署时，Set-Cookie 不应包含 Secure；HTTPS 正式部署时应包含 Secure。
 curl -i http://127.0.0.1:3001/api/login \
   -H 'content-type: application/json' \
