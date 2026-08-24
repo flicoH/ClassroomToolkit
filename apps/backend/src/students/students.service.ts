@@ -17,21 +17,18 @@ interface ClassroomStudentQuery {
   sort?: string;
 }
 
-const defaultClassrooms: Classroom[] = [
+const defaultClassroomTemplates: Array<Omit<Classroom, 'id'>> = [
   {
-    id: 'grade-1',
     name: '一年级',
     groups: ['一组', '二组', '三组'],
     students: [],
   },
   {
-    id: 'grade-2',
     name: '二年级',
     groups: ['一组', '二组', '三组'],
     students: [],
   },
   {
-    id: 'grade-3',
     name: '三年级',
     groups: ['一组', '二组', '三组'],
     students: [],
@@ -156,18 +153,10 @@ export class StudentsService {
   }
 
   private async getClassroomOrThrow(classroomId: string) {
-    let classroom = await this.database.findClassroom(classroomId);
+    const classroom = await this.database.findClassroom(classroomId);
     if (!classroom) {
       const classrooms = await this.database.findClassrooms();
-      if (!classrooms.length) {
-        const defaultClassroom = defaultClassrooms.find(
-          (item) => item.id === classroomId,
-        );
-        if (defaultClassroom) {
-          await this.createDefaultClassrooms();
-          classroom = await this.database.findClassroom(classroomId);
-        }
-      }
+      if (!classrooms.length) await this.createDefaultClassrooms();
     }
     if (!classroom) throw new NotFoundException('班级不存在');
     return classroom;
@@ -175,8 +164,13 @@ export class StudentsService {
 
   private async createDefaultClassrooms() {
     const classrooms: Classroom[] = [];
-    for (const classroom of defaultClassrooms) {
-      classrooms.push(await this.database.saveClassroom(classroom));
+    for (const classroom of defaultClassroomTemplates) {
+      classrooms.push(
+        await this.database.saveClassroom({
+          ...classroom,
+          id: createEntityId('class'),
+        }),
+      );
     }
     return classrooms;
   }
