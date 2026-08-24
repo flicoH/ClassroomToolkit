@@ -44,29 +44,28 @@ interface ClassRoom {
   groups: string[];
 }
 
-const initialClasses: ClassRoom[] = [
+const defaultClasses: ClassRoom[] = [
   {
     id: "grade-1",
     name: "一年级",
-    groups: ["第一组", "第二组"],
-    students: [
-      { id: "2026001", name: "周杰伦", studentNo: "2026001", gender: "男", group: "第一组" },
-      { id: "2026002", name: "周杰伦", studentNo: "2026002", gender: "男", group: "第一组" },
-      { id: "2026003", name: "周杰伦", studentNo: "2026003", gender: "男", group: "第二组" }
-    ]
+    groups: ["一组", "二组", "三组"],
+    students: []
   },
   {
     id: "grade-2",
     name: "二年级",
-    groups: ["A 组"],
-    students: [
-      { id: "2026101", name: "孙燕姿", studentNo: "2026101", gender: "女", group: "A 组" },
-      { id: "2026102", name: "林俊杰", studentNo: "2026102", gender: "男", group: "A 组" }
-    ]
+    groups: ["一组", "二组", "三组"],
+    students: []
+  },
+  {
+    id: "grade-3",
+    name: "三年级",
+    groups: ["一组", "二组", "三组"],
+    students: []
   }
 ];
 
-const defaultClass = initialClasses[0]!;
+const defaultClass = defaultClasses[0]!;
 
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
@@ -92,7 +91,7 @@ function parseImportRows(text: string): Student[] {
 }
 
 export function StudentManagement() {
-  const [classes, setClasses] = useState<ClassRoom[]>(initialClasses);
+  const [classes, setClasses] = useState<ClassRoom[]>(defaultClasses);
   const [activeClassId, setActiveClassId] = useState(defaultClass.id);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -116,7 +115,7 @@ export function StudentManagement() {
     request<ClassRoom[], ClassRoom[]>("/api/classes")
       .then(data => {
         if (!mounted) return;
-        const nextClasses = data.length > 0 ? data : initialClasses;
+        const nextClasses = data.length > 0 ? data : defaultClasses;
         setClasses(nextClasses);
         setActiveClassId(current =>
           nextClasses.some(classRoom => classRoom.id === current) ? current : (nextClasses[0]?.id ?? "")
