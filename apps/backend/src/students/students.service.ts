@@ -16,12 +16,35 @@ interface ClassroomStudentQuery {
   sort?: string;
 }
 
+const defaultClassrooms: Classroom[] = [
+  {
+    id: 'grade-1',
+    name: '一年级',
+    groups: ['一组', '二组', '三组'],
+    students: [],
+  },
+  {
+    id: 'grade-2',
+    name: '二年级',
+    groups: ['一组', '二组', '三组'],
+    students: [],
+  },
+  {
+    id: 'grade-3',
+    name: '三年级',
+    groups: ['一组', '二组', '三组'],
+    students: [],
+  },
+];
+
 @Injectable()
 export class StudentsService {
   constructor(private readonly database: StudentsDatabase) {}
 
-  findClassrooms() {
-    return this.database.findClassrooms();
+  async findClassrooms() {
+    const classrooms = await this.database.findClassrooms();
+    if (classrooms.length) return classrooms;
+    return this.createDefaultClassrooms();
   }
 
   async findClassroom(
@@ -125,9 +148,29 @@ export class StudentsService {
   }
 
   private async getClassroomOrThrow(classroomId: string) {
-    const classroom = await this.database.findClassroom(classroomId);
+    let classroom = await this.database.findClassroom(classroomId);
+    if (!classroom) {
+      const classrooms = await this.database.findClassrooms();
+      if (!classrooms.length) {
+        const defaultClassroom = defaultClassrooms.find(
+          (item) => item.id === classroomId,
+        );
+        if (defaultClassroom) {
+          await this.createDefaultClassrooms();
+          classroom = await this.database.findClassroom(classroomId);
+        }
+      }
+    }
     if (!classroom) throw new NotFoundException('班级不存在');
     return classroom;
+  }
+
+  private async createDefaultClassrooms() {
+    const classrooms: Classroom[] = [];
+    for (const classroom of defaultClassrooms) {
+      classrooms.push(await this.database.saveClassroom(classroom));
+    }
+    return classrooms;
   }
 
   /** 保持与前端导入框一致：每行 “姓名 学号 性别”，学号缺省则自动生成。 */

@@ -1,6 +1,45 @@
 import { StudentsService } from './students.service';
 
 describe('StudentsService', () => {
+  it('creates default classrooms when a teacher has no classroom data', async () => {
+    const database = {
+      findClassrooms: jest.fn().mockResolvedValue([]),
+      saveClassroom: jest.fn(async (classroom) => classroom),
+    };
+    const service = new StudentsService(database as never);
+
+    const classrooms = await service.findClassrooms();
+
+    expect(database.saveClassroom).toHaveBeenCalledTimes(3);
+    expect(classrooms.map((classroom) => classroom.id)).toEqual([
+      'grade-1',
+      'grade-2',
+      'grade-3',
+    ]);
+  });
+
+  it('initializes defaults before reading a default classroom directly', async () => {
+    const database = {
+      findClassroom: jest
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({
+          id: 'grade-1',
+          name: '一年级',
+          groups: ['一组', '二组', '三组'],
+          students: [],
+        }),
+      findClassrooms: jest.fn().mockResolvedValue([]),
+      saveClassroom: jest.fn(async (classroom) => classroom),
+    };
+    const service = new StudentsService(database as never);
+
+    const classroom = await service.findClassroom('grade-1');
+
+    expect(database.saveClassroom).toHaveBeenCalledTimes(3);
+    expect(classroom.id).toBe('grade-1');
+  });
+
   it('filters classroom students by group and query, then sorts by name', async () => {
     const database = {
       findClassroom: jest.fn().mockResolvedValue({

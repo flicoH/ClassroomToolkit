@@ -30,14 +30,6 @@ const nextConfig: NextConfig = {
       }
     ];
   },
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: "http://backend:3000/api/:path*" // 注意去掉 /api
-      }
-    ];
-  },
   turbopack: {
     root: path.resolve(appDirectory, "../..")
   }
