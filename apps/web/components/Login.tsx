@@ -75,7 +75,10 @@ export const LoginForm = () => {
       );
       setUser(data);
       toast.success(mode === "login" ? "登录成功" : "注册成功");
-      router.push("/");
+      const redirect = new URLSearchParams(window.location.search).get("redirect");
+      const target = redirect?.startsWith("/") && !redirect.startsWith("//") ? redirect : "/";
+      router.replace(target);
+      router.refresh();
     } catch (error: unknown) {
       const err = error as Error;
       toast.error(err.message);
