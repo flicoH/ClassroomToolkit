@@ -71,7 +71,16 @@ log "Running database migrations"
 compose --profile tools run --rm migrate
 
 log "Starting backend"
-compose up -d --wait --remove-orphans backend
+compose up -d --wait --remove-orphans --pull=never backend
+
+expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"
+backend_container_id=$(compose ps -q backend)
+backend_image=$(docker inspect "$backend_container_id" --format '{{.Config.Image}}')
+
+if [[ "$backend_image" != "$expected_backend_image" ]]; then
+  log "Backend image mismatch: expected $expected_backend_image, got $backend_image"
+  exit 1
+fi
 
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT

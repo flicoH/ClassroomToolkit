@@ -65,7 +65,24 @@ log "Pulling frontend image $FRONTEND_IMAGE_TAG"
 compose pull web admin
 
 log "Starting frontend services"
-compose up -d --wait --remove-orphans web admin
+compose up -d --wait --remove-orphans --pull=never web admin
+
+expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
+expected_admin_image="${IMAGE_NAMESPACE}-admin:${FRONTEND_IMAGE_TAG}"
+web_container_id=$(compose ps -q web)
+admin_container_id=$(compose ps -q admin)
+web_image=$(docker inspect "$web_container_id" --format '{{.Config.Image}}')
+admin_image=$(docker inspect "$admin_container_id" --format '{{.Config.Image}}')
+
+if [[ "$web_image" != "$expected_web_image" ]]; then
+  log "Web image mismatch: expected $expected_web_image, got $web_image"
+  exit 1
+fi
+
+if [[ "$admin_image" != "$expected_admin_image" ]]; then
+  log "Admin image mismatch: expected $expected_admin_image, got $admin_image"
+  exit 1
+fi
 
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
