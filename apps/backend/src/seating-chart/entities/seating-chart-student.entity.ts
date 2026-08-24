@@ -15,7 +15,12 @@ export class SeatingChartStudentEntity {
   @Column({ length: 64 })
   name!: string;
 
-  @Column({ name: 'source_student_id', length: 64, nullable: true })
+  @Column({
+    name: 'source_student_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
   sourceStudentId!: string | null;
 
   @Column({ name: 'student_no', length: 64 })
