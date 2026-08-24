@@ -15,6 +15,22 @@ log() {
   printf '[backend-deploy] %s\n' "$*"
 }
 
+restore_managed_deploy_scripts() {
+  local files=(deploy/backend-deploy.sh deploy/frontend-deploy.sh)
+  local dirty=()
+
+  for file in "${files[@]}"; do
+    if ! git diff --quiet -- "$file"; then
+      dirty+=("$file")
+    fi
+  done
+
+  if (( ${#dirty[@]} > 0 )); then
+    log "Restoring local changes in managed deploy scripts: ${dirty[*]}"
+    git checkout -- "${dirty[@]}"
+  fi
+}
+
 if [[ ! -d "$APP_DIR/.git" ]]; then
   log "Repository not found at $APP_DIR"
   exit 1
@@ -25,6 +41,7 @@ cd "$APP_DIR"
 log "Updating origin/$BRANCH"
 git fetch --prune origin "$BRANCH"
 git checkout "$BRANCH"
+restore_managed_deploy_scripts
 git merge --ff-only "origin/$BRANCH"
 
 if [[ ! -f "$ENV_FILE" ]]; then
