@@ -91,8 +91,8 @@ function parseImportRows(text: string): Student[] {
 }
 
 export function StudentManagement() {
-  const [classes, setClasses] = useState<ClassRoom[]>(defaultClasses);
-  const [activeClassId, setActiveClassId] = useState(defaultClass.id);
+  const [classes, setClasses] = useState<ClassRoom[]>([]);
+  const [activeClassId, setActiveClassId] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
@@ -108,7 +108,9 @@ export function StudentManagement() {
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
 
-  const activeClass = classes.find(item => item.id === activeClassId) ?? defaultClass;
+  const displayClasses = classes.length ? classes : defaultClasses;
+  const activeClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? defaultClass;
+  const canUseBackendClass = !loading && classes.some(item => item.id === activeClass.id);
 
   useEffect(() => {
     let mounted = true;
@@ -116,7 +118,7 @@ export function StudentManagement() {
     request<ClassRoom[], ClassRoom[]>("/api/classes")
       .then(data => {
         if (!mounted) return;
-        const nextClasses = data.length > 0 ? data : defaultClasses;
+        const nextClasses = data;
         setClasses(nextClasses);
         setActiveClassId(current =>
           nextClasses.some(classRoom => classRoom.id === current) ? current : (nextClasses[0]?.id ?? "")
@@ -176,7 +178,7 @@ export function StudentManagement() {
   /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
   const addStudent = async () => {
     const name = studentName.trim();
-    if (!name || !activeClass) return;
+    if (!name || !canUseBackendClass) return;
     const nextStudent = await request<Student, Student>({
       url: `/api/classes/${activeClass.id}/students`,
       method: "POST",
@@ -200,7 +202,7 @@ export function StudentManagement() {
 
   const updateStudent = async () => {
     const name = studentName.trim();
-    if (!name || !activeClass || !editingStudentId) return;
+    if (!name || !canUseBackendClass || !editingStudentId) return;
     const updated = await request<Student, Student>({
       url: `/api/classes/${activeClass.id}/students/${editingStudentId}`,
       method: "PATCH",
@@ -219,7 +221,7 @@ export function StudentManagement() {
 
   /** 删除学生需要二次确认，避免误触删除。 */
   const removeStudent = (studentId: string) => {
-    if (!activeClass) return;
+    if (!canUseBackendClass) return;
     setStudentDeleteTarget({ classId: activeClass.id, studentId });
   };
 
@@ -272,7 +274,7 @@ export function StudentManagement() {
   };
 
   const importStudents = async () => {
-    if (!activeClass || parseImportRows(importText).length === 0) return;
+    if (!canUseBackendClass || parseImportRows(importText).length === 0) return;
     const imported = await request<Student[], Student[]>({
       url: `/api/classes/${activeClass.id}/students/import`,
       method: "POST",
@@ -284,7 +286,7 @@ export function StudentManagement() {
 
   const addGroup = async () => {
     const name = groupName.trim();
-    if (!name || activeClass?.groups.includes(name)) return;
+    if (!name || !canUseBackendClass || activeClass.groups.includes(name)) return;
     const groups = await request<string[], string[]>({
       url: `/api/classes/${activeClass.id}/groups`,
       method: "POST",
@@ -305,13 +307,19 @@ export function StudentManagement() {
         <aside className="w-[230px] shrink-0 border-r border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
           <div className="mb-6 flex items-center justify-between">
             <span className="text-sm font-bold text-slate-500 dark:text-slate-400">我的班级</span>
-            <Button size="icon" variant="ghost" aria-label="新建班级" onClick={() => setModal("class")}>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="新建班级"
+              disabled={loading}
+              onClick={() => setModal("class")}
+            >
               <Plus className="h-4 w-4" />
             </Button>
           </div>
 
           <div className="space-y-2">
-            {classes.map(classRoom => (
+            {displayClasses.map(classRoom => (
               <div
                 key={classRoom.id}
                 className={cn(
@@ -328,7 +336,11 @@ export function StudentManagement() {
                   )}
                 />
                 <div className="flex items-start justify-between gap-2">
-                  <button className="min-w-0 text-left" onClick={() => setActiveClassId(classRoom.id)}>
+                  <button
+                    className="min-w-0 text-left"
+                    disabled={loading}
+                    onClick={() => setActiveClassId(classRoom.id)}
+                  >
                     <div className="font-bold">{classRoom.name}</div>
                     <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
                       <Users className="h-3.5 w-3.5" />
@@ -339,6 +351,7 @@ export function StudentManagement() {
                     size="icon"
                     variant="ghost"
                     aria-label="编辑班级名称"
+                    disabled={loading || !classes.some(item => item.id === classRoom.id)}
                     onClick={() => openEditClass(classRoom)}
                     className="h-8 w-8 shrink-0 text-slate-400 hover:bg-white/70 hover:text-blue-600 dark:hover:bg-slate-800"
                   >
@@ -368,15 +381,24 @@ export function StudentManagement() {
                   <ArrowDownUp className="h-4 w-4" />
                   学号排序
                 </Button>
-                <Button variant="ghost" onClick={() => setModal("import")} className="text-blue-700 dark:text-blue-300">
+                <Button
+                  variant="ghost"
+                  disabled={!canUseBackendClass}
+                  onClick={() => setModal("import")}
+                  className="text-blue-700 dark:text-blue-300"
+                >
                   <Upload className="h-4 w-4" />
                   批量导入
                 </Button>
-                <Button variant="outline" onClick={() => setModal("groups")}>
+                <Button variant="outline" disabled={!canUseBackendClass} onClick={() => setModal("groups")}>
                   <Users className="h-4 w-4" />
                   分组管理
                 </Button>
-                <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => setModal("student")}>
+                <Button
+                  className="bg-blue-600 font-bold hover:bg-blue-700"
+                  disabled={!canUseBackendClass}
+                  onClick={() => setModal("student")}
+                >
                   <UserPlus className="h-4 w-4" />
                   添加学生
                 </Button>

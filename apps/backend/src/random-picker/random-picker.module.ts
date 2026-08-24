@@ -7,9 +7,11 @@ import { PickerStudentEntity } from './entities/picker-student.entity';
 import { RandomPickerController } from './random-picker.controller';
 import { RandomPickerDatabase } from './random-picker.database';
 import { RandomPickerService } from './random-picker.service';
+import { StudentsModule } from '../students/students.module';
 
 @Module({
   imports: [
+    StudentsModule,
     TypeOrmModule.forFeature([
       PickerClassEntity,
       PickerStudentEntity,

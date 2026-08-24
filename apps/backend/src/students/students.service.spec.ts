@@ -1,4 +1,5 @@
 import { StudentsService } from './students.service';
+import { Classroom } from './students.types';
 
 describe('StudentsService', () => {
   it('creates default classrooms when a teacher has no classroom data', async () => {
@@ -105,5 +106,50 @@ describe('StudentsService', () => {
       name: '一年级 1 班',
     });
     expect(updated.students).toHaveLength(1);
+  });
+
+  it('saves added students through the backend store so they can be read after relogin', async () => {
+    const classrooms = new Map<string, Classroom>([
+      [
+        'class-1',
+        {
+          id: 'class-1',
+          name: '一年级',
+          groups: ['一组'],
+          students: [],
+        },
+      ],
+    ]);
+    const database = {
+      findClassroom: jest
+        .fn()
+        .mockImplementation(async (classroomId) => classrooms.get(classroomId)),
+      saveClassroom: jest.fn(async (classroom) => {
+        classrooms.set(classroom.id, {
+          ...classroom,
+          students: [...classroom.students],
+        });
+        return classrooms.get(classroom.id);
+      }),
+    };
+    const service = new StudentsService(database as never);
+
+    await service.addStudent('class-1', {
+      name: '张三',
+      studentNo: '1001',
+      gender: '男',
+    });
+
+    const classroom = await service.findClassroom('class-1');
+    expect(classroom.students).toEqual([
+      {
+        id: '1001',
+        name: '张三',
+        studentNo: '1001',
+        gender: '男',
+        group: undefined,
+      },
+    ]);
+    expect(database.saveClassroom).toHaveBeenCalledTimes(1);
   });
 });

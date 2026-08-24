@@ -521,8 +521,8 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
 
 export function PetPoints() {
   const [students, setStudents] = useState<StudentPet[]>(initialStudents);
-  const [classrooms, setClassrooms] = useState<Classroom[]>(fallbackClassrooms);
-  const [activeClassId, setActiveClassId] = useState(fallbackClassrooms[0]?.id ?? "grade-1");
+  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [activeClassId, setActiveClassId] = useState("");
   const [records, setRecords] = useState<EvaluationRecord[]>([]);
   const [rubrics, setRubrics] = useState<RubricItem[]>(initialRubrics);
   const [rewards, setRewards] = useState<RewardItem[]>(initialRewards);
@@ -591,6 +591,7 @@ export function PetPoints() {
     () => classrooms.find(classroom => classroom.id === activeClassId) ?? classrooms[0] ?? fallbackClassrooms[0]!,
     [activeClassId, classrooms]
   );
+  const hasBackendClassrooms = classrooms.length > 0;
 
   const loadPetPointsOverview = useCallback(async () => {
     const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points");
@@ -646,25 +647,29 @@ export function PetPoints() {
     setStudentDataError("");
     try {
       const data = await request<Classroom[], Classroom[]>("/api/classes");
-      const nextClassrooms = data.length ? data : fallbackClassrooms;
-      const nextActiveClass = nextClassrooms[0]!;
+      const nextClassrooms = data;
+      const nextActiveClass = nextClassrooms[0];
       setClassrooms(nextClassrooms);
-      setActiveClassId(nextActiveClass.id);
+      setActiveClassId(nextActiveClass?.id ?? "");
       setStudents(current =>
         nextClassrooms.reduce((nextStudents, classroom) => replaceClassStudents(nextStudents, classroom), current)
       );
-      await requestClassroomStudents({
-        classId: nextActiveClass.id,
-        groupFilter: "全部分组",
-        query: "",
-        sortMode: "分数降序"
-      });
+      if (nextActiveClass) {
+        await requestClassroomStudents({
+          classId: nextActiveClass.id,
+          groupFilter: "全部分组",
+          query: "",
+          sortMode: "分数降序"
+        });
+      } else {
+        await loadPetPointsOverview();
+      }
     } catch {
       setStudentDataError("班级数据接口获取失败，请检查后端服务");
     } finally {
       setStudentDataLoading(false);
     }
-  }, [requestClassroomStudents]);
+  }, [loadPetPointsOverview, requestClassroomStudents]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -725,6 +730,7 @@ export function PetPoints() {
   const hatchedCount = classStudents.filter(student => student.petId && student.petHatched).length;
 
   const requestActiveClassStudents = (nextFilters: Partial<PetPointStudentFilters>) => {
+    if (!hasBackendClassrooms) return;
     const filters = {
       classId: activeClass.id,
       groupFilter,
@@ -736,6 +742,7 @@ export function PetPoints() {
   };
 
   const switchClass = (classId: string) => {
+    if (!hasBackendClassrooms) return;
     const nextClass = classrooms.find(classroom => classroom.id === classId);
     if (!nextClass) return;
     setActiveClassId(classId);
@@ -1055,6 +1062,7 @@ export function PetPoints() {
           <select
             value={activeClass.id}
             onChange={event => switchClass(event.target.value)}
+            disabled={!hasBackendClassrooms || studentDataLoading}
             className="appearance-none bg-transparent pr-5 outline-none"
             aria-label="切换班级"
           >
@@ -1070,6 +1078,7 @@ export function PetPoints() {
           <Input
             value={query}
             onChange={event => switchQuery(event.target.value)}
+            disabled={!hasBackendClassrooms}
             placeholder="姓名、拼音、学号"
             className="h-11 rounded-xl border-0 bg-slate-100 pl-12 text-base font-semibold shadow-none"
           />
@@ -1121,6 +1130,7 @@ export function PetPoints() {
               <select
                 value={groupFilter}
                 onChange={event => switchGroup(event.target.value)}
+                disabled={!hasBackendClassrooms}
                 className="appearance-none bg-transparent pr-5 outline-none"
                 aria-label="筛选分组"
               >
@@ -1134,6 +1144,7 @@ export function PetPoints() {
               <select
                 value={sortMode}
                 onChange={event => switchSortMode(event.target.value as SortMode)}
+                disabled={!hasBackendClassrooms}
                 className="appearance-none bg-transparent pr-5 outline-none"
                 aria-label="排序方式"
               >
@@ -1144,6 +1155,7 @@ export function PetPoints() {
             </label>
             <Button
               className="relative h-11 rounded-xl bg-gradient-to-r from-violet-500 to-sky-400 px-5 font-black text-white"
+              disabled={!hasBackendClassrooms}
               onClick={() => setReportOpen(true)}
             >
               <ClipboardList className="h-5 w-5" />
@@ -1153,6 +1165,7 @@ export function PetPoints() {
             <Button
               variant="ghost"
               className="h-11 rounded-xl bg-amber-100 px-4 font-bold text-amber-700 hover:bg-amber-200"
+              disabled={!hasBackendClassrooms}
               onClick={() => {
                 setRewardStoreOpen(true);
                 setRewardStudentId(classStudents[0]?.id ?? "");
@@ -1164,6 +1177,7 @@ export function PetPoints() {
             <Button
               variant="ghost"
               className="h-11 rounded-xl bg-slate-100 px-4 font-bold"
+              disabled={!hasBackendClassrooms}
               onClick={() => {
                 setBatchMode(true);
                 setSelectedStudentIds([]);
@@ -1175,6 +1189,7 @@ export function PetPoints() {
             <Button
               variant="ghost"
               className="h-11 rounded-xl bg-slate-100 px-4 font-bold"
+              disabled={!hasBackendClassrooms}
               onClick={() => {
                 setEvaluationMode("advanced");
                 setSelectedStudentIds([]);
@@ -1190,6 +1205,7 @@ export function PetPoints() {
                 size="icon"
                 className="h-11 w-11 rounded-xl bg-slate-100"
                 aria-label="设置"
+                disabled={!hasBackendClassrooms}
                 onClick={() => setSettingsOpen(current => !current)}
               >
                 <Settings className="h-5 w-5" />
