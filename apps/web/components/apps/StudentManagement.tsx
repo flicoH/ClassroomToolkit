@@ -44,6 +44,18 @@ interface ClassRoom {
   groups: string[];
 }
 
+interface SkippedImportStudent {
+  rowNumber: number;
+  name: string;
+  studentNo: string;
+  reason: string;
+}
+
+interface ImportStudentsResult {
+  imported: Student[];
+  skipped: SkippedImportStudent[];
+}
+
 const defaultClasses: ClassRoom[] = [
   {
     id: "grade-1",
@@ -90,6 +102,53 @@ function parseImportRows(text: string): Student[] {
     });
 }
 
+function getStudentSubmitErrorMessage(error: unknown) {
+  const responseMessage =
+    typeof error === "object" &&
+    error !== null &&
+    "response" in error &&
+    typeof error.response === "object" &&
+    error.response !== null &&
+    "data" in error.response &&
+    typeof error.response.data === "object" &&
+    error.response.data !== null &&
+    "message" in error.response.data &&
+    typeof error.response.data.message === "string"
+      ? error.response.data.message
+      : undefined;
+  const message = responseMessage || (error instanceof Error ? error.message : "");
+  if (message.includes("学号") && message.includes("已存在")) return "该学号已经存在，请更换学号";
+  return message || "学生保存失败，请稍后重试";
+}
+
+function isStudentNoDuplicated(classRoom: ClassRoom, studentNo: string, excludeStudentId?: string | null) {
+  if (!studentNo) return false;
+  return classRoom.students.some(student => student.id !== excludeStudentId && student.studentNo === studentNo);
+}
+
+function compareStudentNo(left: string, right: string) {
+  return left.localeCompare(right, "zh-CN", {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
+
+function createImportMessage(result: ImportStudentsResult) {
+  const skippedStudentNos = result.skipped.map(item => item.studentNo).filter(Boolean);
+  if (!result.skipped.length) return "";
+  const skippedText = skippedStudentNos.length ? `重复学号：${skippedStudentNos.join("、")}` : "存在重复学号";
+  return `已导入 ${result.imported.length} 名学生，跳过 ${result.skipped.length} 名。${skippedText}`;
+}
+
+function keepSkippedImportRows(text: string, skipped: SkippedImportStudent[]) {
+  if (!skipped.length) return "";
+  const skippedRows = new Set(skipped.map(item => item.rowNumber));
+  return text
+    .split("\n")
+    .filter((_, index) => skippedRows.has(index + 1))
+    .join("\n");
+}
+
 export function StudentManagement() {
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
@@ -101,12 +160,15 @@ export function StudentManagement() {
   const [studentName, setStudentName] = useState("");
   const [studentNo, setStudentNo] = useState("");
   const [studentGender, setStudentGender] = useState<Gender>("");
+  const [studentFormError, setStudentFormError] = useState("");
   const [className, setClassName] = useState("");
   const [importText, setImportText] = useState("");
+  const [importMessage, setImportMessage] = useState("");
   const [groupName, setGroupName] = useState("");
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
+  const [groupDeleteTarget, setGroupDeleteTarget] = useState<string | null>(null);
 
   const displayClasses = classes.length ? classes : defaultClasses;
   const activeBackendClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? null;
@@ -157,7 +219,8 @@ export function StudentManagement() {
         );
       })
       .sort((a, b) => {
-        return sortAsc ? a.studentNo.localeCompare(b.studentNo) : b.studentNo.localeCompare(a.studentNo);
+        const result = compareStudentNo(a.studentNo, b.studentNo);
+        return sortAsc ? result : -result;
       });
   }, [activeClass, query, sortAsc]);
 
@@ -175,28 +238,41 @@ export function StudentManagement() {
     setStudentName("");
     setStudentNo("");
     setStudentGender("");
+    setStudentFormError("");
     setEditingStudentId(null);
     setEditingClassId(null);
     setClassName("");
     setImportText("");
+    setImportMessage("");
     setGroupName("");
+    setGroupDeleteTarget(null);
   };
 
   /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
   const addStudent = async () => {
     const name = studentName.trim();
+    const nextStudentNo = studentNo.trim();
     if (!name || !activeBackendClass) return;
-    const nextStudent = await request<Student, Student>({
-      url: `/api/classes/${activeBackendClass.id}/students`,
-      method: "POST",
-      data: {
-        name,
-        studentNo: studentNo.trim() || undefined,
-        gender: studentGender || undefined
-      }
-    });
-    updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, nextStudent] }));
-    closeModal();
+    if (isStudentNoDuplicated(activeBackendClass, nextStudentNo)) {
+      setStudentFormError("该学号已经存在，请更换学号");
+      return;
+    }
+
+    try {
+      const nextStudent = await request<Student, Student>({
+        url: `/api/classes/${activeBackendClass.id}/students`,
+        method: "POST",
+        data: {
+          name,
+          studentNo: nextStudentNo || undefined,
+          gender: studentGender || undefined
+        }
+      });
+      updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, nextStudent] }));
+      closeModal();
+    } catch (error) {
+      setStudentFormError(getStudentSubmitErrorMessage(error));
+    }
   };
 
   const openEditStudent = (student: Student) => {
@@ -204,26 +280,37 @@ export function StudentManagement() {
     setStudentName(student.name);
     setStudentNo(student.studentNo);
     setStudentGender(student.gender);
+    setStudentFormError("");
     setModal("editStudent");
   };
 
   const updateStudent = async () => {
     const name = studentName.trim();
+    const nextStudentNo = studentNo.trim();
     if (!name || !activeBackendClass || !editingStudentId) return;
-    const updated = await request<Student, Student>({
-      url: `/api/classes/${activeBackendClass.id}/students/${editingStudentId}`,
-      method: "PATCH",
-      data: {
-        name,
-        studentNo: studentNo.trim(),
-        gender: studentGender || undefined
-      }
-    });
-    updateActiveClass(classRoom => ({
-      ...classRoom,
-      students: classRoom.students.map(student => (student.id === updated.id ? updated : student))
-    }));
-    closeModal();
+    if (isStudentNoDuplicated(activeBackendClass, nextStudentNo, editingStudentId)) {
+      setStudentFormError("该学号已经存在，请更换学号");
+      return;
+    }
+
+    try {
+      const updated = await request<Student, Student>({
+        url: `/api/classes/${activeBackendClass.id}/students/${editingStudentId}`,
+        method: "PATCH",
+        data: {
+          name,
+          studentNo: nextStudentNo,
+          gender: studentGender || undefined
+        }
+      });
+      updateActiveClass(classRoom => ({
+        ...classRoom,
+        students: classRoom.students.map(student => (student.id === updated.id ? updated : student))
+      }));
+      closeModal();
+    } catch (error) {
+      setStudentFormError(getStudentSubmitErrorMessage(error));
+    }
   };
 
   /** 删除学生需要二次确认，避免误触删除。 */
@@ -282,12 +369,19 @@ export function StudentManagement() {
 
   const importStudents = async () => {
     if (!activeBackendClass || parseImportRows(importText).length === 0) return;
-    const imported = await request<Student[], Student[]>({
+    const result = await request<ImportStudentsResult, ImportStudentsResult>({
       url: `/api/classes/${activeBackendClass.id}/students/import`,
       method: "POST",
       data: { text: importText }
     });
-    updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, ...imported] }));
+    if (result.imported.length) {
+      updateActiveClass(classRoom => ({ ...classRoom, students: [...classRoom.students, ...result.imported] }));
+    }
+    if (result.skipped.length) {
+      setImportMessage(createImportMessage(result));
+      setImportText(keepSkippedImportRows(importText, result.skipped));
+      return;
+    }
     closeModal();
   };
 
@@ -307,7 +401,7 @@ export function StudentManagement() {
   const updateStudentGroup = async (studentId: string, group?: string) => {
     if (!activeBackendClass) return;
     const updated = await request<Student, Student>({
-      url: `/api/classes/${activeBackendClass.id}/students/${studentId}/group`,
+      url: `/api/classes/${activeBackendClass.id}/students/${studentId}`,
       method: "PATCH",
       data: { group: group || null }
     });
@@ -320,10 +414,11 @@ export function StudentManagement() {
   const deleteGroup = async (group: string) => {
     if (!activeBackendClass) return;
     const updatedClass = await request<ClassRoom, ClassRoom>({
-      url: `/api/classes/${activeBackendClass.id}/groups/${encodeURIComponent(group)}`,
+      url: `/api/classes/${activeBackendClass.id}/groups/${group}`,
       method: "DELETE"
     });
     setClasses(current => current.map(classRoom => (classRoom.id === updatedClass.id ? updatedClass : classRoom)));
+    setGroupDeleteTarget(null);
   };
 
   const deleteStudentName =
@@ -513,8 +608,15 @@ export function StudentManagement() {
                   name={studentName}
                   studentNo={studentNo}
                   gender={studentGender}
-                  onNameChange={setStudentName}
-                  onNoChange={setStudentNo}
+                  errorMessage={studentFormError}
+                  onNameChange={value => {
+                    setStudentName(value);
+                    setStudentFormError("");
+                  }}
+                  onNoChange={value => {
+                    setStudentNo(value);
+                    setStudentFormError("");
+                  }}
                   onGenderChange={setStudentGender}
                   onClose={closeModal}
                   onConfirm={addStudent}
@@ -526,8 +628,15 @@ export function StudentManagement() {
                   name={studentName}
                   studentNo={studentNo}
                   gender={studentGender}
-                  onNameChange={setStudentName}
-                  onNoChange={setStudentNo}
+                  errorMessage={studentFormError}
+                  onNameChange={value => {
+                    setStudentName(value);
+                    setStudentFormError("");
+                  }}
+                  onNoChange={value => {
+                    setStudentNo(value);
+                    setStudentFormError("");
+                  }}
                   onGenderChange={setStudentGender}
                   onClose={closeModal}
                   onConfirm={updateStudent}
@@ -536,7 +645,11 @@ export function StudentManagement() {
               {modal === "import" && (
                 <ImportModal
                   value={importText}
-                  onChange={setImportText}
+                  message={importMessage}
+                  onChange={value => {
+                    setImportText(value);
+                    setImportMessage("");
+                  }}
                   onClose={closeModal}
                   onConfirm={importStudents}
                 />
@@ -563,7 +676,7 @@ export function StudentManagement() {
                   onAdd={addGroup}
                   onAssign={updateStudentGroup}
                   onRemove={studentId => updateStudentGroup(studentId)}
-                  onDeleteGroup={deleteGroup}
+                  onDeleteGroup={setGroupDeleteTarget}
                 />
               )}
             </div>
@@ -578,6 +691,14 @@ export function StudentManagement() {
         onConfirm={confirmRemoveStudent}
         onCancel={() => setStudentDeleteTarget(null)}
       />
+      <ConfirmDialog
+        open={Boolean(groupDeleteTarget)}
+        title="删除分组"
+        description={`确定删除分组「${groupDeleteTarget ?? ""}」吗？该分组内学生会变为未分组。`}
+        confirmText="删除"
+        onConfirm={() => groupDeleteTarget && void deleteGroup(groupDeleteTarget)}
+        onCancel={() => setGroupDeleteTarget(null)}
+      />
     </>
   );
 }
@@ -587,6 +708,7 @@ interface StudentModalProps {
   name: string;
   studentNo: string;
   gender: Gender;
+  errorMessage?: string;
   onNameChange: (value: string) => void;
   onNoChange: (value: string) => void;
   onGenderChange: (value: Gender) => void;
@@ -599,6 +721,7 @@ function StudentModal({
   name,
   studentNo,
   gender,
+  errorMessage,
   onNameChange,
   onNoChange,
   onGenderChange,
@@ -632,19 +755,31 @@ function StudentModal({
             ))}
           </div>
         </div>
+        {errorMessage && (
+          <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 dark:border-rose-950 dark:bg-rose-950/30 dark:text-rose-300">
+            {errorMessage}
+          </div>
+        )}
       </div>
-      <ModalFooter onClose={onClose} onConfirm={onConfirm} confirmText="确定" disabled={!name.trim()} />
+      <ModalFooter
+        onClose={onClose}
+        onConfirm={onConfirm}
+        confirmText="确定"
+        disabled={!name.trim() || Boolean(errorMessage)}
+      />
     </>
   );
 }
 
 function ImportModal({
   value,
+  message,
   onChange,
   onClose,
   onConfirm
 }: {
   value: string;
+  message?: string;
   onChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -665,6 +800,11 @@ function ImportModal({
           placeholder={"在此粘贴学生名单，每行一个...\n李宇春\n周笔畅\n张靓颖\n陈楚生\n苏醒\n魏晨\n"}
           className="min-h-[190px] w-full resize-none rounded-xl border border-slate-200 bg-white p-4 text-sm outline-none transition focus:border-blue-300 dark:border-slate-800 dark:bg-slate-950"
         />
+        {message && (
+          <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
+            {message}
+          </div>
+        )}
       </div>
       <ModalFooter onClose={onClose} onConfirm={onConfirm} confirmText="完成导入" disabled={!value.trim()} />
     </>
@@ -717,7 +857,7 @@ function GroupModal({
   onAdd: () => void;
   onAssign: (studentId: string, group: string) => Promise<void>;
   onRemove: (studentId: string) => Promise<void>;
-  onDeleteGroup: (group: string) => Promise<void>;
+  onDeleteGroup: (group: string) => void;
 }) {
   const [selectedGroup, setSelectedGroup] = useState(groups[0] ?? "");
 
@@ -734,13 +874,6 @@ function GroupModal({
     () => students.filter(student => student.group !== selectedGroup),
     [selectedGroup, students]
   );
-
-  const confirmDeleteGroup = () => {
-    if (!selectedGroup) return;
-    if (window.confirm(`确定删除分组「${selectedGroup}」吗？该分组内学生会变为未分组。`)) {
-      void onDeleteGroup(selectedGroup);
-    }
-  };
 
   return (
     <>
@@ -806,7 +939,7 @@ function GroupModal({
               size="sm"
               variant="ghost"
               className="text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950"
-              onClick={confirmDeleteGroup}
+              onClick={() => selectedGroup && onDeleteGroup(selectedGroup)}
             >
               <Trash2 className="h-4 w-4" />
               删除

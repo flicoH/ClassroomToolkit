@@ -55,31 +55,6 @@ export class StudentsController {
     return this.studentsService.updateClassroom(classroomId, dto);
   }
 
-  @Post(':classroomId/students')
-  addStudent(
-    @Param('classroomId') classroomId: string,
-    @Body() dto: CreateStudentDto,
-  ) {
-    return this.studentsService.addStudent(classroomId, dto);
-  }
-
-  @Patch(':classroomId/students/:studentId')
-  updateStudent(
-    @Param('classroomId') classroomId: string,
-    @Param('studentId') studentId: string,
-    @Body() dto: UpdateStudentDto,
-  ) {
-    return this.studentsService.updateStudent(classroomId, studentId, dto);
-  }
-
-  @Delete(':classroomId/students/:studentId')
-  deleteStudent(
-    @Param('classroomId') classroomId: string,
-    @Param('studentId') studentId: string,
-  ) {
-    return this.studentsService.deleteStudent(classroomId, studentId);
-  }
-
   @Post(':classroomId/students/import')
   importStudents(
     @Param('classroomId') classroomId: string,
@@ -88,12 +63,12 @@ export class StudentsController {
     return this.studentsService.importStudents(classroomId, dto);
   }
 
-  @Post(':classroomId/groups')
-  addGroup(
+  @Post(':classroomId/students')
+  addStudent(
     @Param('classroomId') classroomId: string,
-    @Body() dto: CreateGroupDto,
+    @Body() dto: CreateStudentDto,
   ) {
-    return this.studentsService.addGroup(classroomId, dto);
+    return this.studentsService.addStudent(classroomId, dto);
   }
 
   @Patch(':classroomId/students/:studentId/group')
@@ -111,5 +86,30 @@ export class StudentsController {
     @Param('groupName') groupName: string,
   ) {
     return this.studentsService.deleteGroup(classroomId, groupName);
+  }
+
+  @Post(':classroomId/groups')
+  addGroup(
+    @Param('classroomId') classroomId: string,
+    @Body() dto: CreateGroupDto,
+  ) {
+    return this.studentsService.addGroup(classroomId, dto);
+  }
+
+  @Patch(':classroomId/students/:studentId')
+  updateStudent(
+    @Param('classroomId') classroomId: string,
+    @Param('studentId') studentId: string,
+    @Body() dto: UpdateStudentDto,
+  ) {
+    return this.studentsService.updateStudent(classroomId, studentId, dto);
+  }
+
+  @Delete(':classroomId/students/:studentId')
+  deleteStudent(
+    @Param('classroomId') classroomId: string,
+    @Param('studentId') studentId: string,
+  ) {
+    return this.studentsService.deleteStudent(classroomId, studentId);
   }
 }

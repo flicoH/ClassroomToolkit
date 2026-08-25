@@ -22,6 +22,23 @@ interface ClassroomStudentQuery {
   sort?: string;
 }
 
+export interface SkippedImportStudent {
+  rowNumber: number;
+  name: string;
+  studentNo: string;
+  reason: string;
+}
+
+export interface ImportStudentsResult {
+  imported: Student[];
+  skipped: SkippedImportStudent[];
+}
+
+interface ParsedImportRows {
+  students: Student[];
+  skipped: SkippedImportStudent[];
+}
+
 const defaultClassroomTemplates: Array<Omit<Classroom, 'id'>> = [
   {
     name: '一年级',
@@ -136,17 +153,28 @@ export class StudentsService {
     return { deleted: true };
   }
 
-  async importStudents(classroomId: string, dto: ImportStudentsDto) {
+  async importStudents(
+    classroomId: string,
+    dto: ImportStudentsDto,
+  ): Promise<ImportStudentsResult> {
     const classroom = await this.getClassroomOrThrow(classroomId);
-    const students = this.parseImportRows(dto.text, classroom.students);
+    const { students, skipped } = this.parseImportRows(
+      dto.text,
+      classroom.students,
+    );
+    if (!students.length) return { imported: [], skipped };
+
     classroom.students.push(...students);
     const savedClassroom = await this.database.saveClassroom(classroom);
     const importedStudentNos = new Set(
       students.map((student) => student.studentNo),
     );
-    return savedClassroom.students.filter((student) =>
-      importedStudentNos.has(student.studentNo),
-    );
+    return {
+      imported: savedClassroom.students.filter((student) =>
+        importedStudentNos.has(student.studentNo),
+      ),
+      skipped,
+    };
   }
 
   async addGroup(classroomId: string, dto: CreateGroupDto) {
@@ -243,31 +271,40 @@ export class StudentsService {
   private parseImportRows(
     text: string,
     existingStudents: Student[],
-  ): Student[] {
+  ): ParsedImportRows {
     const usedStudentNos = new Set(
       existingStudents.map((student) => student.studentNo),
     );
-    return text
-      .split('\n')
-      .map((row) => row.trim())
-      .filter(Boolean)
-      .map((row, index) => {
-        const [name = '未命名', maybeNo = '', maybeGender = ''] =
-          row.split(/\s+/);
-        const gender: Gender =
-          maybeGender === '男' || maybeGender === '女' ? maybeGender : '';
-        const studentNo = /^\d+$/.test(maybeNo)
-          ? maybeNo
-          : this.createNextStudentNoFromSet(
-              usedStudentNos,
-              existingStudents.length + index,
-            );
-        if (usedStudentNos.has(studentNo)) {
-          throw new BadRequestException(`学生学号 ${studentNo} 已存在`);
-        }
-        usedStudentNos.add(studentNo);
-        return { id: studentNo, name, studentNo, gender };
-      });
+    const students: Student[] = [];
+    const skipped: SkippedImportStudent[] = [];
+
+    text.split('\n').forEach((rawRow, index) => {
+      const row = rawRow.trim();
+      if (!row) return;
+      const [name = '未命名', maybeNo = '', maybeGender = ''] =
+        row.split(/\s+/);
+      const gender: Gender =
+        maybeGender === '男' || maybeGender === '女' ? maybeGender : '';
+      const studentNo = /^\d+$/.test(maybeNo)
+        ? maybeNo
+        : this.createNextStudentNoFromSet(
+            usedStudentNos,
+            existingStudents.length + index,
+          );
+      if (usedStudentNos.has(studentNo)) {
+        skipped.push({
+          rowNumber: index + 1,
+          name,
+          studentNo,
+          reason: '学号已存在',
+        });
+        return;
+      }
+      usedStudentNos.add(studentNo);
+      students.push({ id: studentNo, name, studentNo, gender });
+    });
+
+    return { students, skipped };
   }
 
   private createNextStudentNo(students: Student[], excludeIndex?: number) {

@@ -183,7 +183,70 @@ describe('StudentsService', () => {
     expect(database.saveClassroom).not.toHaveBeenCalled();
   });
 
-  it('rejects duplicate student numbers during import', async () => {
+  it('imports non-duplicate students and reports duplicate student numbers', async () => {
+    const existingStudents = [
+      {
+        id: '1001',
+        name: '张三',
+        studentNo: '1001',
+        gender: '男' as const,
+      },
+    ];
+    const classroom: Classroom = {
+      id: 'class-1',
+      name: '一年级',
+      groups: ['一组'],
+      students: [...existingStudents],
+    };
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue(classroom),
+      saveClassroom: jest.fn(async (nextClassroom) => nextClassroom),
+    };
+    const service = new StudentsService(database as never);
+
+    await expect(
+      service.importStudents('class-1', {
+        text: '李四 1002 女\n王五 1002 男\n赵六 1001 男',
+      }),
+    ).resolves.toEqual({
+      imported: [
+        {
+          id: '1002',
+          name: '李四',
+          studentNo: '1002',
+          gender: '女',
+        },
+      ],
+      skipped: [
+        {
+          rowNumber: 2,
+          name: '王五',
+          studentNo: '1002',
+          reason: '学号已存在',
+        },
+        {
+          rowNumber: 3,
+          name: '赵六',
+          studentNo: '1001',
+          reason: '学号已存在',
+        },
+      ],
+    });
+    expect(database.saveClassroom).toHaveBeenCalledWith({
+      ...classroom,
+      students: [
+        ...existingStudents,
+        {
+          id: '1002',
+          name: '李四',
+          studentNo: '1002',
+          gender: '女',
+        },
+      ],
+    });
+  });
+
+  it('skips import persistence when all imported student numbers are duplicated', async () => {
     const classroom: Classroom = {
       id: 'class-1',
       name: '一年级',
@@ -205,9 +268,19 @@ describe('StudentsService', () => {
 
     await expect(
       service.importStudents('class-1', {
-        text: '李四 1002 女\n王五 1002 男',
+        text: '李四 1001 女',
       }),
-    ).rejects.toThrow('学生学号 1002 已存在');
+    ).resolves.toEqual({
+      imported: [],
+      skipped: [
+        {
+          rowNumber: 1,
+          name: '李四',
+          studentNo: '1001',
+          reason: '学号已存在',
+        },
+      ],
+    });
     expect(database.saveClassroom).not.toHaveBeenCalled();
   });
 
