@@ -414,7 +414,7 @@ export function StudentManagement() {
   const deleteGroup = async (group: string) => {
     if (!activeBackendClass) return;
     const updatedClass = await request<ClassRoom, ClassRoom>({
-      url: `/api/classes/${activeBackendClass.id}/groups/${group}`,
+      url: `/api/classes/${activeBackendClass.id}/groups?name=${encodeURIComponent(group)}`,
       method: "DELETE"
     });
     setClasses(current => current.map(classRoom => (classRoom.id === updatedClass.id ? updatedClass : classRoom)));

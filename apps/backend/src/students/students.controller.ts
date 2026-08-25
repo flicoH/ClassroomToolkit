@@ -88,6 +88,14 @@ export class StudentsController {
     return this.studentsService.deleteGroup(classroomId, groupName);
   }
 
+  @Delete(':classroomId/groups')
+  deleteGroupByName(
+    @Param('classroomId') classroomId: string,
+    @Query('name') groupName = '',
+  ) {
+    return this.studentsService.deleteGroup(classroomId, groupName);
+  }
+
   @Post(':classroomId/groups')
   addGroup(
     @Param('classroomId') classroomId: string,
