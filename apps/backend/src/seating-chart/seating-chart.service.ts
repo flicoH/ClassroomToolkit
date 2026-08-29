@@ -75,8 +75,32 @@ export class SeatingChartService {
 
   async assign(chartId: string, seatId: string, dto: AssignSeatDto) {
     const chart = await this.getChartOrThrow(chartId);
-    const seats = this.ensureSeats(chart).map((seat) => {
+    const currentSeats = this.ensureSeats(chart);
+    const targetSeat = currentSeats.find((seat) => seat.id === seatId);
+    if (!targetSeat) throw new NotFoundException('座位不存在');
+
+    const sourceSeat =
+      dto.studentId && dto.sourceSeatId
+        ? currentSeats.find(
+            (seat) =>
+              seat.id === dto.sourceSeatId && seat.studentId === dto.studentId,
+          )
+        : undefined;
+    const fallbackSourceSeat = dto.studentId
+      ? currentSeats.find((seat) => seat.studentId === dto.studentId)
+      : undefined;
+    const actualSourceSeat = sourceSeat ?? fallbackSourceSeat;
+    const targetStudentId = targetSeat.studentId;
+
+    const seats = currentSeats.map((seat) => {
       if (seat.id === seatId) return { ...seat, studentId: dto.studentId };
+      if (
+        dto.studentId &&
+        actualSourceSeat?.id === seat.id &&
+        seat.id !== seatId
+      ) {
+        return { ...seat, studentId: targetStudentId };
+      }
       if (dto.studentId && seat.studentId === dto.studentId)
         return { ...seat, studentId: null };
       return seat;

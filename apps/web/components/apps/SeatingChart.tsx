@@ -6,6 +6,7 @@
  */
 "use client";
 
+import type { DragEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Grid3X3, Loader2, Move, Plus, RotateCcw, Shuffle, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,13 @@ interface ClassRoom {
 
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
+}
+
+const SEATING_DRAG_MIME = "application/x-classroom-toolkit-seat";
+
+interface SeatingDragPayload {
+  studentId: string;
+  sourceSeatId?: string | null;
 }
 
 export function SeatingChart() {
@@ -225,14 +233,14 @@ export function SeatingChart() {
   };
 
   /** 将学生放入目标座位；如果来源是另一个座位，则支持移动/交换。 */
-  const assignStudent = async (seatId: string, studentId: string) => {
+  const assignStudent = async (seatId: string, studentId: string, sourceSeatId?: string | null) => {
     if (!chart || loading) return;
     setLoading(true);
     try {
       const nextChart = await request<SeatingChartData, SeatingChartData>({
         url: `/api/seating-charts/${chart.id}/seats/${seatId}`,
         method: "PATCH",
-        data: { studentId }
+        data: { studentId, sourceSeatId }
       });
       setChart(nextChart);
       setDraggingStudentId(null);
@@ -242,11 +250,38 @@ export function SeatingChart() {
     }
   };
 
-  /** 拖拽已安排学生到另一个座位时，空座移动，有人则交换。 */
-  const moveOrSwapSeat = (targetSeatId: string) => {
-    if (!draggingStudentId) return;
+  const startStudentDrag = (event: DragEvent<HTMLElement>, studentId: string, sourceSeatId?: string | null) => {
+    const payload: SeatingDragPayload = { studentId, sourceSeatId };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(SEATING_DRAG_MIME, JSON.stringify(payload));
+    event.dataTransfer.setData("text/plain", studentId);
+    setDraggingStudentId(studentId);
+    setDraggingSeatId(sourceSeatId ?? null);
+  };
 
-    void assignStudent(targetSeatId, draggingStudentId);
+  const readStudentDrag = (event: DragEvent<HTMLElement>): SeatingDragPayload | null => {
+    const rawPayload = event.dataTransfer.getData(SEATING_DRAG_MIME);
+    if (rawPayload) {
+      try {
+        const payload = JSON.parse(rawPayload) as Partial<SeatingDragPayload>;
+        if (payload.studentId) return { studentId: payload.studentId, sourceSeatId: payload.sourceSeatId ?? null };
+      } catch {
+        return null;
+      }
+    }
+
+    const fallbackStudentId = event.dataTransfer.getData("text/plain") || draggingStudentId;
+    if (!fallbackStudentId) return null;
+    return { studentId: fallbackStudentId, sourceSeatId: draggingSeatId };
+  };
+
+  /** 拖拽已安排学生到另一个座位时，空座移动，有人则交换。 */
+  const moveOrSwapSeat = (event: DragEvent<HTMLElement>, targetSeatId: string) => {
+    event.preventDefault();
+    const payload = readStudentDrag(event);
+    if (!payload) return;
+
+    void assignStudent(targetSeatId, payload.studentId, payload.sourceSeatId);
   };
 
   const selectedSeat = seats.find(seat => seat.id === selectedSeatId);
@@ -347,17 +382,19 @@ export function SeatingChart() {
                           draggable={Boolean(student) && !loading}
                           disabled={loading}
                           onClick={() => setSelectedSeatId(seat.id)}
-                          onDragStart={() => {
+                          onDragStart={event => {
                             if (!student) return;
-                            setDraggingStudentId(student.id);
-                            setDraggingSeatId(seat.id);
+                            startStudentDrag(event, student.id, seat.id);
                           }}
                           onDragEnd={() => {
                             setDraggingStudentId(null);
                             setDraggingSeatId(null);
                           }}
-                          onDragOver={event => event.preventDefault()}
-                          onDrop={() => moveOrSwapSeat(seat.id)}
+                          onDragOver={event => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={event => moveOrSwapSeat(event, seat.id)}
                           className={cn(
                             "min-h-[92px] rounded-xl border p-3 text-center transition",
                             isSelected
@@ -405,7 +442,7 @@ export function SeatingChart() {
                 key={student.id}
                 draggable={!loading}
                 disabled={loading}
-                onDragStart={() => setDraggingStudentId(student.id)}
+                onDragStart={event => startStudentDrag(event, student.id)}
                 onDragEnd={() => {
                   setDraggingStudentId(null);
                   setDraggingSeatId(null);

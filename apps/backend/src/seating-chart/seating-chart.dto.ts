@@ -7,6 +7,7 @@ export class ResizeSeatingChartDto {
 
 export class AssignSeatDto {
   studentId!: string | null;
+  sourceSeatId?: string | null;
 }
 
 export class CreateSeatingChartDto {
