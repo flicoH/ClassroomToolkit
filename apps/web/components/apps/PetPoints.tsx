@@ -7,6 +7,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDownUp,
   BarChart3,
@@ -1047,13 +1048,13 @@ export function PetPoints() {
   );
 
   return (
-    <div className="relative min-h-full bg-[#f7f9fc] text-slate-950">
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#f7f9fc] text-slate-950">
       {notice && (
         <div className="fixed left-1/2 top-5 z-[90] -translate-x-1/2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-xl">
           {notice}
         </div>
       )}
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3 pr-2">
           <PawPrint className="h-5 w-5 text-pink-500" />
           <h2 className="text-lg font-black">宠物积分</h2>
@@ -1247,7 +1248,7 @@ export function PetPoints() {
         )}
       </header>
 
-      <main className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-2 2xl:grid-cols-3">
+      <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-5 overflow-y-auto p-5 lg:grid-cols-2 2xl:grid-cols-3">
         {filteredStudents.map(student => {
           const pet = petOptions.find(item => item.id === student.petId);
           const genericEvolutionIndex = getEvolutionIndex(student.score);
@@ -1430,17 +1431,16 @@ export function PetPoints() {
             </section>
           );
         })}
+        {!filteredStudents.length && (
+          <div className="col-span-full flex min-h-72 flex-col items-center justify-center text-slate-300">
+            <Search className="h-10 w-10" />
+            <p className="mt-3 font-black">没有匹配的学生</p>
+          </div>
+        )}
       </main>
 
-      {!filteredStudents.length && (
-        <div className="flex min-h-72 flex-col items-center justify-center text-slate-300">
-          <Search className="h-10 w-10" />
-          <p className="mt-3 font-black">没有匹配的学生</p>
-        </div>
-      )}
-
       {evaluationMode === "batch" && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
           <section className="w-full max-w-[760px] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -1482,7 +1482,7 @@ export function PetPoints() {
       )}
 
       {evaluationMode === "advanced" && (
-        <div className="absolute inset-0 z-40 bg-[#f7f9fc] p-4 sm:p-6">
+        <div className="fixed inset-0 z-40 bg-[#f7f9fc] p-4 sm:p-6">
           <section className="mx-auto flex h-full max-w-[1280px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
               <div>
@@ -1588,7 +1588,7 @@ export function PetPoints() {
       )}
 
       {recordStudent && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
           <section className="flex max-h-[82vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
               <div>
@@ -1692,152 +1692,172 @@ export function PetPoints() {
         </div>
       )}
 
-      {selectedStudent && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 p-5">
-          <section className="flex h-[84vh] w-full max-w-[1120px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-6 py-4">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
-                <PawPrint className="h-6 w-6" />
-              </div>
-              <div className="mr-2">
-                <h3 className="text-xl font-black">为 {selectedStudent.name} 选择孵化星灵</h3>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-300">Class Starling System</p>
-              </div>
-              <div className="flex flex-1 flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1 sm:flex-nowrap">
-                {families.map(family => (
-                  <button
-                    key={family}
-                    onClick={() => setActiveFamily(family)}
-                    className={cn(
-                      "flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-black text-slate-400 transition",
-                      activeFamily === family && "bg-white text-orange-600 shadow-sm"
-                    )}
-                  >
-                    <FamilyIcon family={family} />
-                    {family}
-                  </button>
-                ))}
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-10 w-10 rounded-lg"
-                onClick={closePetPicker}
-                aria-label="关闭宠物选择"
-              >
-                <X className="h-6 w-6" />
-              </Button>
-            </div>
-
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1.75fr_1fr]">
-              <div className="grid auto-rows-[180px] grid-cols-2 gap-4 overflow-y-auto bg-[#f7f9fc] p-5 sm:grid-cols-3">
-                {filteredPets.map(pet => (
-                  <button
-                    key={pet.id}
-                    onClick={() => selectPet(pet)}
-                    className={cn(
-                      "relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-transparent bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-                      selectedPetId === pet.id && "border-orange-400 shadow-md"
-                    )}
-                  >
-                    {selectedPetId === pet.id && (
-                      <span className="absolute right-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-white">
-                        <Check className="h-4 w-4" />
-                      </span>
-                    )}
-                    <span
+      {hydrated &&
+        selectedStudent &&
+        createPortal(
+          <div
+            className="bg-black/50"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9990
+            }}
+          >
+            <section
+              className="flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              style={{
+                position: "fixed",
+                left: "50dvw",
+                top: "50dvh",
+                width: "min(1120px, calc(100dvw - 40px))",
+                height: "min(84dvh, calc(100dvh - 40px))",
+                transform: "translate(-50%, -50%)"
+              }}
+            >
+              <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-6 py-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
+                  <PawPrint className="h-6 w-6" />
+                </div>
+                <div className="mr-2">
+                  <h3 className="text-xl font-black">为 {selectedStudent.name} 选择孵化星灵</h3>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-300">Class Starling System</p>
+                </div>
+                <div className="flex flex-1 flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1 sm:flex-nowrap">
+                  {families.map(family => (
+                    <button
+                      key={family}
+                      onClick={() => setActiveFamily(family)}
                       className={cn(
-                        "absolute left-3 top-3 z-10 rounded-full px-2 py-1 text-[11px] font-black",
-                        pet.badge
+                        "flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-black text-slate-400 transition",
+                        activeFamily === family && "bg-white text-orange-600 shadow-sm"
                       )}
                     >
-                      {pet.family}
-                    </span>
-                    <div
-                      className={cn(
-                        "flex h-28 w-full items-center justify-center rounded-xl bg-gradient-to-br",
-                        pet.tone
-                      )}
-                    >
-                      <PetSprite pet={pet} className="w-24" />
-                    </div>
-                    <div className="mt-2 w-full border-t border-dashed border-slate-200 pt-2 text-left text-base font-black">
-                      {pet.name}
-                    </div>
-                  </button>
-                ))}
+                      <FamilyIcon family={family} />
+                      {family}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 rounded-lg"
+                  onClick={closePetPicker}
+                  aria-label="关闭宠物选择"
+                >
+                  <X className="h-6 w-6" />
+                </Button>
               </div>
 
-              <aside className="flex min-h-0 flex-col border-l border-slate-100 bg-white p-6">
-                {selectedPet ? (
-                  <div className="flex min-h-0 flex-1 flex-col">
-                    <div
+              <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1.75fr_1fr]">
+                <div className="grid auto-rows-[180px] grid-cols-2 gap-4 overflow-y-auto bg-[#f7f9fc] p-5 sm:grid-cols-3">
+                  {filteredPets.map(pet => (
+                    <button
+                      key={pet.id}
+                      onClick={() => selectPet(pet)}
                       className={cn(
-                        "flex min-h-[220px] items-center justify-center rounded-2xl bg-gradient-to-br",
-                        selectedPet.tone
+                        "relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-transparent bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                        selectedPetId === pet.id && "border-orange-400 shadow-md"
                       )}
                     >
-                      <PetEgg pet={selectedPet} progress={0} className="w-[220px] max-w-full" />
-                    </div>
-                    <div className="mt-5 flex items-center gap-2">
-                      <h4 className="text-2xl font-black">{selectedPet.name}</h4>
-                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-black", selectedPet.badge)}>
-                        {selectedPet.family}
+                      {selectedPetId === pet.id && (
+                        <span className="absolute right-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-white">
+                          <Check className="h-4 w-4" />
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          "absolute left-3 top-3 z-10 rounded-full px-2 py-1 text-[11px] font-black",
+                          pet.badge
+                        )}
+                      >
+                        {pet.family}
                       </span>
-                    </div>
-                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{selectedPet.description}</p>
-                    <div className="mt-4 grid grid-cols-4 gap-1 rounded-xl bg-slate-50 p-2">
-                      {selectedPet.evolutions.map((formName, index) => (
-                        <div key={formName} className="min-w-0 px-1 py-2 text-center">
-                          <div
-                            className={cn(
-                              "mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black",
-                              index === 0 ? selectedPet.badge : "bg-white text-slate-400"
-                            )}
-                          >
-                            {index + 1}
+                      <div
+                        className={cn(
+                          "flex h-28 w-full items-center justify-center rounded-xl bg-gradient-to-br",
+                          pet.tone
+                        )}
+                      >
+                        <PetSprite pet={pet} className="w-24" />
+                      </div>
+                      <div className="mt-2 w-full border-t border-dashed border-slate-200 pt-2 text-left text-base font-black">
+                        {pet.name}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <aside className="flex min-h-0 flex-col border-l border-slate-100 bg-white p-6">
+                  {selectedPet ? (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <div
+                        className={cn(
+                          "flex min-h-[220px] items-center justify-center rounded-2xl bg-gradient-to-br",
+                          selectedPet.tone
+                        )}
+                      >
+                        <PetEgg pet={selectedPet} progress={0} className="w-[220px] max-w-full" />
+                      </div>
+                      <div className="mt-5 flex items-center gap-2">
+                        <h4 className="text-2xl font-black">{selectedPet.name}</h4>
+                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-black", selectedPet.badge)}>
+                          {selectedPet.family}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{selectedPet.description}</p>
+                      <div className="mt-4 grid grid-cols-4 gap-1 rounded-xl bg-slate-50 p-2">
+                        {selectedPet.evolutions.map((formName, index) => (
+                          <div key={formName} className="min-w-0 px-1 py-2 text-center">
+                            <div
+                              className={cn(
+                                "mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black",
+                                index === 0 ? selectedPet.badge : "bg-white text-slate-400"
+                              )}
+                            >
+                              {index + 1}
+                            </div>
+                            <p className="truncate text-[11px] font-black text-slate-600" title={formName}>
+                              {formName}
+                            </p>
+                            <p className="mt-0.5 text-[10px] font-bold text-slate-400">
+                              {petEvolutionThresholds[index]} 能量
+                            </p>
                           </div>
-                          <p className="truncate text-[11px] font-black text-slate-600" title={formName}>
-                            {formName}
-                          </p>
-                          <p className="mt-0.5 text-[10px] font-bold text-slate-400">
-                            {petEvolutionThresholds[index]} 能量
-                          </p>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+                      <Input
+                        value={petNickname}
+                        onChange={event => setPetNickname(event.target.value)}
+                        maxLength={12}
+                        placeholder="输入它独一无二的名字..."
+                        className="mt-5 h-11 rounded-xl border-0 bg-slate-100 px-4 font-semibold shadow-none"
+                      />
+                      <Button
+                        onClick={() => void confirmPet()}
+                        className="mt-4 h-12 rounded-xl bg-slate-950 text-base font-black text-white hover:bg-slate-800"
+                      >
+                        确认选择宠物蛋
+                        <Check className="h-5 w-5" />
+                      </Button>
                     </div>
-                    <Input
-                      value={petNickname}
-                      onChange={event => setPetNickname(event.target.value)}
-                      maxLength={12}
-                      placeholder="输入它独一无二的名字..."
-                      className="mt-5 h-11 rounded-xl border-0 bg-slate-100 px-4 font-semibold shadow-none"
-                    />
-                    <Button
-                      onClick={() => void confirmPet()}
-                      className="mt-4 h-12 rounded-xl bg-slate-950 text-base font-black text-white hover:bg-slate-800"
-                    >
-                      确认选择宠物蛋
-                      <Check className="h-5 w-5" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-1 flex-col items-center justify-center text-center text-slate-200">
-                    <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-dashed border-slate-100">
-                      <Sparkles className="h-10 w-10" />
+                  ) : (
+                    <div className="flex flex-1 flex-col items-center justify-center text-center text-slate-200">
+                      <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-dashed border-slate-100">
+                        <Sparkles className="h-10 w-10" />
+                      </div>
+                      <p className="mt-6 text-xl font-black">Waiting for selection</p>
+                      <p className="mt-2 text-xs font-black uppercase tracking-[0.18em]">Scanner active...</p>
                     </div>
-                    <p className="mt-6 text-xl font-black">Waiting for selection</p>
-                    <p className="mt-2 text-xs font-black uppercase tracking-[0.18em]">Scanner active...</p>
-                  </div>
-                )}
-              </aside>
-            </div>
-          </section>
-        </div>
-      )}
+                  )}
+                </aside>
+              </div>
+            </section>
+          </div>,
+          document.body
+        )}
 
       {historyStudent && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
           <section className="max-h-[84vh] w-full max-w-[720px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -2006,7 +2026,7 @@ export function PetPoints() {
       )}
 
       {reportOpen && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
           <section className="max-h-[84vh] w-full max-w-[900px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
@@ -2088,7 +2108,7 @@ export function PetPoints() {
       )}
 
       {settingsPanel && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
           <section className="max-h-[84vh] w-full max-w-[760px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
@@ -2268,7 +2288,7 @@ export function PetPoints() {
       )}
 
       {scoreAdjustStudent && (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
           <section className="w-full max-w-[560px] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -2400,7 +2420,7 @@ export function PetPoints() {
       )}
 
       {confirmAction && (
-        <div className="absolute inset-0 z-[80] flex items-center justify-center bg-black/55 p-4">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4">
           <section className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-100 text-rose-500">
               <Trash2 className="h-6 w-6" />
