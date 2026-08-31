@@ -26,6 +26,8 @@ services:
     restart: unless-stopped
     mem_limit: 640m
     cpus: 0.55
+    ports:
+      - "3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
       MYSQL_DATABASE: classroom_toolkit
