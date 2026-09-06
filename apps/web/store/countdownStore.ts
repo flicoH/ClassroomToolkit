@@ -52,10 +52,11 @@ function normalizeApiState(state: CountdownApiState): CountdownState {
   };
 }
 
-function saveState(state: CountdownState) {
+function saveState(state: CountdownState, started = false) {
   void request<CountdownApiState, CountdownApiState>({
     url: "/api/countdown",
     method: "PATCH",
+    headers: started ? { "x-countdown-start": "1" } : undefined,
     data: {
       totalSeconds: state.totalSeconds,
       remainingSeconds: state.remainingSeconds,
@@ -110,7 +111,7 @@ export const useCountdownStore = create<CountdownStore>((set, get) => ({
       startTime: isRunning ? Date.now() - elapsedBeforeResume * 1000 : null
     };
     set(newState);
-    saveState(newState);
+    saveState(newState, isRunning && !state.isRunning);
   },
 
   reset: () => {

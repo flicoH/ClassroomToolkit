@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import {
   Body,
   Controller,
@@ -43,6 +44,7 @@ export class StudentsController {
   }
 
   @Post()
+  @TrackFeature('students', 'classroom')
   createClassroom(@Body() dto: CreateClassroomDto) {
     return this.studentsService.createClassroom(dto);
   }
@@ -56,6 +58,7 @@ export class StudentsController {
   }
 
   @Post(':classroomId/students/import')
+  @TrackFeature('students', 'import')
   importStudents(
     @Param('classroomId') classroomId: string,
     @Body() dto: ImportStudentsDto,
@@ -64,6 +67,7 @@ export class StudentsController {
   }
 
   @Post(':classroomId/students')
+  @TrackFeature('students', 'create')
   addStudent(
     @Param('classroomId') classroomId: string,
     @Body() dto: CreateStudentDto,
@@ -72,6 +76,7 @@ export class StudentsController {
   }
 
   @Patch(':classroomId/students/:studentId/group')
+  @TrackFeature('students', 'group')
   updateStudentGroup(
     @Param('classroomId') classroomId: string,
     @Param('studentId') studentId: string,
@@ -105,6 +110,7 @@ export class StudentsController {
   }
 
   @Patch(':classroomId/students/:studentId')
+  @TrackFeature('students', 'update')
   updateStudent(
     @Param('classroomId') classroomId: string,
     @Param('studentId') studentId: string,

@@ -25,7 +25,9 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 | 宠物积分   | `/pet-points`     | 积分调整、宠物、规则、奖励与兑换 |
 | 扭蛋奖励   | `/gacha-machine`  | 奖励 CRUD、抽奖与抽奖记录        |
 
-除健康检查、注册和登录外，所有接口均经过全局教师鉴权。业务数据包含 `teacher_id`，查询和写入会自动限定为当前登录教师，不能跨教师访问。
+教师业务接口经过全局教师鉴权，查询和写入按 `teacher_id` 限定当前教师。`/admin/*` 使用独立管理员身份域，可查询全平台数据，但教师令牌不能访问；`/analytics/events` 仍要求教师身份，仅接收功能打开事件。
+
+新增模块：`src/admin` 为管理查询，`src/admin/auth` 为管理员认证，`src/analytics` 为公共统计采集。均遵循 Controller / Service / Database / Entity 分层，DTO 和业务类型独立定义。
 
 ## 本地启动
 
@@ -36,7 +38,7 @@ pnpm install
 cp apps/backend/.env.example apps/backend/.env
 ```
 
-编辑 `apps/backend/.env`，至少配置正确的 MySQL 连接信息，然后初始化数据库：
+编辑 `apps/backend/.env`，至少配置正确的 MySQL 连接信息。以下初始化仅用于全新数据库，已有数据库使用 `migration:run`：
 
 ```bash
 pnpm --filter ClassRoomToolkitBackend db:init
@@ -70,6 +72,17 @@ curl http://127.0.0.1:3000/
 | `TYPEORM_SYNCHRONIZE`        | `false`             | TypeORM 自动同步；生产环境必须保持关闭       |
 | `TYPEORM_MIGRATIONS_RUN`     | `false`             | 服务启动时是否自动执行 Migration             |
 | `LEGACY_DATA_OWNER_USERNAME` | 空                  | 旧库首次迁移时，历史业务数据归属的教师用户名 |
+
+管理员相关配置：
+
+| 变量                      | 说明                                                        |
+| ------------------------- | ----------------------------------------------------------- |
+| `ADMIN_INITIAL_USERNAME`  | 首次创建管理员的账号；默认不创建                            |
+| `ADMIN_INITIAL_PASSWORD`  | 首次创建密码，12–256 位；已有管理员时不会覆盖               |
+| `ADMIN_COOKIE_SECURE`     | 生产环境默认启用 Secure；仅本机 HTTP 联调可设 `false`       |
+| `TEACHER_DATA_UTC_OFFSET` | 历史教师时间偏移；空值沿用后端运行环境，例如显式设 `+08:00` |
+
+初始化成功后同时移除两个 `ADMIN_INITIAL_*` 变量并重新加载后端配置。Docker 使用 `deploy/.env.backend` 注入，PM2/本地使用 `apps/backend/.env`。详见 [管理后台部署与验收](../../docs/admin-dashboard.md)。
 
 不要提交 `.env`。生产环境应通过部署平台或密钥管理服务注入数据库密码等敏感配置。
 
@@ -123,6 +136,7 @@ pnpm --filter ClassRoomToolkitBackend migration:revert
 GET  /
 POST /auth/teacher/register
 POST /auth/teacher/login
+POST /admin/auth/login   # 不要求已有会话，但需要 X-Admin-Request: 1
 ```
 
 登录请求示例：
@@ -195,12 +209,10 @@ E2E 测试会连接数据库；执行前请确保 MySQL 已启动且 `.env` 指�
 
 ## 生产部署
 
-典型 CI/CD 发布顺序：
+先在隔离测试库执行测试；生产发布只执行构建、迁移与启动，不在生产业务库运行 E2E。完整 Docker 流程见 [部署说明](../../docs/single-server-docker-deployment.md)。手动发布后端的核心命令：
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter ClassRoomToolkitBackend test
-pnpm --filter ClassRoomToolkitBackend test:e2e
 pnpm --filter ClassRoomToolkitBackend build
 pnpm --filter ClassRoomToolkitBackend migration:run
 pnpm --filter ClassRoomToolkitBackend start:prod
@@ -209,7 +221,7 @@ pnpm --filter ClassRoomToolkitBackend start:prod
 生产环境建议：
 
 - 将 Backend 放在 Web BFF 或反向代理之后，不直接暴露 MySQL。
-- 使用 HTTPS，并让浏览器只访问 Web 的同源 `/api/*` 接口。
+- 使用 HTTPS；教师端通过同源 `/api/*` BFF，管理端通过同源 `/admin/*` Nginx 代理访问后端。
 - 保持 `TYPEORM_SYNCHRONIZE=false`，发布时显式执行 Migration。
 - 在迁移前备份数据库，并确保同一时间只有一个发布实例执行 Migration。
 - 为应用配置专用、最小权限的 MySQL 用户，不使用 `root`。
@@ -223,6 +235,8 @@ apps/backend/
 ├── database/                 # MySQL 建库与示例数据脚本
 ├── src/
 │   ├── auth/                 # 全局鉴权 Guard 与教师上下文
+│   ├── admin/                # 管理员认证与全平台只读查询
+│   ├── analytics/            # 登录及功能事件采集
 │   ├── teacher-auth/         # 教师账号和会话
 │   ├── database/             # TypeORM DataSource 与 Migration
 │   ├── students/             # 班级、学生和分组
@@ -240,7 +254,7 @@ apps/backend/
 
 ### `401 Unauthorized`
 
-确认请求携带有效的 `Authorization: Bearer <session-token>`。通过 Web 调用时，确认浏览器已登录、请求走同源 `/api/*`，且没有绕过 Next.js BFF 直接访问 Backend。
+教师接口确认请求携带有效的 `Authorization: Bearer <session-token>`。管理接口则检查独立的 `classroom_admin` Cookie，不使用教师 Bearer Token。通过 Web 调用时，确认浏览器已登录、请求走同源 `/api/*`，且没有绕过 Next.js BFF 直接访问 Backend。
 
 ### 无法连接 MySQL
 

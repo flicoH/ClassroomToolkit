@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import {
   Body,
   Controller,
@@ -27,6 +28,7 @@ export class PetPointsController {
   }
 
   @Post('scores/adjust')
+  @TrackFeature('pet-points', 'score')
   adjustScore(@Body() dto: AdjustScoreDto) {
     return this.petPointsService.adjustScore(dto);
   }
@@ -52,6 +54,7 @@ export class PetPointsController {
   }
 
   @Post('rewards/redeem')
+  @TrackFeature('pet-points', 'redeem')
   redeem(@Body() dto: RedeemRewardDto) {
     return this.petPointsService.redeem(dto);
   }

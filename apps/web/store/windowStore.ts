@@ -8,6 +8,7 @@
  * @LastEditors: huangqinjia huangqinjia
  * @LastEditTime: 2026-04-21 17:41:42
  */
+import { trackFeatureOpen } from "@/lib/analytics";
 import { create } from "zustand";
 
 export type WindowState = "normal" | "minimized" | "maximized";
@@ -53,6 +54,7 @@ export const useWindowStore = create<WindowStore>()((set, get) => ({
   nextZIndex: 10,
 
   openWindow: (title, contentKey, options) => {
+    trackFeatureOpen(contentKey);
     const { windows, nextZIndex } = get();
     // 默认同一个应用只打开一个窗口；再次点击时聚焦或恢复已有窗口。
     if (!options?.allowMultiple) {

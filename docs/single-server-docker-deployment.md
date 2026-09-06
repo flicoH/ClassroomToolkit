@@ -33,7 +33,8 @@ Internet
        -> Web container   127.0.0.1:3001
        -> Admin container 127.0.0.1:3002
 
-Web container
+Web container（教师端 /api/* BFF）
+Admin container（管理端 /admin/* Nginx 代理）
   -> classroom_internal Docker network
        -> Backend container :3000
             -> MySQL container :3306
@@ -209,7 +210,7 @@ cp deploy/.env.backend.example deploy/.env.backend
 chmod 600 deploy/.env.frontend deploy/.env.backend
 ```
 
-编辑 `deploy/.env.backend`，替换两个密码：
+编辑 `deploy/.env.backend`，替换数据库密码并配置首次使用的管理员账号：
 
 ```dotenv
 BACKEND_PORT=3000
@@ -217,9 +218,19 @@ MYSQL_ROOT_PASSWORD=long-random-root-password
 MYSQL_USER=classroom_app
 MYSQL_PASSWORD=long-random-app-password
 LEGACY_DATA_OWNER_USERNAME=
+# 首次启动创建管理员，替换示例密码；已有管理员时不会重置账号
+ADMIN_INITIAL_USERNAME=admin
+ADMIN_INITIAL_PASSWORD=replace-with-your-own-admin-password
+ADMIN_COOKIE_SECURE=true
+# 留空沿用后端时区；迁移过服务器时应填历史教师数据的原始偏移
+TEACHER_DATA_UTC_OFFSET=
 ```
 
 首次初始化 MySQL 后不要只修改这里的密码，因为 MySQL 数据卷中的账号密码不会自动同步变化。
+
+`ADMIN_INITIAL_PASSWORD` 必须为 12–256 位，没有默认管理员密码；教师账号不能登录管理端。管理员只在表为空且两个初始化变量都有效时创建，修改变量不会重置已有密码。登录成功后应同时清空两个初始化变量，并按第 8 节重新创建 Backend 容器。Docker 配置来自此文件，不读取宿主机的 `apps/backend/.env`。
+
+`TEACHER_DATA_UTC_OFFSET` 用于解释历史教师 DATETIME，例如 `+08:00` 或 `+00:00`；不确定时先核对原运行环境。新统计事件始终使用 UTC，图表按北京时间显示。
 
 ## 6. 配置 Nginx 与 HTTPS
 
@@ -244,7 +255,7 @@ certbot --version
 sudo certbot --nginx -d classroom.example.com -d admin.classroom.example.com
 ```
 
-如果 CentOS 7.8 的 EPEL 源已经无法安装 Certbot，先跳过 HTTPS，保持 80 端口把业务跑通；证书可在迁移到 Rocky Linux 9、AlmaLinux 9 或 Ubuntu Server 24.04 LTS 后再配置。
+如果旧系统无法安装证书工具，应使用已有证书方案或在迁移系统后完成 HTTPS 配置。正式管理员登录依赖 Secure Cookie，不应以关闭该配置代替正式 HTTPS 部署。
 
 防火墙只开放 SSH、HTTP 和 HTTPS。Backend 和 MySQL 不应直接暴露公网。
 
@@ -266,22 +277,22 @@ PRODUCTION_SITE_URL=https://classroom.example.com
 
 在 `Settings -> Environments -> production` 添加：
 
-| Secret                   | 示例                         |
-| ------------------------ | ---------------------------- |
-| `SERVER_HOST`            | 服务器 IP 或域名             |
-| `SERVER_PORT`            | `22`                         |
-| `SERVER_USER`            | `deploy`                     |
-| `SERVER_APP_DIR`         | `/opt/classroom-toolkit`     |
-| `SERVER_SSH_PRIVATE_KEY` | Actions 登录服务器的完整私钥 |
-| `SERVER_KNOWN_HOSTS`     | 已核验的服务器 SSH 主机公钥  |
+| Secret               | 示例                         |
+| -------------------- | ---------------------------- |
+| `SERVER_HOST`        | 服务器 IP 或域名             |
+| `SERVER_PORT`        | `22`                         |
+| `SERVER_USER`        | `deploy`                     |
+| `SERVER_APP_DIR`     | `/opt/classroom-toolkit`     |
+| `SSH_PRIVATE_KEY`    | Actions 登录服务器的完整私钥 |
+| `SERVER_KNOWN_HOSTS` | 已核验的服务器 SSH 主机公钥  |
 
 Workflow 分工：
 
-- `CI`：所有 Push/PR 执行完整测试和构建，不部署。
+- `CI`：推送到 `main`、目标为 `main` 的 PR 及手动触发时执行测试和构建，不部署。
 - `Deploy Backend`：Backend 变化时测试、构建镜像、Migration、更新 Backend。
 - `Deploy Frontend`：Web/Admin 变化时测试、构建镜像、更新前端。
 
-两个部署 Job 使用同一个 `classroom-production-server` 并发锁，不会同时占用服务器资源。
+两个部署 Job 使用同一个 `classroom-production-server` 并发锁，不会同时占用服务器资源；该锁不保证后端先执行。首次引入管理接口或新增前后端依赖时，应协调发布，确认 `Deploy Backend` 成功后再运行 `Deploy Frontend`；若前端先部署，应在后端完成后重新验收。
 
 ## 8. 首次部署
 
@@ -303,6 +314,8 @@ FRONTEND_IMAGE_TAG=latest \
 bash deploy/frontend-deploy.sh
 ```
 
+本次管理后台升级会创建管理员、管理会话、统计事件和采集起点四张表。`backend-deploy.sh` 会先启动 MySQL、执行镜像内的迁移，再启动新 Backend；不要对已有数据库运行 `db:init`，也不要开启 TypeORM 自动同步。
+
 检查状态：
 
 ```bash
@@ -320,6 +333,38 @@ curl http://127.0.0.1:3000/
 curl -I http://127.0.0.1:3001/login
 curl -I http://127.0.0.1:3002/
 ```
+
+### 管理后台登录与验收
+
+访问 `https://admin.classroom.example.com/login`，使用 `deploy/.env.backend` 中首次配置的管理员登录。页面路径是 `/login`、`/features` 等，接口路径是 `/admin/auth/login`、`/admin/analytics/...`，无需在页面 URL 前加 `/admin`。
+
+宿主机 Nginx 将管理域名转发到 3002；Admin 容器里的 Nginx 再将 `/admin/*` 转发到同一 Docker 网络的 `backend:3000`，其他页面请求走 SPA 回退。仅更新宿主机配置而未更新 Admin 镜像，不能获得新增的 API 代理。
+
+```bash
+# 未登录应返回 401 JSON，而不是 200 HTML 或 502。
+curl -i https://admin.classroom.example.com/admin/auth/me
+
+# 查看后端初始化或统计错误，不输出容器的完整环境变量。
+docker compose -p classroom-backend \
+  --env-file deploy/.env.backend \
+  --env-file deploy/.backend-release.env \
+  -f deploy/compose.backend.yml logs --tail=100 backend
+```
+
+登录后检查教师、学生和班级列表，并刷新功能分析页面。到教师端注册、主动登录并使用一次课堂工具，再返回管理后台查看当天注册、登录和功能趋势；完整验收及故障排查见 [管理后台说明](admin-dashboard.md)。
+
+确认管理员创建成功后，在 `deploy/.env.backend` 中同时清空 `ADMIN_INITIAL_USERNAME` 和 `ADMIN_INITIAL_PASSWORD`，再执行：
+
+```bash
+docker compose -p classroom-backend \
+  --env-file deploy/.env.backend \
+  --env-file deploy/.backend-release.env \
+  -f deploy/compose.backend.yml up -d --no-deps --force-recreate backend
+```
+
+该操作重新加载 Backend 环境变量，不重建数据库。只执行 `docker restart` 不会加载新的配置。日后修改 Cookie 或历史时区配置也需要重新创建 Backend。
+
+### 教师端登录代理验收
 
 检查 Web 登录 Cookie 与业务接口代理：
 
@@ -400,7 +445,7 @@ FRONTEND_IMAGE_TAG=sha-OLD_COMMIT APP_DIR=/opt/classroom-toolkit bash deploy/fro
 BACKEND_IMAGE_TAG=sha-OLD_COMMIT APP_DIR=/opt/classroom-toolkit bash deploy/backend-deploy.sh
 ```
 
-后端脚本会执行当前代码中的 Migration。数据库变更不能仅靠切换镜像回滚，必须先评估数据影响。
+后端脚本会执行所选镜像内尚未执行的 Migration。数据库变更不能仅靠切换镜像回滚，必须先评估数据影响。管理后台迁移的 `down` 会删除管理员、管理会话、全部统计事件及采集起点；单纯回退应用版本时不要自动回滚此迁移。
 
 ## 日常运维
 

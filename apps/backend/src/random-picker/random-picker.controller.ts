@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { PickStudentsDto } from './random-picker.dto';
 import { RandomPickerService } from './random-picker.service';
@@ -17,6 +18,7 @@ export class RandomPickerController {
   }
 
   @Post('pick')
+  @TrackFeature('random-picker', 'pick')
   pick(@Body() dto: PickStudentsDto) {
     return this.randomPickerService.pick(dto);
   }

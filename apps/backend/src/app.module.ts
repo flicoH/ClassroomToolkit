@@ -1,3 +1,5 @@
+import { AdminModule } from './admin/admin.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'node:path';
@@ -29,6 +31,8 @@ import { AuthModule } from './auth/auth.module';
       migrationsRun: process.env.TYPEORM_MIGRATIONS_RUN === 'true',
       charset: 'utf8mb4',
     }),
+    AnalyticsModule,
+    AdminModule,
     AuthModule,
     StudentsModule,
     TaskStatsModule,

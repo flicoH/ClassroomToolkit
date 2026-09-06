@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
 import { UpdateCountdownDto } from './countdown.dto';
 import { CountdownService } from './countdown.service';
@@ -12,6 +13,7 @@ export class CountdownController {
   }
 
   @Patch()
+  @TrackFeature('countdown', 'start', 'countdown')
   update(@Body() dto: UpdateCountdownDto) {
     return this.countdownService.update(dto);
   }

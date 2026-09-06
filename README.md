@@ -64,3 +64,7 @@ pnpm --filter ClassRoomToolkitBackend migration:run
 ## CI/CD 部署
 
 仓库已配置 GitHub Actions：Pull Request 执行完整测试和构建；合并到 `main` 后，Frontend 与 Backend 根据代码路径独立构建 Docker 镜像并部署到同一台服务器，互不重启。生产配置见 [2C2G 单服务器 Docker 部署方案](docs/single-server-docker-deployment.md)，不使用 Docker 时可参考 [PM2 备选方案](docs/deployment.md)。
+
+## 管理后台
+
+Vue 管理后台支持师生班级查询、注册与登录图表、热门功能分析。首次使用需迁移数据库并初始化管理员，详见 [管理后台部署与统计口径](docs/admin-dashboard.md)。

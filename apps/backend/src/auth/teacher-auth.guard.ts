@@ -1,3 +1,4 @@
+import { ADMIN_ACCESS } from '../admin/auth/admin-access';
 import {
   CanActivate,
   ExecutionContext,
@@ -23,6 +24,13 @@ export class TeacherAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext) {
+    if (
+      this.reflector.getAllAndOverride(ADMIN_ACCESS, [
+        context.getHandler(),
+        context.getClass(),
+      ])
+    )
+      return true;
     const isPublic = this.reflector.getAllAndOverride<boolean>(
       IS_PUBLIC_ROUTE,
       [context.getHandler(), context.getClass()],

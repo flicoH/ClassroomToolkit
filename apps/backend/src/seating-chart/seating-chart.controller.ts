@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import {
   AssignSeatDto,
@@ -22,6 +23,7 @@ export class SeatingChartController {
   }
 
   @Post()
+  @TrackFeature('seating-chart', 'create')
   create(@Body() dto: CreateSeatingChartDto) {
     return this.seatingChartService.create(dto);
   }
@@ -43,6 +45,7 @@ export class SeatingChartController {
   }
 
   @Patch(':chartId/seats/:seatId')
+  @TrackFeature('seating-chart', 'assign')
   assign(
     @Param('chartId') chartId: string,
     @Param('seatId') seatId: string,
@@ -57,6 +60,7 @@ export class SeatingChartController {
   }
 
   @Post(':chartId/shuffle')
+  @TrackFeature('seating-chart', 'shuffle')
   shuffle(@Param('chartId') chartId: string) {
     return this.seatingChartService.shuffle(chartId);
   }

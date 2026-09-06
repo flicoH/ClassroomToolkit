@@ -41,7 +41,9 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
       method: request.method,
       headers: {
         "content-type": request.headers.get("content-type") || "application/json",
-        authorization: `Bearer ${token}`
+        authorization: `Bearer ${token}`,
+        "x-analytics-event-id": request.headers.get("x-analytics-event-id") || "",
+        "x-countdown-start": request.headers.get("x-countdown-start") || ""
       },
       body
     });

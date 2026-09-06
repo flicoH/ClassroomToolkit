@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import {
   Body,
   Controller,
@@ -20,11 +21,13 @@ export class StickyNotesController {
   }
 
   @Post()
+  @TrackFeature('sticky-notes', 'create')
   create(@Body() dto: CreateStickyNoteDto) {
     return this.stickyNotesService.create(dto);
   }
 
   @Patch(':noteId')
+  @TrackFeature('sticky-notes', 'save', 'note')
   update(@Param('noteId') noteId: string, @Body() dto: UpdateStickyNoteDto) {
     return this.stickyNotesService.update(noteId, dto);
   }

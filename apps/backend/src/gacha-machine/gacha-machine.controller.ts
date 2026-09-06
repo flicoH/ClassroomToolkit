@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import {
   Body,
   Controller,
@@ -41,6 +42,7 @@ export class GachaMachineController {
   }
 
   @Post('draw')
+  @TrackFeature('gacha-machine', 'draw')
   draw() {
     return this.gachaMachineService.draw();
   }

@@ -93,6 +93,9 @@ function createMethodWithData(method: string) {
 }
 
 function startGlobalLoading(config: InternalAxiosRequestConfig) {
+  if (!["get", "head"].includes((config.method || "get").toLowerCase()) && !config.headers["x-analytics-event-id"]) {
+    config.headers["x-analytics-event-id"] = crypto.randomUUID();
+  }
   useRequestLoadingStore.getState().startRequest();
   return config;
 }

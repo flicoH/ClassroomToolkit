@@ -1,3 +1,5 @@
+import { Optional } from '@nestjs/common';
+import { AnalyticsService } from '../analytics/analytics.service';
 import {
   BadRequestException,
   Injectable,
@@ -22,7 +24,10 @@ const sessionDays = 7;
 
 @Injectable()
 export class TeacherAuthService {
-  constructor(private readonly database: TeacherAuthDatabase) {}
+  constructor(
+    private readonly database: TeacherAuthDatabase,
+    @Optional() private readonly analytics?: AnalyticsService,
+  ) {}
 
   async register(dto: RegisterTeacherDto) {
     const username = dto.username.trim();
@@ -46,7 +51,10 @@ export class TeacherAuthService {
     };
 
     await this.database.saveTeacher(teacher);
-    return this.createAuthResult(teacher);
+    const result = await this.createAuthResult(teacher);
+    await this.analytics?.record(teacher.id, 'register');
+    await this.analytics?.record(teacher.id, 'auto_login');
+    return result;
   }
 
   async login(dto: LoginTeacherDto) {
@@ -54,9 +62,12 @@ export class TeacherAuthService {
       dto.username.trim(),
     );
     if (!teacher || !this.verifyPassword(dto.password, teacher)) {
+      await this.analytics?.record(teacher?.id ?? null, 'login_failed');
       throw new UnauthorizedException('用户名或密码错误');
     }
-    return this.createAuthResult(teacher);
+    const result = await this.createAuthResult(teacher);
+    await this.analytics?.record(teacher.id, 'login');
+    return result;
   }
 
   async me(token: string) {

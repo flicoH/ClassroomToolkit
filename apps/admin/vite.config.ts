@@ -9,23 +9,10 @@
  * @LastEditTime: 2026-04-18 21:40:15
  */
 import { fileURLToPath, URL } from 'node:url'
-import os from 'node:os'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-
-function getLocalIP(): string {
-  const interfaces = os.networkInterfaces()
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] || []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
-      }
-    }
-  }
-  return 'localhost'
-}
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -39,6 +26,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3002,
     hmr: true,
-    open: `http://${getLocalIP()}:3002`,
+    proxy: {
+      '/admin': { target: process.env.BACKEND_URL || 'http://127.0.0.1:3000', changeOrigin: true },
+    },
+    open: false,
   },
 })

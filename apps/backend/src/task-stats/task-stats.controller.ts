@@ -1,3 +1,4 @@
+import { TrackFeature } from '../analytics/track-feature';
 import {
   Body,
   Controller,
@@ -29,6 +30,7 @@ export class TaskStatsController {
   }
 
   @Post()
+  @TrackFeature('task-stats', 'create')
   create(@Body() dto: CreateTaskDto) {
     return this.taskStatsService.create(dto);
   }
@@ -39,6 +41,7 @@ export class TaskStatsController {
   }
 
   @Patch(':taskId/students/:studentId/status')
+  @TrackFeature('task-stats', 'status')
   updateStudentStatus(
     @Param('taskId') taskId: string,
     @Param('studentId') studentId: string,
@@ -48,6 +51,7 @@ export class TaskStatsController {
   }
 
   @Post(':taskId/students/:studentId/cycle-status')
+  @TrackFeature('task-stats', 'status')
   cycleStudentStatus(
     @Param('taskId') taskId: string,
     @Param('studentId') studentId: string,

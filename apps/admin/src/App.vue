@@ -1,85 +1,66 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import HelloWorld from './components/HelloWorld.vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ref } from 'vue'
+import { api, profile } from './lib/api'
+const route = useRoute(),
+  router = useRouter(),
+  error = ref('')
+const links = [
+  { path: '/', label: '数据概览', icon: '◫' },
+  { path: '/registrations', label: '注册分析', icon: '↗' },
+  { path: '/logins', label: '登录分析', icon: '↪' },
+  { path: '/features', label: '功能分析', icon: '▥' },
+  { path: '/teachers', label: '教师管理', icon: '人' },
+  { path: '/students', label: '学生档案', icon: '册' },
+  { path: '/classrooms', label: '班级管理', icon: '班' },
+]
+async function logout() {
+  try {
+    await api('auth/logout', {}, {})
+    profile.value = null
+    await router.push('/login')
+  } catch (e) {
+    error.value = (e as Error).message
+  }
+}
 </script>
-
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
-
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-
-      <nav>
-        <RouterLink to="/">Home</RouterLink>
-        <RouterLink to="/about">About</RouterLink>
+  <RouterView v-if="route.path === '/login'" />
+  <div v-else class="shell">
+    <aside class="sidebar">
+      <RouterLink to="/" class="brand"
+        ><span class="brand-mark">课</span
+        ><span>课堂小组件<small>管理后台</small></span></RouterLink
+      >
+      <p class="nav-label">平台管理</p>
+      <nav aria-label="主导航">
+        <RouterLink
+          v-for="link in links"
+          :key="link.path"
+          :to="link.path"
+          :class="{
+            selected: link.path === '/' ? route.path === '/' : route.path.startsWith(link.path),
+          }"
+          ><span aria-hidden="true">{{ link.icon }}</span
+          >{{ link.label }}</RouterLink
+        >
       </nav>
+      <div class="sidebar-bottom"><span class="status-dot"></span>教师与课堂，一目了然</div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <span
+          >工作台 <span class="muted">/ {{ route.meta.title }}</span></span
+        >
+        <div class="account">
+          <span class="avatar">管</span><span>{{ profile?.username }}</span
+          ><button class="text-button" @click="logout">退出登录</button>
+        </div>
+      </header>
+      <main>
+        <p v-if="error" role="alert" class="error">{{ error }}</p>
+        <RouterView :key="route.path" />
+      </main>
     </div>
-  </header>
-
-  <RouterView />
+  </div>
 </template>
-
-<style scoped>
-header {
-  line-height: 1.5;
-  max-height: 100vh;
-}
-
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
-}
-
-nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
-
-    padding: 1rem 0;
-    margin-top: 1rem;
-  }
-}
-</style>
