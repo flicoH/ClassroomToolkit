@@ -1,3 +1,5 @@
+import { createUuid } from "@/lib/id";
+
 // 桌面窗口使用前端 contentKey，统计接口使用稳定的后端功能标识。
 const features: Record<string, string> = {
   countdown: "countdown",
@@ -14,7 +16,7 @@ const features: Record<string, string> = {
 export function trackFeatureOpen(contentKey: string) {
   const feature = contentKey.startsWith("stickyNoteQuick") ? "sticky-notes" : features[contentKey];
   if (!feature || typeof window === "undefined") return;
-  const eventId = crypto.randomUUID();
+  const eventId = createUuid();
   void fetch("/api/analytics/events", {
     method: "POST",
     credentials: "same-origin",

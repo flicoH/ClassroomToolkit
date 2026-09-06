@@ -12,6 +12,7 @@ import axios, { AxiosError, AxiosRequestConfig, AxiosResponse, InternalAxiosRequ
 import { cookieStorage } from "./cookie";
 import toast from "react-hot-toast";
 import { useRequestLoadingStore } from "@/store/requestLoadingStore";
+import { createUuid } from "@/lib/id";
 
 const requestInstance = axios.create({
   // 认证 token 只存在于 HttpOnly Cookie，浏览器请求必须经过同源 Next BFF。
@@ -94,7 +95,7 @@ function createMethodWithData(method: string) {
 
 function startGlobalLoading(config: InternalAxiosRequestConfig) {
   if (!["get", "head"].includes((config.method || "get").toLowerCase()) && !config.headers["x-analytics-event-id"]) {
-    config.headers["x-analytics-event-id"] = crypto.randomUUID();
+    config.headers["x-analytics-event-id"] = createUuid();
   }
   useRequestLoadingStore.getState().startRequest();
   return config;
