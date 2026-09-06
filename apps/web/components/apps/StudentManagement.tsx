@@ -79,10 +79,12 @@ const defaultClasses: ClassRoom[] = [
 
 const defaultClass = defaultClasses[0]!;
 
+/** 获取姓名首字作为学生头像占位。 */
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
 
+/** 将批量导入文本解析为学生草稿列表。 */
 function parseImportRows(text: string): Student[] {
   // 支持“姓名 学号 性别”的简单文本导入，空学号会自动生成。
   return text
@@ -102,6 +104,7 @@ function parseImportRows(text: string): Student[] {
     });
 }
 
+/** 从请求错误中提取适合表单展示的学生保存错误信息。 */
 function getStudentSubmitErrorMessage(error: unknown) {
   const responseMessage =
     typeof error === "object" &&
@@ -121,11 +124,13 @@ function getStudentSubmitErrorMessage(error: unknown) {
   return message || "学生保存失败，请稍后重试";
 }
 
+/** 检查同班级内学号是否重复，编辑时可排除当前学生。 */
 function isStudentNoDuplicated(classRoom: ClassRoom, studentNo: string, excludeStudentId?: string | null) {
   if (!studentNo) return false;
   return classRoom.students.some(student => student.id !== excludeStudentId && student.studentNo === studentNo);
 }
 
+/** 按中文本地化和数字规则比较学号，保证 2 排在 10 前面。 */
 function compareStudentNo(left: string, right: string) {
   return left.localeCompare(right, "zh-CN", {
     numeric: true,
@@ -133,6 +138,7 @@ function compareStudentNo(left: string, right: string) {
   });
 }
 
+/** 根据批量导入结果生成跳过重复学生的提示文案。 */
 function createImportMessage(result: ImportStudentsResult) {
   const skippedStudentNos = result.skipped.map(item => item.studentNo).filter(Boolean);
   if (!result.skipped.length) return "";
@@ -140,6 +146,7 @@ function createImportMessage(result: ImportStudentsResult) {
   return `已导入 ${result.imported.length} 名学生，跳过 ${result.skipped.length} 名。${skippedText}`;
 }
 
+/** 只保留导入失败的原始行，方便教师修改后再次提交。 */
 function keepSkippedImportRows(text: string, skipped: SkippedImportStudent[]) {
   if (!skipped.length) return "";
   const skippedRows = new Set(skipped.map(item => item.rowNumber));
@@ -149,6 +156,7 @@ function keepSkippedImportRows(text: string, skipped: SkippedImportStudent[]) {
     .join("\n");
 }
 
+/** 学生管理主界面，负责班级、学生、分组和批量导入维护。 */
 export function StudentManagement() {
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
@@ -275,6 +283,7 @@ export function StudentManagement() {
     }
   };
 
+  /** 打开学生编辑弹窗，并把当前学生信息填入表单。 */
   const openEditStudent = (student: Student) => {
     setEditingStudentId(student.id);
     setStudentName(student.name);
@@ -284,6 +293,7 @@ export function StudentManagement() {
     setModal("editStudent");
   };
 
+  /** 保存学生编辑结果，同步后端后更新当前班级列表。 */
   const updateStudent = async () => {
     const name = studentName.trim();
     const nextStudentNo = studentNo.trim();
@@ -339,6 +349,7 @@ export function StudentManagement() {
     setStudentDeleteTarget(null);
   };
 
+  /** 新建班级并切换到新班级。 */
   const addClass = async () => {
     const name = className.trim();
     if (!name) return;
@@ -348,12 +359,14 @@ export function StudentManagement() {
     closeModal();
   };
 
+  /** 打开班级编辑弹窗，并填充当前班级名称。 */
   const openEditClass = (classRoom: ClassRoom) => {
     setEditingClassId(classRoom.id);
     setClassName(classRoom.name);
     setModal("editClass");
   };
 
+  /** 保存班级名称修改，并保持该班级为当前激活班级。 */
   const updateClass = async () => {
     const name = className.trim();
     if (!name || !editingClassId) return;
@@ -367,6 +380,7 @@ export function StudentManagement() {
     closeModal();
   };
 
+  /** 批量导入学生；重复行会留在文本框里供继续修正。 */
   const importStudents = async () => {
     if (!activeBackendClass || parseImportRows(importText).length === 0) return;
     const result = await request<ImportStudentsResult, ImportStudentsResult>({
@@ -385,6 +399,7 @@ export function StudentManagement() {
     closeModal();
   };
 
+  /** 新增当前班级分组，重复名称直接忽略。 */
   const addGroup = async () => {
     if (!activeBackendClass) return;
     const name = groupName.trim();
@@ -398,6 +413,7 @@ export function StudentManagement() {
     setGroupName("");
   };
 
+  /** 给学生分配或移出分组。 */
   const updateStudentGroup = async (studentId: string, group?: string) => {
     if (!activeBackendClass) return;
     const updated = await request<Student, Student>({
@@ -411,6 +427,7 @@ export function StudentManagement() {
     }));
   };
 
+  /** 删除分组名称，学生只会被移出分组，不会被删除。 */
   const deleteGroup = async (group: string) => {
     if (!activeBackendClass) return;
     const updatedClass = await request<ClassRoom, ClassRoom>({
@@ -716,6 +733,7 @@ interface StudentModalProps {
   onConfirm: () => void;
 }
 
+/** 学生新增/编辑表单弹窗。 */
 function StudentModal({
   title,
   name,
@@ -771,6 +789,7 @@ function StudentModal({
   );
 }
 
+/** 批量导入学生弹窗，支持直接粘贴多行名单。 */
 function ImportModal({
   value,
   message,
@@ -811,6 +830,7 @@ function ImportModal({
   );
 }
 
+/** 班级新增/编辑表单弹窗。 */
 function ClassModal({
   title = "新建班级",
   value,
@@ -838,6 +858,7 @@ function ClassModal({
   );
 }
 
+/** 分组管理弹窗，集中处理分组新增、删除和学生分配。 */
 function GroupModal({
   groups,
   students,
@@ -970,6 +991,7 @@ function GroupModal({
   );
 }
 
+/** 分组弹窗里的学生列表，按动作展示“分配”或“移出”。 */
 function StudentGroupList({
   title,
   emptyText,
@@ -1016,6 +1038,7 @@ function StudentGroupList({
   );
 }
 
+/** 通用弹窗头部，统一标题和关闭按钮布局。 */
 function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
   return (
     <div className="flex items-center justify-between border-b border-slate-100 px-7 py-5 dark:border-slate-800">
@@ -1027,6 +1050,7 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
   );
 }
 
+/** 通用弹窗底部，统一取消和确认按钮布局。 */
 function ModalFooter({
   onClose,
   onConfirm,

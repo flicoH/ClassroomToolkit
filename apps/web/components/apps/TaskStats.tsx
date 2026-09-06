@@ -101,10 +101,12 @@ function getTaskStats(task: TaskItem) {
   return { total, done, percent, statusPercents };
 }
 
+/** 获取学生姓名首字，用于详情页头像占位。 */
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
 
+/** 任务统计主界面，管理任务列表、详情状态切换和任务表单。 */
 export function TaskStats() {
   const [view, setView] = useState<TaskView>("list");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -126,6 +128,7 @@ export function TaskStats() {
   const activeTask = tasks.find(task => task.id === activeTaskId) ?? tasks[0];
   const draftClass = classes.find(classRoom => classRoom.id === draftClassId);
 
+  /** 刷新班级列表，并确保任务表单里选中的班级仍然有效。 */
   const refreshClasses = async () => {
     const nextClasses = await request<ClassRoom[], ClassRoom[]>("/api/classes");
     setClasses(nextClasses);
@@ -135,6 +138,7 @@ export function TaskStats() {
     return nextClasses;
   };
 
+  /** 加载任务统计数据和班级数据，初始化当前选中的任务。 */
   const loadTasks = async () => {
     setLoading(true);
     try {
@@ -210,6 +214,7 @@ export function TaskStats() {
     setView("detail");
   };
 
+  /** 打开编辑页，并把任务当前配置填入表单草稿。 */
   const openEditTask = (task: TaskItem) => {
     setEditingTaskId(task.id);
     setDraftTitle(task.title);
@@ -219,6 +224,7 @@ export function TaskStats() {
     setView("edit");
   };
 
+  /** 保存任务基础信息修改，并回到该任务详情页。 */
   const handleUpdateTask = async () => {
     if (!editingTaskId) return;
     const title = draftTitle.trim() || "课后作业完成情况统计";
@@ -267,6 +273,7 @@ export function TaskStats() {
     setTaskDeleteId(taskId);
   };
 
+  /** 打开新建任务表单，并同步最新班级供选择。 */
   const openCreateTask = () => {
     setEditingTaskId(null);
     setDraftTitle("");
@@ -276,6 +283,7 @@ export function TaskStats() {
     setView("create");
   };
 
+  /** 执行确认后的任务删除，并在必要时回到任务列表。 */
   const confirmDeleteTask = async () => {
     if (!taskDeleteId) return;
     await request<{ deleted: boolean }, { deleted: boolean }>({

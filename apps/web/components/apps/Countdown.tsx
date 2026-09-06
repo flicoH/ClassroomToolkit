@@ -85,25 +85,30 @@ export function Countdown() {
     setRemainingSeconds(seconds);
   };
 
+  /** 启动倒计时，剩余时间为 0 时不进入运行态。 */
   const handleStart = () => {
     if (remainingSeconds <= 0) return;
     setIsRunning(true);
   };
 
+  /** 暂停倒计时，保留当前剩余时间。 */
   const handlePause = () => {
     setIsRunning(false);
   };
 
+  /** 停止倒计时并回到当前设置的总时长。 */
   const handleStop = () => {
     setIsRunning(false);
     setRemainingSeconds(totalSeconds);
   };
 
+  /** 重置倒计时显示，行为与停止一致但保留语义按钮。 */
   const handleReset = () => {
     setIsRunning(false);
     setRemainingSeconds(totalSeconds);
   };
 
+  /** 读取自定义时分秒输入并写入倒计时总时长。 */
   const handleCustomTime = () => {
     if (isRunning) return;
     const hours = parseInt(inputHours, 10) || 0;

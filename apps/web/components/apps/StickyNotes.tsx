@@ -82,6 +82,7 @@ const colorStyles: Record<NoteColor, { label: string; card: string; chip: string
 
 const colors = Object.keys(colorStyles) as NoteColor[];
 
+/** 生成保存时间标签，用在快速便签的“已保存”提示。 */
 function nowLabel() {
   return new Date().toLocaleTimeString("zh-CN", {
     hour: "2-digit",
@@ -94,11 +95,13 @@ function nowLabel() {
 const useStickyNotesStore = create<StickyNotesState>(set => ({
   notes: [],
 
+  /** 加载所有便签，供列表页和快速窗口共享。 */
   loadNotes: async () => {
     const notes = await request<Note[], Note[]>("/api/sticky-notes");
     set({ notes });
   },
 
+  /** 创建便签并插入列表顶部。 */
   addNote: async note => {
     const created = await request<Note, Note>({
       url: "/api/sticky-notes",
@@ -109,6 +112,7 @@ const useStickyNotesStore = create<StickyNotesState>(set => ({
     return created.id;
   },
 
+  /** 更新指定便签字段，并同步替换本地缓存。 */
   updateNote: async (noteId, patch) => {
     const updated = await request<Note, Note>({
       url: `/api/sticky-notes/${noteId}`,
@@ -118,6 +122,7 @@ const useStickyNotesStore = create<StickyNotesState>(set => ({
     set(current => ({ notes: current.notes.map(note => (note.id === noteId ? updated : note)) }));
   },
 
+  /** 删除便签并从本地缓存移除。 */
   deleteNote: async noteId => {
     await request<{ deleted: boolean }, { deleted: boolean }>({
       url: `/api/sticky-notes/${noteId}`,
@@ -126,6 +131,7 @@ const useStickyNotesStore = create<StickyNotesState>(set => ({
     set(current => ({ notes: current.notes.filter(note => note.id !== noteId) }));
   },
 
+  /** 切换置顶状态，后端返回最新便签记录。 */
   togglePinned: async noteId => {
     const updated = await request<Note, Note>({
       url: `/api/sticky-notes/${noteId}/toggle-pinned`,
@@ -135,6 +141,7 @@ const useStickyNotesStore = create<StickyNotesState>(set => ({
   }
 }));
 
+/** 首次进入便签相关窗口时，从后端同步便签数据。 */
 function useHydrateStickyNotes() {
   const loadNotes = useStickyNotesStore(state => state.loadNotes);
   useEffect(() => {
@@ -142,6 +149,7 @@ function useHydrateStickyNotes() {
   }, [loadNotes]);
 }
 
+/** 便签列表主界面，支持搜索、筛选和打开多个编辑浮窗。 */
 export function StickyNotes() {
   useHydrateStickyNotes();
   const notes = useStickyNotesStore(state => state.notes);
@@ -239,12 +247,14 @@ export function StickyNotes() {
     setNextZIndex(current => current + 1);
   };
 
+  /** 更新指定便签浮窗的草稿字段。 */
   const updateNoteWindow = (windowId: string, patch: Partial<Pick<NoteWindow, "title" | "content" | "color">>) => {
     setNoteWindows(current =>
       current.map(noteWindow => (noteWindow.windowId === windowId ? { ...noteWindow, ...patch } : noteWindow))
     );
   };
 
+  /** 关闭指定便签浮窗，不影响已经保存的便签内容。 */
   const closeNoteWindow = (windowId: string) => {
     setNoteWindows(current => current.filter(noteWindow => noteWindow.windowId !== windowId));
   };
@@ -268,6 +278,7 @@ export function StickyNotes() {
     }
   };
 
+  /** 切换便签置顶状态，并交给共享 store 同步后端。 */
   const togglePinned = (noteId: string) => {
     void togglePinnedInStore(noteId);
   };
@@ -540,6 +551,7 @@ interface StickyNoteQuickProps {
   noteId?: string;
 }
 
+/** 桌面快速便签窗口，适合快速记录或编辑单条便签。 */
 export function StickyNoteQuick({ noteId }: StickyNoteQuickProps) {
   useHydrateStickyNotes();
   const notes = useStickyNotesStore(state => state.notes);

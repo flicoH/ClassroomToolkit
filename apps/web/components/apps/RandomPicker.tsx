@@ -34,10 +34,12 @@ interface PickHistory {
 
 const fallbackClass: ClassGroup = { id: "", name: "暂无班级", students: [] };
 
+/** 获取姓名首字作为头像占位。 */
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
 
+/** 随机点名主界面，负责班级切换、抽取动画和历史记录展示。 */
 export function RandomPicker() {
   const [classes, setClasses] = useState<ClassGroup[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
@@ -70,6 +72,7 @@ export function RandomPicker() {
     setIsRolling(false);
   };
 
+  /** 从后端加载可点名班级和最近点名历史。 */
   const loadPickerData = async () => {
     setLoading(true);
     try {
@@ -126,6 +129,7 @@ export function RandomPicker() {
     };
   }, []);
 
+  /** 清空本轮抽取结果，并恢复当前班级第一个学生为预览。 */
   const reset = () => {
     stopRolling();
     setPickedStudents([]);

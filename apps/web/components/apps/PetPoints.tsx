@@ -180,6 +180,7 @@ const hatchThreshold = 4;
 const petEvolutionThresholds = [4, 10, 18, 26] as const;
 const maxEvolutionScore = 30;
 
+/** 根据通用积分计算未绑定宠物蛋时的蛋阶段。 */
 function getEvolutionIndex(score: number) {
   if (score >= evolutionThresholds[3]) return 3;
   if (score >= evolutionThresholds[2]) return 2;
@@ -187,6 +188,7 @@ function getEvolutionIndex(score: number) {
   return 0;
 }
 
+/** 根据宠物成长能量计算已绑定宠物的进化阶段。 */
 function getPetEvolutionIndex(progress: number) {
   if (progress >= petEvolutionThresholds[3]) return 3;
   if (progress >= petEvolutionThresholds[2]) return 2;
@@ -194,6 +196,7 @@ function getPetEvolutionIndex(progress: number) {
   return 0;
 }
 
+/** 返回宠物阶段索引；未达到孵化线时返回 -1。 */
 function getPetPhase(progress: number) {
   return progress < hatchThreshold ? -1 : getPetEvolutionIndex(progress);
 }
@@ -435,6 +438,7 @@ function PetEgg({ pet, progress, className }: { pet: PetOption; progress: number
   );
 }
 
+/** 根据宠物系列展示对应图标。 */
 function FamilyIcon({ family }: { family: PetFamily }) {
   if (family === "图鉴") return <BookOpen className="h-4 w-4" />;
   if (family === "萌芽系") return <Leaf className="h-4 w-4" />;
@@ -443,10 +447,12 @@ function FamilyIcon({ family }: { family: PetFamily }) {
   return <Sparkles className="h-4 w-4" />;
 }
 
+/** 成就徽章图标，未解锁时显示灰色状态。 */
 function AwardIcon({ unlocked }: { unlocked: boolean }) {
   return <Medal className={cn("h-6 w-6", unlocked ? "text-orange-500" : "text-slate-300")} />;
 }
 
+/** 设置面板里复用的小统计卡片。 */
 function StatTile({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-xl bg-slate-50 p-4">
@@ -456,14 +462,17 @@ function StatTile({ label, value }: { label: string; value: number }) {
   );
 }
 
+/** 兜底规范化班级名称，兼容旧数据缺字段的情况。 */
 function normalizeClassName(value: unknown): ClassName {
   return typeof value === "string" && value.trim() ? value.trim() : "一年级";
 }
 
+/** 兜底规范化班级 ID，旧数据没有 ID 时用班级名称代替。 */
 function normalizeClassId(value: unknown, className: ClassName): string {
   return typeof value === "string" && value.trim() ? value.trim() : className;
 }
 
+/** 规范化学生宠物字段，并根据成长值重新推导等级和阶段。 */
 function normalizeStudent(student: StudentPet): StudentPet {
   const petProgress = student.petProgress ?? (student.petId ? student.score : 0);
   const petHatched = student.petHatched ?? Boolean(student.petId);
@@ -481,6 +490,7 @@ function normalizeStudent(student: StudentPet): StudentPet {
   };
 }
 
+/** 将学生管理模块的学生转换为宠物积分模块的初始学生。 */
 function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): StudentPet {
   return {
     id: student.id,
@@ -501,6 +511,7 @@ function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): Stu
   };
 }
 
+/** 用班级学生名单替换当前班级数据，同时保留已有积分和宠物进度。 */
 function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroom) {
   const currentById = new Map(currentStudents.map(student => [student.id, student]));
   const nextClassStudents = classroom.students.map(student => {
@@ -520,6 +531,7 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
   return [...currentStudents.filter(student => student.classId !== classroom.id), ...nextClassStudents];
 }
 
+/** 宠物积分主界面，串联学生筛选、批量评分、宠物选择、兑换和报表弹窗。 */
 export function PetPoints() {
   const [students, setStudents] = useState<StudentPet[]>(initialStudents);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
@@ -594,6 +606,7 @@ export function PetPoints() {
   );
   const hasBackendClassrooms = classrooms.length > 0;
 
+  /** 从后端加载宠物积分总览，包括学生、规则、奖品、记录和兑换数据。 */
   const loadPetPointsOverview = useCallback(async () => {
     const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points");
     setStudents(overview.students.map(normalizeStudent));
@@ -603,6 +616,7 @@ export function PetPoints() {
     setRedemptions(overview.redemptions);
   }, []);
 
+  /** 按当前筛选条件加载班级学生，并同步到宠物积分学生表。 */
   const requestClassroomStudents = useCallback(
     async (filters: PetPointStudentFilters) => {
       const requestId = studentRequestIdRef.current + 1;
@@ -643,6 +657,7 @@ export function PetPoints() {
     [loadPetPointsOverview]
   );
 
+  /** 初始化班级列表，并优先同步第一个班级的宠物积分数据。 */
   const requestClassrooms = useCallback(async () => {
     setStudentDataLoading(true);
     setStudentDataError("");
@@ -731,6 +746,7 @@ export function PetPoints() {
   const averageScore = classStudents.length ? Math.round((totalScore / classStudents.length) * 10) / 10 : 0;
   const hatchedCount = classStudents.filter(student => student.petId && student.petHatched).length;
 
+  /** 使用当前班级和已有筛选条件，局部覆盖后重新请求学生列表。 */
   const requestActiveClassStudents = (nextFilters: Partial<PetPointStudentFilters>) => {
     if (!hasBackendClassrooms) return;
     const filters = {
@@ -743,6 +759,7 @@ export function PetPoints() {
     requestClassroomStudents(filters);
   };
 
+  /** 切换班级时清空搜索、分组和批量选择状态。 */
   const switchClass = (classId: string) => {
     if (!hasBackendClassrooms) return;
     const nextClass = classrooms.find(classroom => classroom.id === classId);
@@ -762,23 +779,27 @@ export function PetPoints() {
     });
   };
 
+  /** 切换分组筛选，并清空当前批量选择。 */
   const switchGroup = (nextGroup: string) => {
     setGroupFilter(nextGroup);
     setSelectedStudentIds([]);
     requestActiveClassStudents({ groupFilter: nextGroup });
   };
 
+  /** 切换排序方式并刷新后端排序结果。 */
   const switchSortMode = (nextSortMode: SortMode) => {
     setSortMode(nextSortMode);
     requestActiveClassStudents({ sortMode: nextSortMode });
   };
 
+  /** 更新搜索关键词，并按关键词重新同步当前班级学生。 */
   const switchQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     setSelectedStudentIds([]);
     requestActiveClassStudents({ query: nextQuery });
   };
 
+  /** 调整单个学生积分，同时由后端同步宠物成长能量和评价记录。 */
   const updateStudentScore = async (
     studentId: string,
     delta: number,
@@ -795,6 +816,7 @@ export function PetPoints() {
     await loadPetPointsOverview();
   };
 
+  /** 打开手动加分/扣分弹窗，并按模式初始化表单。 */
   const openScoreAdjust = (studentId: string, mode: ScoreAdjustMode) => {
     setScoreAdjustStudentId(studentId);
     setScoreAdjustMode(mode);
@@ -803,6 +825,7 @@ export function PetPoints() {
     setScoreAdjustNote("");
   };
 
+  /** 关闭积分调整弹窗，并清空调整草稿。 */
   const closeScoreAdjust = () => {
     setScoreAdjustStudentId(null);
     setScoreAdjustValue(1);
@@ -810,6 +833,7 @@ export function PetPoints() {
     setScoreAdjustNote("");
   };
 
+  /** 提交手动积分调整，限制单次调整值在允许范围内。 */
   const applyScoreAdjust = (value = scoreAdjustValue, reason = scoreAdjustReason) => {
     if (!scoreAdjustStudent) return;
     const normalizedValue = Math.max(1, Math.min(maxEvolutionScore, Math.round(Math.abs(value))));
@@ -823,6 +847,7 @@ export function PetPoints() {
     closeScoreAdjust();
   };
 
+  /** 新增评价指标，分值限制在 -10 到 10 之间。 */
   const addRubric = async () => {
     const label = newRubricLabel.trim();
     if (!label) return;
@@ -840,6 +865,7 @@ export function PetPoints() {
     setNewRubricScore(1);
   };
 
+  /** 新增兑换奖品，并规范化消耗积分和库存数值。 */
   const addReward = async () => {
     const name = newRewardName.trim();
     if (!name) return;
@@ -858,6 +884,7 @@ export function PetPoints() {
     setNewRewardStock(1);
   };
 
+  /** 为当前兑换学生兑换奖品，积分或库存不足时直接忽略。 */
   const redeemReward = async (reward: RewardItem) => {
     if (!rewardStudent || reward.stock <= 0 || rewardStudent.score < reward.cost) return;
     await request<RedemptionRecord, RedemptionRecord>({
@@ -872,6 +899,7 @@ export function PetPoints() {
     setNotice(`${rewardStudent.name} 已兑换 ${reward.name}`);
   };
 
+  /** 批量应用选中的评价指标，完成后退出评分模式。 */
   const applyEvaluation = async () => {
     if (!selectedStudentIds.length || !selectedRubrics.length) return;
     await Promise.all(
@@ -898,6 +926,7 @@ export function PetPoints() {
     setBatchMode(false);
   };
 
+  /** 删除评价记录，并让后端回退对应积分和成长能量。 */
   const removeRecord = async (record: EvaluationRecord) => {
     await request<{ deleted: boolean }, { deleted: boolean }>({
       url: `/api/pet-points/records/${record.id}`,
@@ -907,12 +936,14 @@ export function PetPoints() {
     setNotice("评价记录已删除，积分与成长能量已同步回退");
   };
 
+  /** 切换单个学生的批量选择状态。 */
   const toggleStudentSelection = (studentId: string) => {
     setSelectedStudentIds(current =>
       current.includes(studentId) ? current.filter(id => id !== studentId) : [...current, studentId]
     );
   };
 
+  /** 全选或取消全选当前筛选后的可见学生。 */
   const toggleAllVisible = () => {
     const visibleIds = filteredStudents.map(student => student.id);
     const allSelected = visibleIds.every(id => selectedStudentIds.includes(id));
@@ -921,6 +952,7 @@ export function PetPoints() {
     );
   };
 
+  /** 反选当前可见学生，保留不可见学生原有选择状态。 */
   const invertVisible = () => {
     const visibleIds = filteredStudents.map(student => student.id);
     setSelectedStudentIds(current => {
@@ -930,6 +962,7 @@ export function PetPoints() {
     });
   };
 
+  /** 打开宠物选择器，并重置系列筛选和昵称草稿。 */
   const openPetPicker = (studentId: string) => {
     setSelectedStudentId(studentId);
     setSelectedPetId(null);
@@ -937,17 +970,20 @@ export function PetPoints() {
     setActiveFamily("图鉴");
   };
 
+  /** 选择宠物时默认把宠物名填入昵称输入框。 */
   const selectPet = (pet: PetOption) => {
     setSelectedPetId(pet.id);
     setPetNickname(pet.name);
   };
 
+  /** 关闭宠物选择器并清空选择状态。 */
   const closePetPicker = () => {
     setSelectedStudentId(null);
     setSelectedPetId(null);
     setPetNickname("");
   };
 
+  /** 确认绑定宠物蛋，昵称为空时使用宠物默认名称。 */
   const confirmPet = async () => {
     if (!selectedStudent || !selectedPet) return;
     const nickname = petNickname.trim() || selectedPet.name;
@@ -960,11 +996,13 @@ export function PetPoints() {
     closePetPicker();
   };
 
+  /** 打开指定设置面板，并收起设置菜单。 */
   const openSettingsPanel = (panel: SettingsPanel) => {
     setSettingsPanel(panel);
     setSettingsOpen(false);
   };
 
+  /** 重置当前宠物养成进度；已完成终极形态时计入完成数量。 */
   const resetPet = (student: StudentPet) => {
     setStudents(current =>
       current.map(item =>
@@ -986,6 +1024,7 @@ export function PetPoints() {
     setNotice("宠物养成进度已重置");
   };
 
+  /** 将评价记录时间格式化为列表里使用的短时间。 */
   const formatDate = (value: string) =>
     new Intl.DateTimeFormat("zh-CN", {
       month: "2-digit",

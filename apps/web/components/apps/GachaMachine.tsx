@@ -63,17 +63,20 @@ const emptyRewardForm = {
 
 const drawAnimationDuration = 1280;
 
+/** 将后端时间格式化为抽取记录里使用的短日期。 */
 function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+/** 根据固定 seed 生成稳定随机数，保证胶囊每次渲染的位置和旋转一致。 */
 function seededRandom(seed: number) {
   const value = Math.sin(seed * 12.9898) * 43758.5453;
   return value - Math.floor(value);
 }
 
+/** 按胶囊总数计算每一层的数量，让球堆视觉上呈下宽上窄。 */
 function capsuleRows(count: number) {
   const rowCount = count <= 34 ? 4 : count <= 44 ? 5 : 6;
   const patterns: Record<number, number[]> = {
@@ -93,6 +96,7 @@ function capsuleRows(count: number) {
   return rows;
 }
 
+/** 计算单个胶囊在透明仓里的位置、尺寸和层级。 */
 function capsulePosition(index: number, count: number) {
   const rows = capsuleRows(count);
   let row = 0;
@@ -119,10 +123,12 @@ function capsulePosition(index: number, count: number) {
   };
 }
 
+/** 给胶囊增加轻微旋转，避免球堆看起来过于机械。 */
 function capsuleRotation(index: number) {
   return -24 + seededRandom(index * 7 + 4) * 48;
 }
 
+/** 扭蛋机主界面，负责奖池配置、抽奖动画、中奖结果和历史记录。 */
 export function GachaMachine() {
   const [mode, setMode] = useState<"gacha" | "wheel">("gacha");
   const [rewards, setRewards] = useState<GachaReward[]>([]);
@@ -160,6 +166,7 @@ export function GachaMachine() {
   );
   const deleteRewardName = rewards.find(reward => reward.id === deleteId)?.name ?? "未命名奖励";
 
+  /** 从后端同步奖池和最近抽取记录。 */
   const loadOverview = async () => {
     const overview = await request<GachaOverview, GachaOverview>("/api/gacha-machine");
     setRewards(overview.rewards);
@@ -236,11 +243,13 @@ export function GachaMachine() {
     return () => animations.forEach(animation => animation.cancel());
   }, [drawing, capsuleCount, mode]);
 
+  /** 清空奖励表单并退出编辑状态。 */
   const resetForm = () => {
     setForm(emptyRewardForm);
     setEditingId(null);
   };
 
+  /** 新增或更新奖励，并把后端返回结果同步到本地列表。 */
   const submitReward = async () => {
     const payload = {
       ...form,
@@ -273,6 +282,7 @@ export function GachaMachine() {
     resetForm();
   };
 
+  /** 将指定奖励填入左侧表单，进入编辑模式。 */
   const editReward = (reward: GachaReward) => {
     setSettingsOpen(true);
     setEditingId(reward.id);
@@ -286,6 +296,7 @@ export function GachaMachine() {
     });
   };
 
+  /** 切换奖励是否参与抽奖。 */
   const toggleReward = async (reward: GachaReward) => {
     const updated = await request<GachaReward, GachaReward>({
       url: `/api/gacha-machine/rewards/${reward.id}`,
@@ -295,6 +306,7 @@ export function GachaMachine() {
     setRewards(current => current.map(item => (item.id === updated.id ? updated : item)));
   };
 
+  /** 确认删除当前选中的奖励，历史抽取记录由后端保留。 */
   const confirmDeleteReward = async () => {
     if (!deleteId) return;
     await request<{ deleted: boolean }, { deleted: boolean }>({
@@ -307,6 +319,7 @@ export function GachaMachine() {
     setNotice("奖励已删除");
   };
 
+  /** 执行一次抽奖：先播放动画，再同步中奖结果和剩余库存。 */
   const drawReward = async () => {
     if (drawing) return;
     setResultOpen(false);

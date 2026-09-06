@@ -44,6 +44,7 @@ interface ClassRoom {
   groups: string[];
 }
 
+/** 获取姓名首字作为座位和学生列表里的头像占位。 */
 function getInitial(name: string) {
   return name.slice(0, 1) || "学";
 }
@@ -55,6 +56,7 @@ interface SeatingDragPayload {
   sourceSeatId?: string | null;
 }
 
+/** 座位表主界面，负责班级同步、座位布局调整和拖拽排座。 */
 export function SeatingChart() {
   const [chart, setChart] = useState<SeatingChartData | null>(null);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
@@ -78,6 +80,7 @@ export function SeatingChart() {
   const seatedIds = new Set(seats.map(seat => seat.studentId).filter(Boolean));
   const unseatedStudents = students.filter(student => !seatedIds.has(student.id));
 
+  /** 将学生管理模块的班级学生转换为座位表使用的学生结构。 */
   const toSeatingStudents = (classRoom: ClassRoom): Student[] =>
     classRoom.students.map(student => ({
       id: student.studentNo,
@@ -85,6 +88,7 @@ export function SeatingChart() {
       studentNo: student.studentNo
     }));
 
+  /** 优先按班级 ID 查找座位表，兼容旧数据里只保存班级名称的记录。 */
   const findChartForClass = (charts: SeatingChartData[], classRoom: ClassRoom) => {
     return (
       charts.find(item => item.classId === classRoom.id) ??
@@ -92,6 +96,7 @@ export function SeatingChart() {
     );
   };
 
+  /** 把座位表绑定到最新班级数据，保证学生名单和班级信息同步。 */
   const syncChartWithClass = async (nextChart: SeatingChartData, classRoom: ClassRoom) => {
     return request<SeatingChartData, SeatingChartData>({
       url: `/api/seating-charts/${nextChart.id}/classroom`,
@@ -104,6 +109,7 @@ export function SeatingChart() {
     });
   };
 
+  /** 当前班级没有座位表时，按现有行列配置创建一份新座位表。 */
   const createChartForClass = async (classRoom: ClassRoom) => {
     return request<SeatingChartData, SeatingChartData>({
       url: "/api/seating-charts",
@@ -118,6 +124,7 @@ export function SeatingChart() {
     });
   };
 
+  /** 加载班级与座位表，并为当前或指定班级准备可编辑座位数据。 */
   const loadChart = async (preferredClassId?: string) => {
     setLoading(true);
     try {
@@ -149,6 +156,7 @@ export function SeatingChart() {
     void loadChart();
   }, []);
 
+  /** 切换班级后重新加载对应座位表。 */
   const switchClass = (classId: string) => {
     setActiveClassId(classId);
     void loadChart(classId);
@@ -180,6 +188,7 @@ export function SeatingChart() {
     });
   };
 
+  /** 删除列会丢失最后一列座位，因此需要确认。 */
   const deleteColumn = () => {
     setConfirmAction({
       title: "删除列",
@@ -227,6 +236,7 @@ export function SeatingChart() {
     });
   };
 
+  /** 执行当前确认弹窗里的操作并关闭确认弹窗。 */
   const confirmCurrentAction = async () => {
     await confirmAction?.onConfirm();
     setConfirmAction(null);
@@ -250,6 +260,7 @@ export function SeatingChart() {
     }
   };
 
+  /** 开始拖拽学生时写入自定义 MIME 数据，方便座位间移动和交换。 */
   const startStudentDrag = (event: DragEvent<HTMLElement>, studentId: string, sourceSeatId?: string | null) => {
     const payload: SeatingDragPayload = { studentId, sourceSeatId };
     event.dataTransfer.effectAllowed = "move";
@@ -259,6 +270,7 @@ export function SeatingChart() {
     setDraggingSeatId(sourceSeatId ?? null);
   };
 
+  /** 读取拖拽数据；当自定义 MIME 丢失时回退到 text/plain 和组件状态。 */
   const readStudentDrag = (event: DragEvent<HTMLElement>): SeatingDragPayload | null => {
     const rawPayload = event.dataTransfer.getData(SEATING_DRAG_MIME);
     if (rawPayload) {
