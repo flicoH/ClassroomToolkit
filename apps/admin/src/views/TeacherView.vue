@@ -67,6 +67,52 @@ function changeRange(value: { start: string; end: string }) {
   page.value = 1
   void load()
 }
+const showReset = ref(false),
+  newPassword = ref(''),
+  confirmPassword = ref('')
+const resetting = ref(false),
+  resetError = ref(''),
+  resetMessage = ref('')
+/** 打开重置表单并清除上次成功提示。 */
+function openReset() {
+  showReset.value = true
+  resetMessage.value = ''
+}
+/** 关闭表单时清空密码，避免凭据保留在页面状态中。 */
+function closeReset() {
+  showReset.value = false
+  newPassword.value = ''
+  confirmPassword.value = ''
+  resetError.value = ''
+}
+/** 校验两次输入，仅向当前教师的管理接口提交新密码。 */
+async function resetPassword() {
+  if (resetting.value || !data.value) return
+  resetError.value = ''
+  resetMessage.value = ''
+  if (newPassword.value.length < 6 || newPassword.value.length > 256) {
+    resetError.value = '密码长度须为 6–256 位'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    resetError.value = '两次输入的密码不一致'
+    return
+  }
+  resetting.value = true
+  try {
+    await api(
+      `teachers/${encodeURIComponent(data.value.id)}/reset-password`,
+      {},
+      { password: newPassword.value },
+    )
+    closeReset()
+    resetMessage.value = '密码已重置，教师需使用新密码重新登录。请将新密码告知该教师。'
+  } catch (e) {
+    resetError.value = (e as Error).message
+  } finally {
+    resetting.value = false
+  }
+}
 onMounted(load)
 
 function changePage(value: number) {
@@ -96,6 +142,41 @@ function changePage(value: number) {
         >学生档案 {{ data.students }} 份 →</RouterLink
       >
     </div>
+  </section>
+  <section v-if="data" class="panel">
+    <h2>账号安全</h2>
+    <p v-if="resetMessage" role="status">{{ resetMessage }}</p>
+    <button v-if="!showReset" @click="openReset">重置密码</button>
+    <form v-else class="reset-form" @submit.prevent="resetPassword">
+      <p>为 {{ data.name }}（{{ data.username }}）设置新密码，提交后该教师已有登录会话将失效。</p>
+      <label
+        >新密码<input
+          v-model="newPassword"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="6"
+          maxlength="256"
+          :disabled="resetting"
+      /></label>
+      <label
+        >确认新密码<input
+          v-model="confirmPassword"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="6"
+          maxlength="256"
+          :disabled="resetting"
+      /></label>
+      <p v-if="resetError" class="error" role="alert">{{ resetError }}</p>
+      <div class="reset-actions">
+        <button class="primary" :disabled="resetting">
+          {{ resetting ? '正在重置…' : '确认重置密码' }}
+        </button>
+        <button type="button" :disabled="resetting" @click="closeReset">取消</button>
+      </div>
+    </form>
   </section>
   <DateRange @change="changeRange" />
   <div v-if="data" class="two-columns">
@@ -142,3 +223,19 @@ function changePage(value: number) {
     {{ formatTime(data.logins.updatedAt) }}。
   </p>
 </template>
+
+<style scoped>
+.reset-form {
+  display: grid;
+  gap: 16px;
+  max-width: 560px;
+}
+.reset-form label {
+  display: grid;
+  gap: 8px;
+}
+.reset-actions {
+  display: flex;
+  gap: 12px;
+}
+</style>

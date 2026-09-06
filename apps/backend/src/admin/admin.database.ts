@@ -1,3 +1,4 @@
+import { TeacherSessionEntity } from '../teacher-auth/entities/teacher-session.entity';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -54,6 +55,24 @@ export class AdminDatabase {
     @InjectRepository(AnalyticsSettingEntity)
     private readonly settings: Repository<AnalyticsSettingEntity>,
   ) {}
+
+  /** 在同一事务中更新密码并撤销会话；教师不存在时不修改任何数据。 */
+  async resetTeacherPassword(
+    id: string,
+    passwordHash: string,
+    passwordSalt: string,
+  ) {
+    return this.teachers.manager.transaction(async (manager) => {
+      const result = await manager.update(
+        TeacherEntity,
+        { id },
+        { passwordHash, passwordSalt },
+      );
+      if (!result.affected) return false;
+      await manager.delete(TeacherSessionEntity, { teacherId: id });
+      return true;
+    });
+  }
 
   /** 统一使用 UTC 字符串边界，避免驱动再次按本机时区转换事件时间。 */
   private eventQuery(range: AdminDateRange, teacherId?: string) {

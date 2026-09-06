@@ -1,18 +1,37 @@
+import { pbkdf2Sync, randomBytes } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { AdminDatabase } from './admin.database';
-import { AdminQueryDto } from './admin.dto';
+import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
 import type { AdminMetadata, AdminDirectory } from './admin.types';
 import { dateRange, pageQuery, shanghaiDay } from './analytics/range';
 import { FEATURES } from '../analytics/features';
-/** 管理端跨教师只读查询；不复用绑定 TeacherContext 的教师业务查询层。 */
+/** 管理端跨教师查询与账号管理；不复用绑定 TeacherContext 的教师业务查询层。 */
 @Injectable()
 export class AdminService {
   /** 注入管理持久层，使业务校验与统计结果组装独立于具体数据库查询。 */
   constructor(private readonly database: AdminDatabase) {}
+  /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
+  async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
+    const password = body?.password;
+    if (
+      typeof password !== 'string' ||
+      password.length < 6 ||
+      password.length > 256
+    ) {
+      throw new BadRequestException('密码长度须为 6–256 位');
+    }
+    const salt = randomBytes(16).toString('hex');
+    const hash = pbkdf2Sync(password, salt, 120_000, 64, 'sha512').toString(
+      'hex',
+    );
+    const updated = await this.database.resetTeacherPassword(id, hash, salt);
+    if (!updated) throw new NotFoundException('教师不存在');
+    return { reset: true };
+  }
   /** 采集起点由迁移保存，不能用第一条事件时间替代，以免将尚无使用误判为未采集。 */
   async metadata(): Promise<AdminMetadata> {
     const [row] = await this.database.findMetadata();

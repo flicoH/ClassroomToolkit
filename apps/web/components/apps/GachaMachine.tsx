@@ -39,12 +39,12 @@ const capsuleColors = [
   ["#38bdf8", "#d9f3ff"],
   ["#34d399", "#d6faec"],
   ["#facc15", "#fff4b8"],
-  ["#fb7185", "#ffe0e5"],
+  ["#7dd3fc", "#e0f7ff"],
   ["#a78bfa", "#eee8ff"],
-  ["#f472b6", "#ffe1f0"],
+  ["#22d3ee", "#ddfbff"],
   ["#fb923c", "#ffead7"]
 ];
-const wheelColors = ["#ef476f", "#ffd166", "#06d6a0", "#4cc9f0", "#8b5cf6", "#f97316", "#ec4899", "#14b8a6"];
+const wheelColors = ["#38bdf8", "#ffd166", "#06d6a0", "#4cc9f0", "#8b5cf6", "#f97316", "#22d3ee", "#14b8a6"];
 const rarityStyles: Record<GachaRarity, string> = {
   普通: "bg-slate-100 text-slate-600",
   稀有: "bg-sky-100 text-sky-600",
@@ -365,7 +365,7 @@ export function GachaMachine() {
         className={cn(
           "absolute inset-0",
           mode === "gacha"
-            ? "bg-[radial-gradient(circle_at_14%_12%,rgba(255,216,225,0.74),transparent_30%),radial-gradient(circle_at_82%_10%,rgba(221,239,255,0.88),transparent_34%),linear-gradient(180deg,#ffffff_0%,#f8fbff_50%,#f4fbf8_100%)]"
+            ? "bg-[radial-gradient(circle_at_14%_12%,rgba(186,230,253,0.78),transparent_30%),radial-gradient(circle_at_82%_10%,rgba(221,239,255,0.88),transparent_34%),linear-gradient(180deg,#ffffff_0%,#f8fbff_50%,#f4fbf8_100%)]"
             : "bg-[radial-gradient(circle_at_18%_28%,rgba(255,239,157,0.72),transparent_38%),radial-gradient(circle_at_82%_12%,rgba(221,239,255,0.9),transparent_36%),linear-gradient(180deg,#fffef8_0%,#f8fbff_100%)]"
         )}
       />
@@ -378,7 +378,7 @@ export function GachaMachine() {
               className={cn(
                 "flex h-14 w-14 items-center justify-center rounded-2xl text-white",
                 mode === "gacha"
-                  ? "bg-[#ec3f66] shadow-[0_14px_30px_rgba(236,63,102,0.32)]"
+                  ? "bg-[#0ea5e9] shadow-[0_14px_30px_rgba(14,165,233,0.32)]"
                   : "bg-gradient-to-br from-[#ffb235] to-[#f06b32] shadow-[0_14px_30px_rgba(245,132,45,0.34)]"
               )}
             >
@@ -399,7 +399,7 @@ export function GachaMachine() {
                 variant="ghost"
                 className={cn(
                   "h-12 w-12 rounded-2xl text-slate-500",
-                  mode === "gacha" && "bg-[#ec3f66] text-white hover:bg-[#d9365a] hover:text-white"
+                  mode === "gacha" && "bg-[#0ea5e9] text-white hover:bg-[#0284c7] hover:text-white"
                 )}
                 title="扭蛋机"
                 aria-label="切换到扭蛋机"
@@ -469,11 +469,11 @@ export function GachaMachine() {
                 <div className="absolute left-12 top-10 h-20 w-28 rounded-full bg-white/25" />
               </div>
 
-              <div className="absolute left-1/2 top-[292px] h-16 w-[318px] -translate-x-1/2 rounded-t-[30px] bg-gradient-to-b from-[#f86e76] to-[#c9272e] shadow-[0_18px_28px_rgba(198,39,46,0.24)]">
+              <div className="absolute left-1/2 top-[292px] h-16 w-[318px] -translate-x-1/2 rounded-t-[30px] bg-gradient-to-b from-[#38bdf8] to-[#0284c7] shadow-[0_18px_28px_rgba(2,132,199,0.24)]">
                 <p className="mt-4 text-center text-[13px] font-black uppercase tracking-[0.42em] text-white">Gacha</p>
               </div>
 
-              <div className="absolute left-1/2 top-[352px] h-[260px] w-[380px] -translate-x-1/2 rounded-[48px] bg-gradient-to-b from-[#f56b6f] via-[#df3d42] to-[#c62025] shadow-[0_34px_75px_rgba(198,39,46,0.34),inset_0_12px_18px_rgba(255,255,255,0.18)]">
+              <div className="absolute left-1/2 top-[352px] h-[260px] w-[380px] -translate-x-1/2 rounded-[48px] bg-gradient-to-b from-[#38bdf8] via-[#0ea5e9] to-[#0369a1] shadow-[0_34px_75px_rgba(2,132,199,0.34),inset_0_12px_18px_rgba(255,255,255,0.18)]">
                 <div className="absolute left-1/2 top-8 h-8 w-72 -translate-x-1/2 rounded-full bg-gradient-to-b from-white/35 to-transparent" />
                 <div className="absolute left-1/2 top-10 flex -translate-x-1/2 gap-2">
                   <span className="h-2 w-2 rounded-full bg-[#ffd447]" />
@@ -530,7 +530,7 @@ export function GachaMachine() {
 
               <div className="pointer-events-none absolute right-0 top-[430px] rounded-2xl bg-white/82 px-4 py-3 text-center shadow-[0_16px_35px_rgba(148,163,184,0.28)] backdrop-blur">
                 <p className="text-xs font-black text-slate-400">可抽</p>
-                <p className="text-2xl font-black text-[#ec3f66]">{enabledRewards.length}</p>
+                <p className="text-2xl font-black text-[#0ea5e9]">{enabledRewards.length}</p>
               </div>
             </section>
           ) : (
@@ -580,7 +580,7 @@ export function GachaMachine() {
               <div className="pointer-events-none absolute left-1/2 top-0 z-30 h-[62px] w-[60px] -translate-x-1/2 drop-shadow-[0_6px_6px_rgba(92,45,11,0.32)]">
                 <div className="absolute inset-0 bg-[#a8571d] [clip-path:polygon(0_0,100%_0,50%_100%)]" />
                 <div className="absolute left-[5px] top-[4px] h-[49px] w-[50px] bg-white [clip-path:polygon(0_0,100%_0,50%_100%)]" />
-                <div className="absolute left-[10px] top-[7px] h-[38px] w-10 bg-[#ef476f] [clip-path:polygon(0_0,100%_0,50%_100%)]" />
+                <div className="absolute left-[10px] top-[7px] h-[38px] w-10 bg-[#38bdf8] [clip-path:polygon(0_0,100%_0,50%_100%)]" />
                 <div className="absolute left-1/2 top-2 h-4 w-4 -translate-x-1/2 rounded-full bg-white/35" />
               </div>
 
@@ -636,13 +636,13 @@ export function GachaMachine() {
               <X className="h-5 w-5" />
             </Button>
 
-            <div className="relative mx-auto flex h-32 w-32 items-center justify-center rounded-full bg-gradient-to-br from-[#fff4b8] via-white to-[#ffd4df] shadow-[0_18px_42px_rgba(236,63,102,0.2)]">
-              <div className="absolute inset-3 rounded-full border-2 border-dashed border-[#ec3f66]/25" />
-              <Gift className="relative h-14 w-14 text-[#ec3f66]" />
+            <div className="relative mx-auto flex h-32 w-32 items-center justify-center rounded-full bg-gradient-to-br from-[#fff4b8] via-white to-[#bae6fd] shadow-[0_18px_42px_rgba(14,165,233,0.2)]">
+              <div className="absolute inset-3 rounded-full border-2 border-dashed border-[#0ea5e9]/25" />
+              <Gift className="relative h-14 w-14 text-[#0ea5e9]" />
               <Sparkles className="absolute right-3 top-3 h-7 w-7 text-amber-400" />
             </div>
 
-            <p className="mt-6 text-xs font-black uppercase tracking-[0.3em] text-[#ec3f66]">恭喜抽中</p>
+            <p className="mt-6 text-xs font-black uppercase tracking-[0.3em] text-[#0ea5e9]">恭喜抽中</p>
             <h2 className="mt-3 break-words text-3xl font-black text-slate-900">{lastReward.name}</h2>
             <span
               className={cn(
@@ -668,7 +668,7 @@ export function GachaMachine() {
               </Button>
               <Button
                 type="button"
-                className="h-11 flex-1 rounded-xl bg-[#ec3f66] font-bold hover:bg-[#d9365a]"
+                className="h-11 flex-1 rounded-xl bg-[#0ea5e9] font-bold hover:bg-[#0284c7]"
                 onClick={() => void drawReward()}
               >
                 再扭一次
@@ -683,7 +683,7 @@ export function GachaMachine() {
           <section className="grid h-[min(680px,calc(100vh-96px))] w-[min(980px,calc(100vw-96px))] grid-rows-[auto_1fr] overflow-hidden rounded-[34px] bg-white/92 shadow-[0_28px_90px_rgba(15,23,42,0.22)] backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-slate-100/80 px-7 py-5">
               <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#ec3f66] text-white shadow-[0_12px_26px_rgba(236,63,102,0.28)]">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0ea5e9] text-white shadow-[0_12px_26px_rgba(14,165,233,0.28)]">
                   <Settings className="h-6 w-6" />
                 </div>
                 <div>
@@ -773,7 +773,7 @@ export function GachaMachine() {
                   </label>
                   <div className="flex gap-2 pt-2">
                     <Button
-                      className="h-11 flex-1 rounded-xl bg-[#ec3f66] font-bold hover:bg-[#d9365a]"
+                      className="h-11 flex-1 rounded-xl bg-[#0ea5e9] font-bold hover:bg-[#0284c7]"
                       onClick={() => void submitReward()}
                     >
                       <Plus className="h-4 w-4" />
@@ -862,7 +862,7 @@ export function GachaMachine() {
 
                 <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)]">
                   <div className="mb-4 flex items-center gap-2">
-                    <History className="h-5 w-5 text-[#ec3f66]" />
+                    <History className="h-5 w-5 text-[#0ea5e9]" />
                     <h3 className="font-black">最近抽取</h3>
                   </div>
                   <div className="grid min-h-0 content-start gap-2 overflow-auto">

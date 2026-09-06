@@ -499,3 +499,11 @@ journalctl -u nginx --since '30 minutes ago'
 ```
 
 不要执行 `docker compose down -v`，`-v` 会删除 MySQL 数据卷。可以定期执行 `docker image prune -f` 清理无引用旧层，但应保留近期用于回滚的镜像。
+
+### 管理员重置教师密码
+
+部署包含此功能的后端与 admin 前端镜像后，在管理后台进入「教师管理」，点击教师姓名打开详情，在「账号安全」中选择「重置密码」。输入两次一致的 6–256 位新密码并确认，成功后将新密码告知该教师。
+
+接口为 `POST /admin/teachers/:id/reset-password`，请求体为 `{ "password": "新密码" }`；沿用管理端 Cookie 认证和 `X-Admin-Request: 1` 请求头。普通教师账号不能调用此接口。密码使用现有教师登录的加盐哈希规则保存，不返回明文或哈希；密码更新与撤销该教师已有会话在同一数据库事务内完成，教师需重新登录。此功能不需要新增数据库迁移。
+
+发布时先完成 `Deploy Backend`，再完成 `Deploy Frontend`。仅更新前端会导致重置接口返回 404。

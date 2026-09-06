@@ -1,9 +1,9 @@
-import { AdminQueryDto } from './admin.dto';
+import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
 import { AdminQueryPipe } from './analytics/query.pipe';
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AdminAccess } from './auth/admin-access';
 import { AdminService } from './admin.service';
-/** 管理端只读业务入口，统一要求管理员身份并校验查询参数。 */
+/** 管理端业务入口，统一要求管理员身份并校验查询参数。 */
 @Controller('admin')
 @AdminAccess()
 export class AdminController {
@@ -23,6 +23,14 @@ export class AdminController {
     @Query(AdminQueryPipe) q: AdminQueryDto,
   ) {
     return this.service.teacher(id, q);
+  }
+  /** 管理员重置教师密码，同时撤销该教师已有登录会话。 */
+  @Post('teachers/:id/reset-password')
+  resetTeacherPassword(
+    @Param('id') id: string,
+    @Body() body: ResetTeacherPasswordDto,
+  ) {
+    return this.service.resetTeacherPassword(id, body);
   }
   /** 按姓名、学号、教师和班级筛选学生档案，返回分页结果。 */
   @Get('students') students(@Query(AdminQueryPipe) q: AdminQueryDto) {

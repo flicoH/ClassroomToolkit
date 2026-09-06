@@ -12,3 +12,8 @@ export class AdminQueryDto {
   kind?: string;
   sort?: string;
 }
+
+/** 管理员为指定教师设置的新密码，由 Service 校验类型和长度。 */
+export class ResetTeacherPasswordDto {
+  password!: string;
+}
