@@ -2,6 +2,7 @@ import './common/load-env';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
+/** 创建 Nest 应用，设置管理端禁缓存中间件并启动 HTTP 服务。 */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(

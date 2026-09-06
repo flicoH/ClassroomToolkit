@@ -21,6 +21,7 @@ export class SeatingChartDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的座位表列表，失败时降级为空列表。 */
   async findAll() {
     try {
       const rows = await this.charts.find({
@@ -37,6 +38,7 @@ export class SeatingChartDatabase {
     }
   }
 
+  /** 查询当前教师名下的单个座位表。 */
   async findById(id: string) {
     const row = await this.charts.findOne({
       where: { id, teacherId: this.teacherContext.teacherId },
@@ -45,6 +47,7 @@ export class SeatingChartDatabase {
     return row ? this.toChart(row) : undefined;
   }
 
+  /** 保存座位表聚合数据，重写学生和座位明细。 */
   async save(chart: SeatingChart) {
     const teacherId = this.teacherContext.teacherId;
     await this.charts.save(
@@ -86,6 +89,7 @@ export class SeatingChartDatabase {
     return (await this.findById(chart.id))!;
   }
 
+  /** 将座位表实体转换为接口模型。 */
   private toChart(entity: SeatingChartEntity): SeatingChart {
     return {
       id: entity.id,

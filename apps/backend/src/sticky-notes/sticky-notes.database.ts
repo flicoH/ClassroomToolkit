@@ -13,6 +13,7 @@ export class StickyNotesDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的全部便签。 */
   async findAll() {
     const rows = await this.notes.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -21,6 +22,7 @@ export class StickyNotesDatabase {
     return rows.map((row) => this.toNote(row));
   }
 
+  /** 查询当前教师名下的单条便签。 */
   async findById(id: string) {
     const row = await this.notes.findOne({
       where: { id, teacherId: this.teacherContext.teacherId },
@@ -28,6 +30,7 @@ export class StickyNotesDatabase {
     return row ? this.toNote(row) : undefined;
   }
 
+  /** 保存便签并绑定当前教师。 */
   async save(note: StickyNote) {
     await this.notes.save(
       this.notes.create({ ...note, teacherId: this.teacherContext.teacherId }),
@@ -35,6 +38,7 @@ export class StickyNotesDatabase {
     return (await this.findById(note.id))!;
   }
 
+  /** 删除当前教师名下的便签。 */
   async delete(id: string) {
     const result = await this.notes.delete({
       id,
@@ -43,6 +47,7 @@ export class StickyNotesDatabase {
     return Boolean(result.affected);
   }
 
+  /** 将便签实体转换为接口模型。 */
   private toNote(entity: StickyNoteEntity): StickyNote {
     return {
       id: entity.id,

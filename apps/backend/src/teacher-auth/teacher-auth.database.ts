@@ -14,16 +14,19 @@ export class TeacherAuthDatabase {
     private readonly sessions: Repository<TeacherSessionEntity>,
   ) {}
 
+  /** 按用户名查询教师账号。 */
   async findTeacherByUsername(username: string) {
     const teacher = await this.teachers.findOne({ where: { username } });
     return teacher ? this.toTeacher(teacher) : undefined;
   }
 
+  /** 按教师 ID 查询教师账号。 */
   async findTeacherById(teacherId: string) {
     const teacher = await this.teachers.findOne({ where: { id: teacherId } });
     return teacher ? this.toTeacher(teacher) : undefined;
   }
 
+  /** 保存教师账号并转换时间字段。 */
   async saveTeacher(teacher: Teacher) {
     const entity = this.teachers.create({
       ...teacher,
@@ -32,6 +35,7 @@ export class TeacherAuthDatabase {
     return this.toTeacher(await this.teachers.save(entity));
   }
 
+  /** 保存教师会话，数据库只存令牌摘要。 */
   async saveSession(session: TeacherSession) {
     const entity = this.sessions.create({
       id: session.id,
@@ -44,6 +48,7 @@ export class TeacherAuthDatabase {
     return session;
   }
 
+  /** 按令牌摘要查询教师会话。 */
   async findSessionByToken(token: string) {
     const session = await this.sessions.findOne({
       where: { tokenHash: token },
@@ -51,11 +56,13 @@ export class TeacherAuthDatabase {
     return session ? this.toSession(session) : undefined;
   }
 
+  /** 删除教师会话。 */
   async deleteSession(sessionId: string) {
     const result = await this.sessions.delete(sessionId);
     return Boolean(result.affected);
   }
 
+  /** 将教师实体转换为认证服务内部模型。 */
   private toTeacher(entity: TeacherEntity): Teacher {
     return {
       id: entity.id,
@@ -69,6 +76,7 @@ export class TeacherAuthDatabase {
     };
   }
 
+  /** 将会话实体转换为认证服务内部模型。 */
   private toSession(entity: TeacherSessionEntity): TeacherSession {
     return {
       id: entity.id,

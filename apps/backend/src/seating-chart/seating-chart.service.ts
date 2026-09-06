@@ -13,14 +13,17 @@ import type { Seat, SeatingChart } from './seating-chart.types';
 export class SeatingChartService {
   constructor(private readonly database: SeatingChartDatabase) {}
 
+  /** 查询当前教师的全部座位表。 */
   findAll() {
     return this.database.findAll();
   }
 
+  /** 查询座位表详情，并补齐缺失座位。 */
   findById(chartId: string) {
     return this.getChartOrThrow(chartId);
   }
 
+  /** 创建新座位表，并按学生顺序生成初始座位。 */
   create(dto: CreateSeatingChartDto) {
     const chart = {
       id: createEntityId('seating'),
@@ -38,6 +41,7 @@ export class SeatingChartService {
     return this.database.save(chart);
   }
 
+  /** 同步班级信息，移除已不在班级中的座位学生。 */
   async syncClassroom(chartId: string, dto: SyncSeatingChartClassroomDto) {
     const chart = await this.getChartOrThrow(chartId);
     const students = dto.students ?? [];
@@ -59,6 +63,7 @@ export class SeatingChartService {
     });
   }
 
+  /** 调整座位行列，并按原座位顺序保留已安排学生。 */
   async resize(chartId: string, dto: ResizeSeatingChartDto) {
     const chart = await this.getChartOrThrow(chartId);
     const assignedIds = this.ensureSeats(chart)
@@ -73,6 +78,7 @@ export class SeatingChartService {
     });
   }
 
+  /** 分配学生到座位；来源座位存在时支持移动或与目标座位交换。 */
   async assign(chartId: string, seatId: string, dto: AssignSeatDto) {
     const chart = await this.getChartOrThrow(chartId);
     const currentSeats = this.ensureSeats(chart);
@@ -108,10 +114,12 @@ export class SeatingChartService {
     return this.database.save({ ...chart, seats });
   }
 
+  /** 清空座位，本质上是把目标座位的 studentId 置空。 */
   clear(chartId: string, seatId: string) {
     return this.assign(chartId, seatId, { studentId: null });
   }
 
+  /** 随机排列所有学生并写回座位表。 */
   async shuffle(chartId: string) {
     const chart = await this.getChartOrThrow(chartId);
     const ids = this.shuffleArray(chart.students.map((student) => student.id));
@@ -122,6 +130,7 @@ export class SeatingChartService {
     return this.database.save({ ...chart, seats });
   }
 
+  /** 查询座位表，不存在时抛出业务异常，并确保 seats 可用。 */
   private async getChartOrThrow(chartId: string) {
     const chart = await this.database.findById(chartId);
     if (!chart) throw new NotFoundException('座位表不存在');
@@ -145,6 +154,7 @@ export class SeatingChartService {
     });
   }
 
+  /** 兼容旧数据：没有座位明细时按行列生成空座位。 */
   private ensureSeats(
     chart: Pick<SeatingChart, 'rows' | 'cols' | 'seats'>,
   ): Seat[] {
@@ -153,6 +163,7 @@ export class SeatingChartService {
       : this.buildSeats(chart.rows || 4, chart.cols || 4, []);
   }
 
+  /** Fisher-Yates 洗牌，生成座位随机顺序。 */
   private shuffleArray<T>(source: T[]) {
     const result = [...source];
     for (let index = result.length - 1; index > 0; index -= 1) {

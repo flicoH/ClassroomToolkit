@@ -6,6 +6,7 @@ import { Public } from './auth/public.decorator';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
+  /** 根路径健康检查，公开访问不需要教师登录。 */
   @Get()
   @Public()
   getHello(): string {

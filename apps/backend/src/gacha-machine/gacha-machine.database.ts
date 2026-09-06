@@ -16,6 +16,7 @@ export class GachaMachineDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的扭蛋奖励列表。 */
   async findRewards() {
     const rows = await this.rewards.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -24,6 +25,7 @@ export class GachaMachineDatabase {
     return rows.map((row) => this.toReward(row));
   }
 
+  /** 查询当前教师名下的单个扭蛋奖励。 */
   async findRewardById(rewardId: string) {
     const row = await this.rewards.findOne({
       where: { id: rewardId, teacherId: this.teacherContext.teacherId },
@@ -31,6 +33,7 @@ export class GachaMachineDatabase {
     return row ? this.toReward(row) : undefined;
   }
 
+  /** 保存扭蛋奖励并绑定当前教师。 */
   async saveReward(reward: GachaReward) {
     const entity = this.rewards.create({
       ...reward,
@@ -40,6 +43,7 @@ export class GachaMachineDatabase {
     return this.toReward(await this.rewards.save(entity));
   }
 
+  /** 删除当前教师名下的扭蛋奖励。 */
   async deleteReward(rewardId: string) {
     const result = await this.rewards.delete({
       id: rewardId,
@@ -48,6 +52,7 @@ export class GachaMachineDatabase {
     return Boolean(result.affected);
   }
 
+  /** 查询最近 30 条扭蛋抽取记录。 */
   async findDrawRecords() {
     const rows = await this.records.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -57,6 +62,7 @@ export class GachaMachineDatabase {
     return rows.map((row) => this.toRecord(row));
   }
 
+  /** 创建扭蛋抽取记录。 */
   async createDrawRecord(record: GachaDrawRecord) {
     return this.toRecord(
       await this.records.save(
@@ -69,6 +75,7 @@ export class GachaMachineDatabase {
     );
   }
 
+  /** 将奖励实体转换为接口模型。 */
   private toReward(entity: GachaRewardEntity): GachaReward {
     return {
       id: entity.id,
@@ -82,6 +89,7 @@ export class GachaMachineDatabase {
     };
   }
 
+  /** 将抽取记录实体转换为接口模型。 */
   private toRecord(entity: GachaDrawRecordEntity): GachaDrawRecord {
     return {
       id: entity.id,

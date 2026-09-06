@@ -22,6 +22,7 @@ const petEvolutionThresholds = [4, 10, 18, 26] as const;
 export class PetPointsService {
   constructor(private readonly database: PetPointsDatabase) {}
 
+  /** 汇总宠物积分首页需要的所有数据。 */
   async overview() {
     return {
       students: await this.database.findStudents(),
@@ -32,6 +33,7 @@ export class PetPointsService {
     };
   }
 
+  /** 批量调整学生积分，同时推进宠物成长并写入评价记录。 */
   async adjustScore(dto: AdjustScoreDto) {
     const changed: StudentPet[] = [];
     for (const studentId of dto.studentIds) {
@@ -63,6 +65,7 @@ export class PetPointsService {
     return changed;
   }
 
+  /** 将班级学生同步到宠物积分表，保留已有积分和宠物进度。 */
   async syncClassStudents(dto: SyncPetClassDto) {
     const synced: StudentPet[] = [];
     for (const item of dto.students) {
@@ -100,6 +103,7 @@ export class PetPointsService {
     return synced;
   }
 
+  /** 删除评价记录时按原记录回退积分和宠物成长值。 */
   async deleteRecord(recordId: string) {
     const record = await this.database.findRecordById(recordId);
     if (!record) throw new NotFoundException('评价记录不存在');
@@ -120,6 +124,7 @@ export class PetPointsService {
     return { deleted: true };
   }
 
+  /** 给学生绑定宠物模板和展示昵称。 */
   async bindPet(studentId: string, dto: BindPetDto) {
     await this.getStudentOrThrow(studentId);
     return this.database.updateStudent(studentId, {
@@ -128,6 +133,7 @@ export class PetPointsService {
     });
   }
 
+  /** 创建启用状态的评价指标。 */
   createRubric(dto: CreateRubricDto) {
     return this.database.createRubric({
       id: createEntityId('rubric'),
@@ -136,6 +142,7 @@ export class PetPointsService {
     });
   }
 
+  /** 创建启用状态的兑换奖品。 */
   createReward(dto: CreateRewardDto) {
     return this.database.createReward({
       id: createEntityId('reward'),
@@ -144,6 +151,7 @@ export class PetPointsService {
     });
   }
 
+  /** 执行奖品兑换，校验库存和学生积分后扣减双方数据。 */
   async redeem(dto: RedeemRewardDto) {
     const student = await this.getStudentOrThrow(dto.studentId);
     const reward = await this.database.findRewardById(dto.rewardId);
@@ -164,6 +172,7 @@ export class PetPointsService {
     });
   }
 
+  /** 查询积分学生，不存在时抛出业务异常。 */
   private async getStudentOrThrow(studentId: string) {
     const student = await this.database.findStudentById(studentId);
     if (!student) throw new NotFoundException('积分学生不存在');

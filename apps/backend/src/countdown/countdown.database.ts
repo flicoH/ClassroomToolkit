@@ -13,6 +13,7 @@ export class CountdownDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的默认倒计时状态。 */
   async findDefault() {
     const row = await this.states.findOne({
       where: {
@@ -23,6 +24,7 @@ export class CountdownDatabase {
     return row ? this.toState(row) : undefined;
   }
 
+  /** 保存当前教师的默认倒计时状态。 */
   async save(state: CountdownState) {
     await this.states.save(
       this.states.create({
@@ -34,6 +36,7 @@ export class CountdownDatabase {
     return (await this.findDefault())!;
   }
 
+  /** 将倒计时实体转换为接口模型，屏蔽按教师存储的真实主键。 */
   private toState(entity: CountdownStateEntity): CountdownState {
     return {
       id: 'default',

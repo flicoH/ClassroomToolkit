@@ -17,6 +17,7 @@ export class RandomPickerDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的点名班级快照。 */
   async findClasses() {
     const rows = await this.classes.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -26,6 +27,7 @@ export class RandomPickerDatabase {
     return rows.map((row) => this.toClass(row));
   }
 
+  /** 查询当前教师名下的单个点名班级。 */
   async findClass(classId: string) {
     const row = await this.classes.findOne({
       where: { id: classId, teacherId: this.teacherContext.teacherId },
@@ -34,6 +36,7 @@ export class RandomPickerDatabase {
     return row ? this.toClass(row) : undefined;
   }
 
+  /** 查询当前教师的点名历史记录。 */
   async findHistories() {
     const rows = await this.histories.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -43,6 +46,7 @@ export class RandomPickerDatabase {
     return rows.map((row) => this.toHistory(row));
   }
 
+  /** 保存一次点名历史，并补齐历史关联的班级快照。 */
   async saveHistory(history: PickHistory) {
     await this.classes.upsert(
       {
@@ -73,6 +77,7 @@ export class RandomPickerDatabase {
     return history;
   }
 
+  /** 将点名班级实体转换为接口模型。 */
   private toClass(entity: PickerClassEntity): PickerClass {
     return {
       id: entity.id,
@@ -88,6 +93,7 @@ export class RandomPickerDatabase {
     };
   }
 
+  /** 将点名历史实体转换为接口模型。 */
   private toHistory(entity: PickHistoryEntity): PickHistory {
     return {
       id: entity.id,

@@ -23,6 +23,7 @@ export class TeacherAuthGuard implements CanActivate {
     private readonly teacherAuthService: TeacherAuthService,
   ) {}
 
+  /** 保护教师身份域路由，并把认证后的教师资料挂到请求对象。 */
   async canActivate(context: ExecutionContext) {
     if (
       this.reflector.getAllAndOverride(ADMIN_ACCESS, [

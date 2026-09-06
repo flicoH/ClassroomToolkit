@@ -16,6 +16,7 @@ export class TaskStatsDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的全部任务统计。 */
   async findAll() {
     const rows = await this.tasks.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -25,6 +26,7 @@ export class TaskStatsDatabase {
     return rows.map((row) => this.toTask(row));
   }
 
+  /** 查询当前教师名下的单个任务统计。 */
   async findById(id: string) {
     const row = await this.tasks.findOne({
       where: { id, teacherId: this.teacherContext.teacherId },
@@ -33,6 +35,7 @@ export class TaskStatsDatabase {
     return row ? this.toTask(row) : undefined;
   }
 
+  /** 保存任务聚合数据，重写任务下的学生状态列表。 */
   async save(task: TaskItem) {
     const teacherId = this.teacherContext.teacherId;
     const students = this.normalizeStudents(task);
@@ -69,6 +72,7 @@ export class TaskStatsDatabase {
     return (await this.findById(task.id))!;
   }
 
+  /** 直接更新任务中单个学生的状态和可选分数。 */
   async updateStudentStatus(
     taskId: string,
     studentId: string,
@@ -89,6 +93,7 @@ export class TaskStatsDatabase {
     return Boolean(result.affected);
   }
 
+  /** 在数据库层按固定顺序轮转学生状态，减少并发覆盖。 */
   async cycleStudentStatus(taskId: string, studentId: string) {
     const result = await this.students.query(
       `
@@ -108,6 +113,7 @@ export class TaskStatsDatabase {
     return Number(affectedRows ?? 0) > 0;
   }
 
+  /** 删除当前教师名下的任务统计。 */
   async delete(id: string) {
     const result = await this.tasks.delete({
       id,
@@ -116,6 +122,7 @@ export class TaskStatsDatabase {
     return Boolean(result.affected);
   }
 
+  /** 将任务实体和学生实体组装为接口模型。 */
   private toTask(entity: TaskEntity): TaskItem {
     return {
       id: entity.id,
@@ -139,6 +146,7 @@ export class TaskStatsDatabase {
     };
   }
 
+  /** 去重任务学生列表，避免重复学生写入同一任务。 */
   private normalizeStudents(task: TaskItem) {
     const seen = new Set<string>();
     return task.students.filter((student) => {

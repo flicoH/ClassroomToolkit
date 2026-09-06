@@ -17,6 +17,7 @@ const rarities: GachaRarity[] = ['普通', '稀有', '史诗', '传说'];
 export class GachaMachineService {
   constructor(private readonly database: GachaMachineDatabase) {}
 
+  /** 汇总扭蛋机奖池和抽取记录。 */
   async overview() {
     return {
       rewards: await this.database.findRewards(),
@@ -24,6 +25,7 @@ export class GachaMachineService {
     };
   }
 
+  /** 创建奖励前规范化名称、稀有度、权重和库存。 */
   async createReward(dto: CreateGachaRewardDto) {
     const reward: GachaReward = {
       id: createEntityId('gacha'),
@@ -38,6 +40,7 @@ export class GachaMachineService {
     return this.database.saveReward(reward);
   }
 
+  /** 更新奖励配置，未传字段保持原值。 */
   async updateReward(rewardId: string, dto: UpdateGachaRewardDto) {
     const reward = await this.getRewardOrThrow(rewardId);
     return this.database.saveReward({
@@ -61,12 +64,14 @@ export class GachaMachineService {
     });
   }
 
+  /** 删除奖励前确认奖励存在。 */
   async deleteReward(rewardId: string) {
     await this.getRewardOrThrow(rewardId);
     await this.database.deleteReward(rewardId);
     return { deleted: true };
   }
 
+  /** 从可用奖池按权重抽取奖励，扣减库存并保存记录。 */
   async draw() {
     const rewards = (await this.database.findRewards()).filter(
       (reward) => reward.enabled && reward.stock > 0 && reward.weight > 0,
@@ -87,12 +92,14 @@ export class GachaMachineService {
     return { reward: updatedReward, record };
   }
 
+  /** 查询奖励，不存在时抛出业务异常。 */
   private async getRewardOrThrow(rewardId: string) {
     const reward = await this.database.findRewardById(rewardId);
     if (!reward) throw new NotFoundException('扭蛋奖励不存在');
     return reward;
   }
 
+  /** 根据权重随机选择一个奖励。 */
   private pickReward(rewards: GachaReward[]) {
     const total = rewards.reduce((sum, reward) => sum + reward.weight, 0);
     let cursor = Math.random() * total;
@@ -103,18 +110,21 @@ export class GachaMachineService {
     return rewards[rewards.length - 1]!;
   }
 
+  /** 清理奖励名称并校验非空。 */
   private normalizeName(name: string) {
     const value = name.trim();
     if (!value) throw new BadRequestException('奖励名称不能为空');
     return value;
   }
 
+  /** 校验奖励稀有度是否在允许范围内。 */
   private normalizeRarity(rarity: GachaRarity) {
     if (!rarities.includes(rarity))
       throw new BadRequestException('奖励稀有度不正确');
     return rarity;
   }
 
+  /** 将权重规范化为至少为 1 的整数。 */
   private normalizeWeight(weight: number) {
     const value = Math.round(Number(weight));
     if (!Number.isFinite(value) || value < 1)
@@ -122,6 +132,7 @@ export class GachaMachineService {
     return value;
   }
 
+  /** 将库存规范化为非负整数。 */
   private normalizeStock(stock: number) {
     const value = Math.round(Number(stock));
     if (!Number.isFinite(value) || value < 0)

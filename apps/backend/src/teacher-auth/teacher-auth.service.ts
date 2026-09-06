@@ -29,6 +29,7 @@ export class TeacherAuthService {
     @Optional() private readonly analytics?: AnalyticsService,
   ) {}
 
+  /** 注册教师账号，创建会话并记录注册与自动登录事件。 */
   async register(dto: RegisterTeacherDto) {
     const username = dto.username.trim();
     const password = dto.password;
@@ -57,6 +58,7 @@ export class TeacherAuthService {
     return result;
   }
 
+  /** 校验教师账号密码，登录成功后创建会话。 */
   async login(dto: LoginTeacherDto) {
     const teacher = await this.database.findTeacherByUsername(
       dto.username.trim(),
@@ -70,15 +72,18 @@ export class TeacherAuthService {
     return result;
   }
 
+  /** 复用认证逻辑返回当前教师资料。 */
   async me(token: string) {
     return this.authenticate(token);
   }
 
+  /** 通过会话令牌认证教师身份。 */
   async authenticate(token: string) {
     const teacher = await this.getTeacherByToken(token);
     return this.toProfile(teacher);
   }
 
+  /** 删除指定教师会话，允许重复调用保持幂等。 */
   async logout(dto: LogoutTeacherDto) {
     const session = await this.database.findSessionByToken(
       this.hashToken(dto.token),
@@ -106,6 +111,7 @@ export class TeacherAuthService {
     return { ...this.toProfile(teacher), token };
   }
 
+  /** 通过令牌摘要查找有效会话和教师账号。 */
   private async getTeacherByToken(token: string) {
     if (!token) throw new UnauthorizedException('未登录');
     const session = await this.database.findSessionByToken(
@@ -124,6 +130,7 @@ export class TeacherAuthService {
     return pbkdf2Sync(password, salt, 120_000, 64, 'sha512').toString('hex');
   }
 
+  /** 使用恒定时间比较校验教师密码。 */
   private verifyPassword(password: string, teacher: Teacher) {
     const actual = Buffer.from(
       this.hashPassword(password, teacher.passwordSalt),
@@ -135,10 +142,12 @@ export class TeacherAuthService {
     );
   }
 
+  /** 对会话令牌做 SHA-256 摘要后再入库或查询。 */
   private hashToken(token: string) {
     return createHash('sha256').update(token).digest('hex');
   }
 
+  /** 将教师账号转换为可返回给前端的公开资料。 */
   private toProfile(teacher: Teacher): TeacherProfile {
     return {
       id: teacher.id,

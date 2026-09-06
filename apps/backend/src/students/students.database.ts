@@ -19,6 +19,7 @@ export class StudentsDatabase {
     private readonly teacherContext: TeacherContext,
   ) {}
 
+  /** 查询当前教师的全部班级，并带出分组和学生。 */
   async findClassrooms() {
     const rows = await this.classrooms.find({
       where: { teacherId: this.teacherContext.teacherId },
@@ -28,6 +29,7 @@ export class StudentsDatabase {
     return rows.map((row) => this.toClassroom(row));
   }
 
+  /** 查询当前教师名下的单个班级。 */
   async findClassroom(id: string) {
     const row = await this.classrooms.findOne({
       where: { id, teacherId: this.teacherContext.teacherId },
@@ -36,6 +38,7 @@ export class StudentsDatabase {
     return row ? this.toClassroom(row) : undefined;
   }
 
+  /** 保存班级聚合数据，重写其分组和学生明细。 */
   async saveClassroom(classroom: Classroom) {
     const teacherId = this.teacherContext.teacherId;
     await this.classrooms.save(
@@ -77,6 +80,7 @@ export class StudentsDatabase {
     return (await this.findClassroom(classroom.id))!;
   }
 
+  /** 删除当前教师名下的班级。 */
   async deleteClassroom(id: string) {
     const result = await this.classrooms.delete({
       id,
@@ -85,6 +89,7 @@ export class StudentsDatabase {
     return Boolean(result.affected);
   }
 
+  /** 将 TypeORM 班级实体转换为前端使用的班级结构。 */
   private toClassroom(entity: ClassroomEntity): Classroom {
     return {
       id: entity.id,
@@ -102,6 +107,7 @@ export class StudentsDatabase {
     };
   }
 
+  /** 将学生实体转换为接口返回的学生结构。 */
   private toStudent(entity: StudentEntity): Student {
     return {
       id: entity.id,
@@ -112,6 +118,7 @@ export class StudentsDatabase {
     };
   }
 
+  /** 组合班级和学生 ID，避免不同班级学生学号相同时存储主键冲突。 */
   private studentStorageId(classroomId: string, studentId: string) {
     if (studentId.startsWith(`${classroomId}:`)) return studentId.slice(0, 64);
     return `${classroomId}:${studentId}`.slice(0, 64);

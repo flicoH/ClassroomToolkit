@@ -61,12 +61,14 @@ const defaultClassroomTemplates: Array<Omit<Classroom, 'id'>> = [
 export class StudentsService {
   constructor(private readonly database: StudentsDatabase) {}
 
+  /** 查询所有班级；首次使用时自动创建默认年级班。 */
   async findClassrooms() {
     const classrooms = await this.database.findClassrooms();
     if (classrooms.length) return classrooms;
     return this.createDefaultClassrooms();
   }
 
+  /** 查询班级详情，并应用学生筛选与排序。 */
   async findClassroom(
     classroomId: string,
     options: ClassroomStudentQuery = {},
@@ -75,6 +77,7 @@ export class StudentsService {
     return this.applyStudentQuery(classroom, options);
   }
 
+  /** 创建一个空班级，分组来自请求体。 */
   createClassroom(dto: CreateClassroomDto) {
     const classroom: Classroom = {
       id: createEntityId('class'),
@@ -85,6 +88,7 @@ export class StudentsService {
     return this.database.saveClassroom(classroom);
   }
 
+  /** 更新班级名称，空名称不会覆盖原值。 */
   async updateClassroom(classroomId: string, dto: UpdateClassroomDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
     const name = dto.name?.trim();
@@ -92,6 +96,7 @@ export class StudentsService {
     return this.database.saveClassroom(classroom);
   }
 
+  /** 新增学生，并在未传学号时自动生成不重复学号。 */
   async addStudent(classroomId: string, dto: CreateStudentDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
     const studentNo =
@@ -113,6 +118,7 @@ export class StudentsService {
     );
   }
 
+  /** 更新学生资料，同时校验学号在当前班级内唯一。 */
   async updateStudent(
     classroomId: string,
     studentId: string,
@@ -144,6 +150,7 @@ export class StudentsService {
     );
   }
 
+  /** 从班级中删除学生。 */
   async deleteStudent(classroomId: string, studentId: string) {
     const classroom = await this.getClassroomOrThrow(classroomId);
     classroom.students = classroom.students.filter(
@@ -153,6 +160,7 @@ export class StudentsService {
     return { deleted: true };
   }
 
+  /** 批量导入学生，重复学号会进入 skipped 列表而不是中断整体导入。 */
   async importStudents(
     classroomId: string,
     dto: ImportStudentsDto,
@@ -177,6 +185,7 @@ export class StudentsService {
     };
   }
 
+  /** 给班级追加分组；已存在的分组保持不变。 */
   async addGroup(classroomId: string, dto: CreateGroupDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
     const name = dto.name.trim();
@@ -185,6 +194,7 @@ export class StudentsService {
     return classroom.groups;
   }
 
+  /** 设置学生分组，并拒绝不存在的分组名称。 */
   async updateStudentGroup(
     classroomId: string,
     studentId: string,
@@ -206,6 +216,7 @@ export class StudentsService {
     );
   }
 
+  /** 删除分组，并把原属于该分组的学生恢复为未分组。 */
   async deleteGroup(classroomId: string, groupName: string) {
     const classroom = await this.getClassroomOrThrow(classroomId);
     const name = groupName.trim();
@@ -218,6 +229,7 @@ export class StudentsService {
     return this.database.saveClassroom(classroom);
   }
 
+  /** 对班级学生应用关键词、分组和排序条件，返回不修改原对象的结果。 */
   private applyStudentQuery(
     classroom: Classroom,
     options: ClassroomStudentQuery,
@@ -244,6 +256,7 @@ export class StudentsService {
     return { ...classroom, students };
   }
 
+  /** 按教师隔离查询班级，不存在时抛出业务异常。 */
   private async getClassroomOrThrow(classroomId: string) {
     const classroom = await this.database.findClassroom(classroomId);
     if (!classroom) {
@@ -254,6 +267,7 @@ export class StudentsService {
     return classroom;
   }
 
+  /** 为新教师生成默认班级模板。 */
   private async createDefaultClassrooms() {
     const classrooms: Classroom[] = [];
     for (const classroom of defaultClassroomTemplates) {
@@ -307,6 +321,7 @@ export class StudentsService {
     return { students, skipped };
   }
 
+  /** 根据现有学生生成下一个可用学号。 */
   private createNextStudentNo(students: Student[], excludeIndex?: number) {
     const usedStudentNos = new Set(
       students
@@ -316,6 +331,7 @@ export class StudentsService {
     return this.createNextStudentNoFromSet(usedStudentNos, students.length);
   }
 
+  /** 从指定已用学号集合中递增寻找空闲学号。 */
   private createNextStudentNoFromSet(
     usedStudentNos: Set<string>,
     offset: number,
@@ -327,6 +343,7 @@ export class StudentsService {
     return nextStudentNo;
   }
 
+  /** 校验学号在当前学生集合内没有重复。 */
   private assertStudentNoAvailable(
     students: Student[],
     studentNo: string,
