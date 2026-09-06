@@ -21,7 +21,9 @@ pnpm --filter ClassRoomToolkitBackend dev
 pnpm --filter ClassRoomToolkitAdmin dev
 ```
 
-访问 `http://127.0.0.1:3002/login`。也可执行根目录 `pnpm dev` 一起启动教师端。开发代理默认将 `/admin` 转发至 `http://127.0.0.1:3000`，可在启动 Vite 前用 `BACKEND_URL` 调整。管理员账号密码配置在后端，不能写入 `VITE_*` 前端变量。
+访问 `http://127.0.0.1:8080/login`。也可执行根目录 `pnpm dev` 一起启动教师端。开发代理默认将 `/admin` 转发至 `http://127.0.0.1:3000`，可在启动 Vite 前用 `BACKEND_URL` 调整。管理员账号密码配置在后端，不能写入 `VITE_*` 前端变量。
+
+部署默认也使用 8080，访问 `http://服务器IP:8080/login`。已有部署需更新 `deploy/.env.frontend` 的端口并重新创建 Admin，HTTP 登录还需调整后端 Cookie 配置，详见 [IP 访问步骤](../../docs/single-server-docker-deployment.md#管理平台通过-ip8080-访问)。
 
 ## 构建与部署
 

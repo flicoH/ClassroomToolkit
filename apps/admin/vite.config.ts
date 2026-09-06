@@ -24,7 +24,9 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 3002,
+    // 管理平台固定使用 8080，端口占用时直接报错，避免静默切换访问地址。
+    port: 8080,
+    strictPort: true,
     hmr: true,
     proxy: {
       '/admin': { target: process.env.BACKEND_URL || 'http://127.0.0.1:3000', changeOrigin: true },

@@ -12,7 +12,7 @@
 
 1. 在 `apps/backend/.env` 配置现有 MySQL 连接；已有数据库执行 `pnpm --filter ClassRoomToolkitBackend migration:run`。空库仍使用 `db:init`。禁止开启自动同步。
 2. 首次启动前设置 `ADMIN_INITIAL_USERNAME` 与 `ADMIN_INITIAL_PASSWORD`（12–256 位），启动后端时自动创建第一个管理员。已有管理员时不覆盖；创建成功后同时清空或移除 `ADMIN_INITIAL_USERNAME`、`ADMIN_INITIAL_PASSWORD`，并重启后端使配置生效。只删除其中一个会导致启动校验失败。没有默认账号密码，也不开放管理员注册。
-3. 运行 `pnpm dev`，或分别启动 Backend 和 Admin。管理后台开发地址为 `http://localhost:3002`，教师端为 3001，后端为 3000。
+3. 运行 `pnpm dev`，或分别启动 Backend 和 Admin。管理后台开发地址为 `http://localhost:8080`，教师端为 3001，后端为 3000。
 4. 管理前端通过 Vite 的 `/admin` 代理访问后端。后端不在默认地址时，启动管理前端前设置 `BACKEND_URL`。
 
 生产环境继续沿用仓库 Docker / Nginx 部署。先发布数据库迁移和后端，再发布前端。`deploy/docker/admin.nginx.conf` 已包含管理 API 代理；PM2 的 Nginx 示例也已补齐。Compose 已传入管理员初始化配置。管理端与教师端分别使用域名。
@@ -23,7 +23,7 @@
 
 | 运行方式 | 后端配置位置                           | 管理页面与 API                                                          |
 | -------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| 本地开发 | `apps/backend/.env`                    | `http://127.0.0.1:3002/login`；Vite 将 `/admin/*` 代理到后端            |
+| 本地开发 | `apps/backend/.env`                    | `http://127.0.0.1:8080/login`；Vite 将 `/admin/*` 代理到后端            |
 | Docker   | `deploy/.env.backend`，由 Compose 注入 | 管理域名 → 宿主机 Nginx → Admin 容器 → `/admin/*` 转发到 `backend:3000` |
 | PM2      | `apps/backend/.env`                    | Nginx 托管 `apps/admin/dist`，并将 `/admin/*` 转发到 `127.0.0.1:3000`   |
 
@@ -39,6 +39,12 @@ TEACHER_DATA_UTC_OFFSET=
 ```
 
 `ADMIN_INITIAL_PASSWORD` 仅用于创建第一个管理员，不能用它修改已有密码。Docker 的 `.env` 修改后需要重新创建 Backend 容器；单纯 `docker restart` 不会加载新的容器环境变量。具体命令见 [Docker 部署说明](single-server-docker-deployment.md)；PM2 操作见 [PM2 部署说明](deployment.md)。
+
+## IP 访问管理后台
+
+本地与部署端口统一为 8080。Docker 默认发布 `0.0.0.0:8080`，管理页面和接口均可通过 `http://服务器IP:8080` 访问。已有服务器需要将 `deploy/.env.frontend` 的 `ADMIN_PORT` 改为 `8080`、`ADMIN_BIND_HOST` 设为 `0.0.0.0`，重新创建 Admin 并放行 TCP 8080。HTTP 登录需设置后端 `ADMIN_COOKIE_SECURE=false` 并重新创建 Backend。
+
+详细迁移命令见 [Docker IP:8080 部署步骤](single-server-docker-deployment.md#管理平台通过-ip8080-访问)。宿主机 Nginx 不应与 Docker 同时监听 8080；PM2 模式则由 Nginx 直接监听此端口。
 
 ## 上线验收
 

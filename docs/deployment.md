@@ -20,7 +20,7 @@ GitHub main
 
 - Backend：`127.0.0.1:3000`，供 Web BFF 和管理端 Nginx 代理访问
 - Web：`127.0.0.1:3001`，由 Nginx 对外反代
-- Admin：静态目录 `apps/admin/dist`
+- Admin：静态目录 `apps/admin/dist`，Nginx 同时提供管理域名和 IP 的 `8080` 入口
 - MySQL：只允许应用服务器或私有网络访问
 
 ## 1. 准备服务器
@@ -175,6 +175,12 @@ APP_DIR=/opt/classroom-toolkit bash deploy/deploy.sh
 ```
 
 脚本依次快进代码、安装锁定依赖、构建三个应用、执行迁移、重载 Backend/Web 并进行健康检查。Admin 的 `dist` 由 Nginx 直接托管，脚本不会自动复制或重载 Nginx 配置；代理配置有变化时需要另外更新并运行 `nginx -t`。
+
+## IP:8080 访问
+
+PM2 使用的 `deploy/nginx.conf.example` 已让管理端同时监听 8080，更新配置并通过 `nginx -t` 后重载 Nginx，在安全组和防火墙放行 TCP 8080，即可访问 `http://服务器IP:8080/login`。HTTP 登录还需在 `apps/backend/.env` 设置 `ADMIN_COOKIE_SECURE=false` 并重启 Backend；启用 HTTPS 后恢复为 true。
+
+此配置只用于 PM2 静态托管。Docker 模式由 Admin 容器直接发布宿主机 8080，不能再让宿主机 Nginx 监听同一个端口。
 
 ## 管理后台验收
 

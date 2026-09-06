@@ -20,6 +20,8 @@ server {
 server {
     listen 80;
     listen [::]:80;
+    # PM2 静态托管模式额外提供 IP:8080 入口；Docker 模式由容器映射占用 8080。
+    listen 8080;
     server_name admin.classroom.example.com;
 
     location /admin/ {

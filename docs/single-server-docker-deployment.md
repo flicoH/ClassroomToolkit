@@ -31,7 +31,7 @@ sudo -u deploy bash deploy/centos7-preflight.sh
 Internet
   -> Host Nginx :80/:443
        -> Web container   127.0.0.1:3001
-       -> Admin container 127.0.0.1:3002
+       -> Admin container :8080（默认也可通过公网 IP 访问）
 
 Web container（教师端 /api/* BFF）
 Admin container（管理端 /admin/* Nginx 代理）
@@ -331,14 +331,14 @@ docker compose -p classroom-frontend \
 
 curl http://127.0.0.1:3000/
 curl -I http://127.0.0.1:3001/login
-curl -I http://127.0.0.1:3002/
+curl -I http://127.0.0.1:8080/
 ```
 
 ### 管理后台登录与验收
 
 访问 `https://admin.classroom.example.com/login`，使用 `deploy/.env.backend` 中首次配置的管理员登录。页面路径是 `/login`、`/features` 等，接口路径是 `/admin/auth/login`、`/admin/analytics/...`，无需在页面 URL 前加 `/admin`。
 
-宿主机 Nginx 将管理域名转发到 3002；Admin 容器里的 Nginx 再将 `/admin/*` 转发到同一 Docker 网络的 `backend:3000`，其他页面请求走 SPA 回退。仅更新宿主机配置而未更新 Admin 镜像，不能获得新增的 API 代理。
+宿主机 Nginx 将管理域名转发到 8080；Admin 容器里的 Nginx 再将 `/admin/*` 转发到同一 Docker 网络的 `backend:3000`，其他页面请求走 SPA 回退。仅更新宿主机配置而未更新 Admin 镜像，不能获得新增的 API 代理。
 
 ```bash
 # 未登录应返回 401 JSON，而不是 200 HTML 或 502。
@@ -414,6 +414,47 @@ docker inspect classroom-frontend-admin-1 \
 ```
 
 `*.release.env` 里的 `sha-...` 必须等于本次 Actions 页面显示的 commit SHA。`docker inspect` 的 `image=` 也应显示同一个 `sha-...` 标签；如果还是旧 sha，说明部署脚本没有跑成功或服务器没有拉到新镜像。
+
+## 管理平台通过 IP:8080 访问
+
+Admin 默认映射为 `0.0.0.0:8080 → 容器80`，访问 `http://服务器IP:8080/login`。例如当前服务器可使用 `http://119.23.147.212:8080/login`。管理页面与 `/admin/*` 接口共用此入口，接口由 Admin 容器内 Nginx 转发到 Backend。
+
+已部署环境不会因为示例文件更新而自动修改 `.env`。在服务器项目根目录进行以下更新：
+
+1. 修改 `deploy/.env.frontend`：
+
+   ```dotenv
+   ADMIN_PORT=8080
+   ADMIN_BIND_HOST=0.0.0.0
+   ```
+
+2. HTTP 登录需在 `deploy/.env.backend` 设置 `ADMIN_COOKIE_SECURE=false`；HTTPS 登录保持 true。HTTP 会明文传输登录信息，建议限制允许访问的来源 IP。
+3. 使用已发布的镜像版本重新创建相关容器：
+
+   ```bash
+   docker compose -p classroom-frontend \
+     --env-file deploy/.env.frontend \
+     --env-file deploy/.frontend-release.env \
+     -f deploy/compose.frontend.yml up -d --no-deps --force-recreate admin
+
+   # 修改过后端 Cookie 配置时执行。
+   docker compose -p classroom-backend \
+     --env-file deploy/.env.backend \
+     --env-file deploy/.backend-release.env \
+     -f deploy/compose.backend.yml up -d --no-deps --force-recreate backend
+   ```
+
+4. 在安全组及系统防火墙放行 TCP 8080，并检查：
+
+   ```bash
+   curl -I http://127.0.0.1:8080/login
+   # 未登录应返回 401 JSON，表明管理 API 代理正常。
+   curl -i http://127.0.0.1:8080/admin/auth/me
+   ```
+
+如果之前配置过宿主机 Nginx `listen 8080`，先移除该监听或停止使用它，避免与 Docker 端口映射冲突。Docker 方案无需新增宿主机 Nginx 8080 监听。
+
+保留域名访问时，宿主机 Nginx 的 Admin 上游同步改为 `http://127.0.0.1:8080`，检查配置后重载。仅希望通过域名访问时，可将 `ADMIN_BIND_HOST=127.0.0.1` 并重新创建 Admin；此时公网 IP:8080 将不再可达。
 
 ## 数据库备份
 
