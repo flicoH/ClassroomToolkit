@@ -1787,8 +1787,8 @@ export function PetPoints() {
                 </Button>
               </div>
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1.75fr_1fr]">
-                <div className="grid auto-rows-[180px] grid-cols-2 gap-4 overflow-y-auto bg-[#f7f9fc] p-5 sm:grid-cols-3">
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:grid lg:grid-cols-[1.75fr_1fr] lg:overflow-hidden">
+                <div className="grid auto-rows-[180px] grid-cols-2 gap-4 bg-[#f7f9fc] p-5 sm:grid-cols-3 lg:overflow-y-auto">
                   {filteredPets.map(pet => (
                     <button
                       key={pet.id}
@@ -1826,7 +1826,7 @@ export function PetPoints() {
                   ))}
                 </div>
 
-                <aside className="flex min-h-0 flex-col border-l border-slate-100 bg-white p-6">
+                <aside className="flex min-h-0 flex-col border-t border-slate-100 bg-white p-6 lg:overflow-y-auto lg:border-l lg:border-t-0">
                   {selectedPet ? (
                     <div className="flex min-h-0 flex-1 flex-col">
                       <div

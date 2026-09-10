@@ -70,6 +70,12 @@ describe('Admin and analytics integration (migrated MySQL)', () => {
   function get(path: string) {
     return request(app.getHttpServer()).get(path).set('Cookie', cookie);
   }
+  function adminPost(path: string) {
+    return request(app.getHttpServer())
+      .post(path)
+      .set('Cookie', cookie)
+      .set('X-Admin-Request', '1');
+  }
   it('isolates admin access from teacher tokens and protects writes against CSRF', async () => {
     await request(app.getHttpServer())
       .get('/admin/dashboard/overview')
@@ -210,6 +216,37 @@ describe('Admin and analytics integration (migrated MySQL)', () => {
     );
     await get('/admin/analytics/features/unknown/trend').expect(400);
   });
+
+  it('resets a teacher password through the admin API and revokes existing teacher sessions', async () => {
+    await request(app.getHttpServer())
+      .post(`/admin/teachers/${teacherId}/reset-password`)
+      .set('Cookie', cookie)
+      .send({ password: 'new-password-123' })
+      .expect(403);
+    await adminPost(`/admin/teachers/${teacherId}/reset-password`)
+      .send({ password: 'short' })
+      .expect(400);
+    await adminPost(`/admin/teachers/missing-${suffix}/reset-password`)
+      .send({ password: 'new-password-123' })
+      .expect(404);
+    await adminPost(`/admin/teachers/${teacherId}/reset-password`)
+      .send({ password: 'new-password-123' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get('/auth/teacher/me')
+      .set('Authorization', `Bearer ${teacherToken}`)
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/auth/teacher/login')
+      .send({ username, password })
+      .expect(401);
+    const login = await request(app.getHttpServer())
+      .post('/auth/teacher/login')
+      .send({ username, password: 'new-password-123' })
+      .expect(201);
+    teacherToken = login.body.token;
+  });
+
   it('keeps directory totals and ownership filters correct with multiple students', async () => {
     const classroom = await request(app.getHttpServer())
       .post('/classes')
