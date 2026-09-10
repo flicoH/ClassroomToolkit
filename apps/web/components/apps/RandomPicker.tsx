@@ -149,9 +149,9 @@ export function RandomPicker() {
   const spotlightStudent = pickedStudents[0] ?? previewStudent;
 
   return (
-    <div className="flex min-h-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <aside className="w-[220px] shrink-0 border-r border-slate-200 bg-white/90 p-4 dark:border-slate-800 dark:bg-slate-900/90">
-        <div className="mb-5 flex items-center gap-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:flex-row">
+      <aside className="flex max-h-[34dvh] min-h-0 w-full shrink-0 flex-col border-b border-slate-200 bg-white/90 p-3 dark:border-slate-800 dark:bg-slate-900/90 md:h-full md:max-h-none md:w-[220px] md:border-b-0 md:border-r md:p-4">
+        <div className="mb-3 flex shrink-0 items-center gap-3 md:mb-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white">
             <Shuffle className="h-5 w-5" />
           </div>
@@ -161,14 +161,14 @@ export function RandomPicker() {
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="flex min-h-0 gap-2 overflow-x-auto pb-1 md:block md:space-y-2 md:overflow-x-visible md:overflow-y-auto md:pb-0">
           {classes.map(classGroup => (
             <button
               key={classGroup.id}
               onClick={() => handleClassChange(classGroup.id)}
               disabled={isRolling}
               className={cn(
-                "w-full rounded-xl border p-3 text-left transition",
+                "w-[160px] shrink-0 rounded-xl border p-3 text-left transition md:w-full",
                 activeClassId === classGroup.id
                   ? "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
                   : "border-transparent hover:bg-slate-50 dark:hover:bg-slate-800"
@@ -183,9 +183,9 @@ export function RandomPicker() {
           ))}
         </div>
 
-        <div className="mt-6">
+        <div className="mt-3 shrink-0 md:mt-6">
           <div className="mb-2 text-xs font-bold text-slate-500">抽取人数</div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-4 gap-2 md:grid-cols-2">
             {availableCounts.map(count => (
               <button
                 key={count}
@@ -205,19 +205,19 @@ export function RandomPicker() {
         </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-6 sm:py-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold">{activeClass.name}</h1>
               <p className="text-sm text-slate-400">从 {activeClass.students.length} 名学生中随机抽取</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex w-full gap-2 sm:w-auto">
               <Button variant="outline" onClick={reset}>
                 <RotateCcw className="h-4 w-4" />
                 重置
               </Button>
-              <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={startRolling}>
+              <Button className="flex-1 bg-blue-600 font-bold hover:bg-blue-700 sm:flex-none" onClick={startRolling}>
                 <Play className="h-4 w-4" />
                 {isRolling ? "停止" : "开始点名"}
               </Button>
@@ -225,8 +225,8 @@ export function RandomPicker() {
           </div>
         </header>
 
-        <main className="grid flex-1 grid-cols-1 gap-5 overflow-auto p-6 lg:grid-cols-[1fr_260px]">
-          <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl bg-white p-6 shadow-sm dark:bg-slate-900">
+        <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-auto p-4 sm:p-6 lg:grid-cols-[1fr_260px]">
+          <div className="flex min-h-[360px] flex-col items-center justify-center rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900 sm:min-h-[420px] sm:p-6">
             <div
               className={cn(
                 "relative flex h-44 w-44 items-center justify-center rounded-full bg-blue-50 text-6xl font-black text-blue-700 transition-all duration-200 dark:bg-blue-950 dark:text-blue-300",
@@ -237,7 +237,7 @@ export function RandomPicker() {
               {spotlightStudent ? getInitial(spotlightStudent.name) : "?"}
             </div>
             <div className="mt-7 text-center">
-              <div className="text-4xl font-black tracking-wide">
+              <div className="text-3xl font-black tracking-wide sm:text-4xl">
                 {spotlightStudent ? spotlightStudent.name : "准备点名"}
               </div>
               <div className="mt-2 text-sm font-semibold text-slate-400">
@@ -259,7 +259,7 @@ export function RandomPicker() {
             )}
           </div>
 
-          <aside className="rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900">
+          <aside className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900 sm:p-5">
             <div className="mb-4 flex items-center gap-2 font-bold">
               <History className="h-5 w-5 text-blue-600" />
               点名记录

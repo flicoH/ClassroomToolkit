@@ -20,11 +20,11 @@ export function Taskbar() {
   if (minimizedWindows.length === 0) return null;
 
   return (
-    <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[60] flex gap-1 px-2 py-1 rounded-t-lg bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border border-b-0 border-white/30 dark:border-white/10">
+    <div className="absolute inset-x-2 bottom-10 z-[60] flex gap-1 overflow-x-auto rounded-t-lg border border-b-0 border-white/30 bg-white/70 px-2 py-1 backdrop-blur-md dark:border-white/10 dark:bg-slate-800/70 sm:left-1/2 sm:right-auto sm:max-w-[calc(100vw-32px)] sm:-translate-x-1/2">
       {minimizedWindows.map(win => (
         <button
           key={win.id}
-          className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium hover:bg-black/10 dark:hover:bg-white/10 transition-colors max-w-[160px]"
+          className="flex max-w-[160px] shrink-0 items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors hover:bg-black/10 dark:hover:bg-white/10"
           onClick={() => restoreWindow(win.id)}
         >
           <span className="truncate">{win.title}</span>

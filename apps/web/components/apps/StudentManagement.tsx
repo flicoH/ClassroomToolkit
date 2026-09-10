@@ -445,9 +445,9 @@ export function StudentManagement() {
 
   return (
     <>
-      <div className="flex h-full min-h-0 overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-        <aside className="flex h-full min-h-0 w-[230px] shrink-0 flex-col border-r border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
-          <div className="mb-6 flex shrink-0 items-center justify-between">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:flex-row">
+        <aside className="flex max-h-[38dvh] min-h-0 w-full shrink-0 flex-col border-b border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/80 md:h-full md:max-h-none md:w-[230px] md:border-b-0 md:border-r md:p-4">
+          <div className="mb-3 flex shrink-0 items-center justify-between md:mb-6">
             <span className="text-sm font-bold text-slate-500 dark:text-slate-400">我的班级</span>
             <Button
               size="icon"
@@ -460,12 +460,12 @@ export function StudentManagement() {
             </Button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          <div className="flex min-h-0 flex-1 gap-2 overflow-x-auto pb-1 md:block md:space-y-2 md:overflow-x-visible md:overflow-y-auto md:pr-1">
             {displayClasses.map(classRoom => (
               <div
                 key={classRoom.id}
                 className={cn(
-                  "relative w-full rounded-xl border p-4 text-left transition",
+                  "relative w-[170px] shrink-0 rounded-xl border p-3 text-left transition md:w-full md:p-4",
                   activeClassId === classRoom.id
                     ? "border-blue-100 bg-blue-50 text-blue-700 shadow-sm dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
                     : "border-transparent hover:bg-slate-50 dark:hover:bg-slate-800"
@@ -506,7 +506,7 @@ export function StudentManagement() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="shrink-0 border-b border-slate-200 bg-white/90 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/90">
+          <header className="shrink-0 border-b border-slate-200 bg-white/90 px-4 py-4 dark:border-slate-800 dark:bg-slate-900/90 sm:px-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
@@ -518,7 +518,7 @@ export function StudentManagement() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full gap-2 overflow-x-auto pb-1 [&>button]:shrink-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
                 <Button variant="outline" onClick={() => setSortAsc(current => !current)}>
                   <ArrowDownUp className="h-4 w-4" />
                   学号排序
@@ -547,7 +547,7 @@ export function StudentManagement() {
               </div>
             </div>
 
-            <div className="relative mt-4 max-w-sm">
+            <div className="relative mt-4 w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
               <Input
                 value={query}
@@ -563,7 +563,7 @@ export function StudentManagement() {
             )}
           </header>
 
-          <main className="grid min-h-0 flex-1 auto-rows-max grid-cols-1 content-start items-start gap-2 overflow-y-auto p-3 pb-10 md:grid-cols-2 xl:grid-cols-3">
+          <main className="grid min-h-0 flex-1 auto-rows-max grid-cols-1 content-start items-start gap-2 overflow-y-auto p-3 pb-10 sm:grid-cols-2 xl:grid-cols-3">
             {visibleStudents.map(student => (
               <article
                 key={student.id}
@@ -612,10 +612,10 @@ export function StudentManagement() {
         </section>
 
         {modal && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-6 backdrop-blur-sm">
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-3 backdrop-blur-sm sm:p-6">
             <div
               className={cn(
-                "w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900",
+                "max-h-[calc(100dvh-72px)] w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900",
                 modal === "groups" ? "max-w-[920px]" : "max-w-[640px]"
               )}
             >
@@ -749,7 +749,7 @@ function StudentModal({
   return (
     <>
       <ModalHeader title={title} onClose={onClose} />
-      <div className="space-y-5 p-7">
+      <div className="space-y-5 p-5 sm:p-7">
         <label className="block space-y-2">
           <span className="text-sm font-bold">姓名 *</span>
           <Input value={name} onChange={event => onNameChange(event.target.value)} placeholder="请输入姓名" />
@@ -806,7 +806,7 @@ function ImportModal({
   return (
     <>
       <ModalHeader title="批量导入学生" onClose={onClose} />
-      <div className="space-y-5 p-7">
+      <div className="space-y-5 p-5 sm:p-7">
         <div className="rounded-xl bg-blue-50 p-4 text-sm leading-7 text-slate-600 dark:bg-blue-950/40 dark:text-slate-300">
           <p>每行代表一名学生，格式：姓名 [学号] [性别]。</p>
           <p>例如：</p>
@@ -847,7 +847,7 @@ function ClassModal({
   return (
     <>
       <ModalHeader title={title} onClose={onClose} />
-      <div className="p-7">
+      <div className="p-5 sm:p-7">
         <label className="block space-y-2">
           <span className="text-sm font-bold">班级名称</span>
           <Input value={value} onChange={event => onChange(event.target.value)} placeholder="请输入班级名称" />
@@ -912,8 +912,8 @@ function GroupModal({
           <X className="h-4 w-4" />
         </Button>
       </div>
-      <div className="max-h-[72vh] min-h-[420px] space-y-5 overflow-y-auto p-7">
-        <div className="flex gap-2">
+      <div className="max-h-[72dvh] min-h-0 space-y-5 overflow-y-auto p-5 sm:p-7 md:min-h-[420px]">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Input
             value={value}
             onChange={event => onChange(event.target.value)}
@@ -1041,8 +1041,8 @@ function StudentGroupList({
 /** 通用弹窗头部，统一标题和关闭按钮布局。 */
 function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
   return (
-    <div className="flex items-center justify-between border-b border-slate-100 px-7 py-5 dark:border-slate-800">
-      <h2 className="text-2xl font-bold">{title}</h2>
+    <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800 sm:px-7 sm:py-5">
+      <h2 className="text-xl font-bold sm:text-2xl">{title}</h2>
       <Button size="icon" variant="ghost" aria-label="关闭" onClick={onClose}>
         <X className="h-5 w-5" />
       </Button>
@@ -1063,7 +1063,7 @@ function ModalFooter({
   disabled: boolean;
 }) {
   return (
-    <div className="flex justify-end gap-3 border-t border-slate-100 px-7 py-5 dark:border-slate-800">
+    <div className="flex justify-end gap-3 border-t border-slate-100 px-5 py-4 dark:border-slate-800 sm:px-7 sm:py-5">
       <Button variant="ghost" onClick={onClose}>
         取消
       </Button>

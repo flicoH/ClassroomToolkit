@@ -300,9 +300,9 @@ export function SeatingChart() {
 
   return (
     <>
-      <div className="flex min-h-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 lg:flex-row">
         <section className="flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900">
+          <header className="border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-6 sm:py-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
@@ -316,7 +316,7 @@ export function SeatingChart() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full gap-2 overflow-x-auto pb-1 [&>button]:shrink-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
                 {classes.map(classRoom => (
                   <Button
                     key={classRoom.id}
@@ -366,16 +366,16 @@ export function SeatingChart() {
             </div>
           </header>
 
-          <main className="flex flex-1 flex-col overflow-auto p-6">
-            <div className="mx-auto mb-6 w-[min(560px,100%)] rounded-full bg-slate-800 px-6 py-3 text-center text-sm font-bold text-white shadow-lg">
+          <main className="flex min-h-0 flex-1 flex-col overflow-auto p-3 sm:p-6">
+            <div className="mx-auto mb-4 w-[min(560px,100%)] rounded-full bg-slate-800 px-6 py-3 text-center text-sm font-bold text-white shadow-lg sm:mb-6">
               讲台
             </div>
 
-            <div className="relative mx-auto w-full max-w-[860px] rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <div className="relative mx-auto w-full max-w-[860px] overflow-x-auto rounded-2xl bg-white p-3 shadow-sm dark:bg-slate-900 sm:p-5">
               <div
-                className="grid gap-3"
+                className="grid min-w-max gap-2 sm:gap-3"
                 style={{
-                  gridTemplateColumns: `repeat(${cols}, minmax(90px, 1fr))`
+                  gridTemplateColumns: `repeat(${cols}, minmax(76px, 1fr))`
                 }}
               >
                 {loading && !chart
@@ -408,7 +408,7 @@ export function SeatingChart() {
                           }}
                           onDrop={event => moveOrSwapSeat(event, seat.id)}
                           className={cn(
-                            "min-h-[92px] rounded-xl border p-3 text-center transition",
+                            "min-h-[84px] rounded-xl border p-2 text-center transition sm:min-h-[92px] sm:p-3",
                             isSelected
                               ? "border-blue-400 bg-blue-50 shadow-md dark:border-blue-700 dark:bg-blue-950/50"
                               : student
@@ -443,12 +443,12 @@ export function SeatingChart() {
           </main>
         </section>
 
-        <aside className="w-[260px] shrink-0 border-l border-slate-200 bg-white/90 p-4 dark:border-slate-800 dark:bg-slate-900/90">
+        <aside className="max-h-[34dvh] w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white/90 p-4 dark:border-slate-800 dark:bg-slate-900/90 lg:max-h-none lg:w-[260px] lg:border-l lg:border-t-0">
           <div className="mb-4 flex items-center gap-2 font-bold">
             <Users className="h-5 w-5 text-blue-600" />
             未安排学生
           </div>
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:block lg:space-y-2">
             {unseatedStudents.map(student => (
               <button
                 key={student.id}

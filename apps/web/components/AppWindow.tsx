@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useRef, useCallback, useEffect, type ReactNode } from "react";
+import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Minus, Square, X, Copy } from "lucide-react";
 import { useWindowStore, type WindowItem } from "@/store/windowStore";
 
@@ -23,16 +23,25 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
   const { closeWindow, minimizeWindow, maximizeWindow, restoreWindow, focusWindow, updatePosition } = useWindowStore();
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const headerRef = useRef<HTMLDivElement>(null);
+  const [isCompact, setIsCompact] = useState(false);
 
   const isMaximized = win.state === "maximized";
   const isMinimized = win.state === "minimized";
   // 全屏默认打开时，prevState 也设为 maximized，需要特殊处理
   const isDefaultMaximized = isMaximized && win.prevState === "maximized";
 
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsCompact(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
   /** 标题栏按下时记录拖拽起点，移动过程由全局 mousemove 接管。 */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (isMaximized) return;
+      if (isMaximized || isCompact) return;
       e.preventDefault();
       focusWindow(win.id);
       dragRef.current = {
@@ -42,7 +51,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
         origY: win.position.y
       };
     },
-    [win.id, win.position, isMaximized, focusWindow]
+    [win.id, win.position, isMaximized, isCompact, focusWindow]
   );
 
   useEffect(() => {
@@ -72,7 +81,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
   }, [win.id, win.size.h, win.size.w, updatePosition]);
 
   useEffect(() => {
-    if (isMaximized) return;
+    if (isMaximized || isCompact) return;
     const keepWindowVisible = () => {
       const visibleWidth = Math.min(win.size.w, globalThis.innerWidth - 16);
       const visibleHeight = Math.min(win.size.h, globalThis.innerHeight - 56);
@@ -85,30 +94,38 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
     keepWindowVisible();
     globalThis.addEventListener("resize", keepWindowVisible);
     return () => globalThis.removeEventListener("resize", keepWindowVisible);
-  }, [isMaximized, updatePosition, win.id, win.position.x, win.position.y, win.size.h, win.size.w]);
+  }, [isMaximized, isCompact, updatePosition, win.id, win.position.x, win.position.y, win.size.h, win.size.w]);
 
   if (isMinimized) return null;
 
   return (
     <div
-      className="absolute flex flex-col rounded-xl overflow-hidden shadow-2xl border border-white/20 dark:border-white/10 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+      className={[
+        "absolute flex flex-col overflow-hidden border border-white/20 bg-white/90 shadow-2xl backdrop-blur-md dark:border-white/10 dark:bg-slate-900/90",
+        isCompact ? "rounded-none" : "rounded-xl"
+      ].join(" ")}
       style={
-        isMaximized
-          ? { left: 0, top: 0, width: "100%", height: "calc(100% - 40px)", zIndex: win.zIndex }
-          : {
-              left: win.position.x,
-              top: win.position.y,
-              width: `min(${win.size.w}px, calc(100% - 16px))`,
-              height: `min(${win.size.h}px, calc(100% - 56px))`,
-              zIndex: win.zIndex
-            }
+        isCompact
+          ? { left: 0, top: 0, width: "100dvw", height: "calc(100dvh - 40px)", zIndex: win.zIndex }
+          : isMaximized
+            ? { left: 0, top: 0, width: "100%", height: "calc(100% - 40px)", zIndex: win.zIndex }
+            : {
+                left: win.position.x,
+                top: win.position.y,
+                width: `min(${win.size.w}px, calc(100% - 16px))`,
+                height: `min(${win.size.h}px, calc(100% - 56px))`,
+                zIndex: win.zIndex
+              }
       }
       onMouseDown={() => focusWindow(win.id)}
     >
       {/* 标题栏负责拖拽窗口，按钮点击会阻止事件冒泡避免触发拖拽。 */}
       <div
         ref={headerRef}
-        className="flex items-center justify-between h-9 px-3 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm border-b border-white/20 dark:border-white/10 cursor-move select-none shrink-0"
+        className={[
+          "flex h-10 shrink-0 items-center justify-between border-b border-white/20 bg-white/70 px-3 backdrop-blur-sm select-none dark:border-white/10 dark:bg-slate-800/60",
+          isCompact ? "cursor-default" : "cursor-move"
+        ].join(" ")}
         onMouseDown={handleMouseDown}
       >
         <span className="text-sm font-medium truncate">{win.title}</span>
@@ -117,7 +134,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           <button
             aria-label={`最小化${win.title}`}
             title="最小化"
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+            className="hidden h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 md:flex"
             onClick={e => {
               e.stopPropagation();
               minimizeWindow(win.id);
@@ -129,7 +146,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           <button
             aria-label={`${isMaximized ? "还原" : "最大化"}${win.title}`}
             title={isMaximized ? "还原" : "最大化"}
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+            className="hidden h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 md:flex"
             onClick={e => {
               e.stopPropagation();
               if (isDefaultMaximized) {
@@ -148,7 +165,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
           <button
             aria-label={`关闭${win.title}`}
             title="关闭"
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500 hover:text-white transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-red-500 hover:text-white"
             onClick={e => {
               e.stopPropagation();
               closeWindow(win.id);

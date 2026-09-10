@@ -99,9 +99,9 @@ export default function Home() {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col">
+    <div className="fixed inset-0 flex flex-col overflow-hidden">
       {/* Function Menu Area */}
-      <div className="absolute top-10 left-0 flex-1 flex items-end px-6 pb-4">
+      <div className="absolute inset-x-0 bottom-12 top-4 overflow-y-auto px-4 pb-4 sm:bottom-auto sm:left-0 sm:right-auto sm:top-10 sm:flex sm:items-end sm:overflow-visible sm:px-6">
         <MenuBox items={menuItems} onItemClick={handleMenuClick} />
       </div>
 
@@ -116,7 +116,7 @@ export default function Home() {
       <Taskbar />
 
       {/* Bottom Bar - always visible */}
-      <div className="w-full h-10 bg-white dark:bg-slate-900/80 backdrop-blur-md border-t flex items-center px-4 absolute z-40 bottom-0">
+      <div className="absolute bottom-0 z-40 flex h-10 w-full items-center border-t bg-white px-3 backdrop-blur-md dark:bg-slate-900/80 sm:px-4">
         <button
           onClick={() => setPanelOpen(!panelOpen)}
           className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-accent transition-colors text-sm"

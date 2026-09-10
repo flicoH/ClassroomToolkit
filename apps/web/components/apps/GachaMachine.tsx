@@ -385,8 +385,8 @@ export function GachaMachine() {
       <div className="absolute inset-0 opacity-[0.18] [background-image:linear-gradient(rgba(148,163,184,0.35)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.35)_1px,transparent_1px)] [background-size:32px_32px]" />
 
       <div className="relative z-10 flex h-full min-h-0 w-full flex-col">
-        <header className="absolute inset-x-0 top-0 z-20 flex items-start justify-between px-8 py-8">
-          <div className="flex min-w-72 items-center gap-4 rounded-[28px] bg-white/92 px-6 py-5 shadow-[0_18px_50px_rgba(148,163,184,0.24)] backdrop-blur">
+        <header className="relative z-20 flex shrink-0 flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 md:absolute md:inset-x-0 md:top-0 md:px-8 md:py-8">
+          <div className="flex min-w-0 items-center gap-3 rounded-[24px] bg-white/92 px-4 py-4 shadow-[0_18px_50px_rgba(148,163,184,0.24)] backdrop-blur sm:min-w-72 sm:gap-4 sm:rounded-[28px] sm:px-6 sm:py-5">
             <div
               className={cn(
                 "flex h-14 w-14 items-center justify-center rounded-2xl text-white",
@@ -397,15 +397,17 @@ export function GachaMachine() {
             >
               {mode === "gacha" ? <Gift className="h-7 w-7" /> : <Sparkles className="h-7 w-7" />}
             </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-normal">{mode === "gacha" ? "抽奖扭蛋机" : "抽奖大转盘"}</h1>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-black tracking-normal sm:text-2xl">
+                {mode === "gacha" ? "抽奖扭蛋机" : "抽奖大转盘"}
+              </h1>
               <p className="mt-1 text-[11px] font-black uppercase tracking-[0.28em] text-slate-400">
                 {mode === "gacha" ? "Lucky Gashapon Machine" : "Lucky Lottery Wheel"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
             <div className="flex rounded-2xl bg-white/90 p-1 shadow-[0_14px_34px_rgba(148,163,184,0.22)] backdrop-blur">
               <Button
                 size="icon"
@@ -449,9 +451,9 @@ export function GachaMachine() {
           </div>
         </header>
 
-        <main className="relative flex min-h-0 flex-1 items-start justify-center overflow-hidden px-8 pb-2 pt-4">
+        <main className="relative flex min-h-0 flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-4 pb-28 pt-2 sm:px-8 md:overflow-hidden md:pb-2 md:pt-4">
           {mode === "gacha" ? (
-            <section className="relative h-[638px] w-[520px] max-w-[calc(100vw-64px)] translate-y-[300px] [zoom:0.65] md:[zoom:0.85] xl:[zoom:0.94] 2xl:[zoom:1.02]">
+            <section className="relative h-[638px] w-[520px] max-w-[calc(100vw-32px)] translate-y-8 [zoom:0.58] sm:[zoom:0.68] md:translate-y-[300px] md:[zoom:0.85] xl:[zoom:0.94] 2xl:[zoom:1.02]">
               <div className="absolute left-1/2 top-0 h-[332px] w-[332px] -translate-x-1/2 rounded-full border-[8px] border-white/90 bg-white/35 shadow-[inset_18px_18px_35px_rgba(255,255,255,0.72),inset_-20px_-24px_42px_rgba(148,163,184,0.16),0_32px_70px_rgba(148,163,184,0.22)]">
                 <div className="absolute inset-x-8 bottom-4 h-48 overflow-hidden rounded-b-full [transform:translateZ(0)]">
                   <div ref={ballBedRef} className="absolute inset-0" aria-hidden="true">
@@ -547,7 +549,7 @@ export function GachaMachine() {
               </div>
             </section>
           ) : (
-            <section className="relative flex h-[520px] w-[520px] max-w-[calc(100vw-64px)] self-center items-center justify-center [zoom:0.9] 2xl:[zoom:1]">
+            <section className="relative flex h-[520px] w-[520px] max-w-[calc(100vw-32px)] self-center items-center justify-center [zoom:0.6] sm:[zoom:0.74] md:[zoom:0.9] 2xl:[zoom:1]">
               <div className="absolute h-[500px] w-[500px] rounded-full bg-gradient-to-br from-[#ffe585] via-[#a85819] to-[#f5b83e] p-[5px] shadow-[0_34px_80px_rgba(121,72,18,0.3)]">
                 <div className="relative h-full w-full rounded-full bg-[#fffdf3] shadow-[inset_0_0_0_3px_rgba(242,184,57,0.5),inset_0_8px_18px_rgba(255,255,255,0.9)]">
                   <div
@@ -620,7 +622,7 @@ export function GachaMachine() {
           )}
 
           {(lastReward || notice || loading) && (
-            <aside className="absolute bottom-7 left-8 max-w-md rounded-3xl bg-white/82 px-5 py-4 shadow-[0_16px_42px_rgba(148,163,184,0.2)] backdrop-blur">
+            <aside className="absolute inset-x-4 bottom-4 rounded-3xl bg-white/88 px-5 py-4 shadow-[0_16px_42px_rgba(148,163,184,0.2)] backdrop-blur sm:inset-x-auto sm:left-8 sm:max-w-md">
               <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-400">RESULT</p>
               <h2 className="mt-1 text-xl font-black text-slate-900">
                 {lastReward?.name ?? (notice || "正在同步奖池数据...")}
@@ -636,7 +638,7 @@ export function GachaMachine() {
       </div>
 
       {resultOpen && lastReward && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/28 p-6 backdrop-blur-[2px]">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/28 p-4 backdrop-blur-[2px] sm:p-6">
           <section className="relative w-[min(420px,calc(100vw-48px))] overflow-hidden rounded-[28px] border border-white/90 bg-white px-8 pb-8 pt-10 text-center shadow-[0_28px_90px_rgba(15,23,42,0.22)]">
             <Button
               type="button"
@@ -692,15 +694,15 @@ export function GachaMachine() {
       )}
 
       {settingsOpen && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/18 p-8 backdrop-blur-sm">
-          <section className="grid h-[min(680px,calc(100vh-96px))] w-[min(980px,calc(100vw-96px))] grid-rows-[auto_1fr] overflow-hidden rounded-[34px] bg-white/92 shadow-[0_28px_90px_rgba(15,23,42,0.22)] backdrop-blur-xl">
-            <div className="flex items-center justify-between border-b border-slate-100/80 px-7 py-5">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/18 p-3 backdrop-blur-sm sm:p-8">
+          <section className="grid h-[min(680px,calc(100dvh-32px))] w-full grid-rows-[auto_1fr] overflow-hidden rounded-[24px] bg-white/92 shadow-[0_28px_90px_rgba(15,23,42,0.22)] backdrop-blur-xl sm:w-[min(980px,calc(100vw-96px))] sm:rounded-[34px]">
+            <div className="flex items-center justify-between border-b border-slate-100/80 px-4 py-4 sm:px-7 sm:py-5">
               <div className="flex items-center gap-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0ea5e9] text-white shadow-[0_12px_26px_rgba(14,165,233,0.28)]">
                   <Settings className="h-6 w-6" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-black">奖池设置</h2>
+                  <h2 className="text-xl font-black sm:text-2xl">奖池设置</h2>
                   <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">Reward Pool</p>
                 </div>
               </div>
@@ -726,7 +728,7 @@ export function GachaMachine() {
               </div>
             </div>
 
-            <div className="grid min-h-0 gap-5 p-5 lg:grid-cols-[330px_1fr]">
+            <div className="grid min-h-0 gap-4 overflow-y-auto p-4 sm:gap-5 sm:p-5 lg:grid-cols-[330px_1fr] lg:overflow-hidden">
               <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-slate-50/80 p-5">
                 <h3 className="mb-4 font-black">{editingId ? "编辑奖励" : "新增奖励"}</h3>
                 <div className="grid content-start gap-3">
@@ -801,7 +803,7 @@ export function GachaMachine() {
                 </div>
               </div>
 
-              <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_210px] gap-5">
+              <div className="grid min-h-0 gap-4 sm:gap-5 lg:grid-rows-[minmax(0,1fr)_210px]">
                 <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)]">
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="font-black">奖池管理</h3>

@@ -162,6 +162,7 @@ export function StickyNotes() {
   const [noteWindows, setNoteWindows] = useState<NoteWindow[]>([]);
   const [nextZIndex, setNextZIndex] = useState(30);
   const [noteDeleteId, setNoteDeleteId] = useState<string | null>(null);
+  const [isCompact, setIsCompact] = useState(false);
   const dragRef = useRef<{
     windowId: string;
     startX: number;
@@ -216,6 +217,14 @@ export function StickyNotes() {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsCompact(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   /** 提升便签浮窗层级，模拟桌面窗口聚焦。 */
@@ -300,8 +309,8 @@ export function StickyNotes() {
 
   return (
     <>
-      <div className="relative min-h-full overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-        <header className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900">
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-6 sm:py-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
@@ -312,14 +321,14 @@ export function StickyNotes() {
                 <p className="text-sm font-medium text-slate-400">记录课堂提醒和临时想法</p>
               </div>
             </div>
-            <Button className="bg-blue-600 font-bold hover:bg-blue-700" onClick={() => openNoteWindow()}>
+            <Button className="shrink-0 bg-blue-600 font-bold hover:bg-blue-700" onClick={() => openNoteWindow()}>
               <Plus className="h-4 w-4" />
               新建便签
             </Button>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-3">
-            <div className="relative min-w-[220px] flex-1">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
               <Input
                 value={query}
@@ -341,7 +350,7 @@ export function StickyNotes() {
           </div>
         </header>
 
-        <main className="grid grid-cols-1 gap-4 overflow-auto p-5 sm:grid-cols-2 xl:grid-cols-3">
+        <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-auto p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
           {filteredNotes.map(note => (
             <article
               key={note.id}
@@ -404,20 +413,32 @@ export function StickyNotes() {
         {noteWindows.map(noteWindow => (
           <div
             key={noteWindow.windowId}
-            className={cn(
-              "absolute w-[340px] overflow-hidden rounded-2xl border shadow-2xl",
-              colorStyles[noteWindow.color].card
-            )}
-            style={{
-              left: noteWindow.position.x,
-              top: noteWindow.position.y,
-              zIndex: noteWindow.zIndex
-            }}
+            className={cn("absolute overflow-hidden rounded-2xl border shadow-2xl", colorStyles[noteWindow.color].card)}
+            style={
+              isCompact
+                ? {
+                    bottom: 12,
+                    left: 12,
+                    right: 12,
+                    maxHeight: "calc(100dvh - 88px)",
+                    zIndex: noteWindow.zIndex
+                  }
+                : {
+                    left: noteWindow.position.x,
+                    top: noteWindow.position.y,
+                    width: 340,
+                    zIndex: noteWindow.zIndex
+                  }
+            }
             onMouseDown={() => focusWindow(noteWindow.windowId)}
           >
             <div
-              className="flex h-11 cursor-move items-center justify-between border-b border-black/5 bg-white/30 px-3 dark:border-white/10 dark:bg-black/10"
+              className={cn(
+                "flex h-11 items-center justify-between border-b border-black/5 bg-white/30 px-3 dark:border-white/10 dark:bg-black/10",
+                isCompact ? "cursor-default" : "cursor-move"
+              )}
               onMouseDown={event => {
+                if (isCompact) return;
                 focusWindow(noteWindow.windowId);
                 dragRef.current = {
                   windowId: noteWindow.windowId,

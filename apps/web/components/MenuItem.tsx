@@ -29,11 +29,11 @@ export function MenuItem({ data, onClick }: MenuItemProps) {
 
   return (
     <button
-      className="w-[85px] h-[85px] flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-white/20 dark:bg-black/20 backdrop-blur-md border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-black/30 active:scale-95 transition-all cursor-pointer"
+      className="flex aspect-square w-full min-w-0 max-w-[92px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border border-white/30 bg-white/20 p-2 backdrop-blur-md transition-all hover:bg-white/30 active:scale-95 dark:border-white/10 dark:bg-black/20 dark:hover:bg-black/30 sm:h-[85px] sm:w-[85px]"
       onClick={() => onClick?.(data.contentKey)}
     >
-      <Icon className="h-9 w-9 drop-shadow-md" />
-      <span className="text-xs text-white font-medium drop-shadow-md">{data.name}</span>
+      <Icon className="h-8 w-8 drop-shadow-md sm:h-9 sm:w-9" />
+      <span className="max-w-full truncate text-xs font-medium text-white drop-shadow-md">{data.name}</span>
     </button>
   );
 }

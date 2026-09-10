@@ -1093,18 +1093,18 @@ export function PetPoints() {
           {notice}
         </div>
       )}
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
+      <header className="flex shrink-0 flex-col items-stretch gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:flex-wrap lg:items-center lg:px-5">
         <div className="flex items-center gap-3 pr-2">
           <PawPrint className="h-5 w-5 text-pink-500" />
           <h2 className="text-lg font-black">宠物积分</h2>
         </div>
-        <label className="flex h-11 items-center gap-2 rounded-xl bg-slate-50 px-3 text-xl font-black hover:bg-slate-100">
+        <label className="flex h-11 min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 text-lg font-black hover:bg-slate-100 lg:text-xl">
           <span className="h-8 w-1.5 rounded-full bg-orange-500" />
           <select
             value={activeClass.id}
             onChange={event => switchClass(event.target.value)}
             disabled={!hasBackendClassrooms || studentDataLoading}
-            className="appearance-none bg-transparent pr-5 outline-none"
+            className="min-w-0 flex-1 appearance-none bg-transparent pr-5 outline-none"
             aria-label="切换班级"
           >
             {classrooms.map(classroom => (
@@ -1114,7 +1114,7 @@ export function PetPoints() {
             ))}
           </select>
         </label>
-        <div className="relative h-11 min-w-[210px] flex-1 xl:max-w-[340px]">
+        <div className="relative h-11 min-w-0 flex-1 xl:max-w-[340px]">
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <Input
             value={query}
@@ -1133,7 +1133,7 @@ export function PetPoints() {
           </Badge>
         )}
         {batchMode ? (
-          <>
+          <div className="flex w-full gap-2 overflow-x-auto pb-1 [&>*]:shrink-0 lg:w-auto lg:flex-wrap lg:overflow-visible lg:pb-0">
             <span className="rounded-xl bg-orange-50 px-4 py-3 text-sm font-black text-orange-600">
               已选 {selectedStudentIds.length} / {filteredStudents.length}
             </span>
@@ -1163,9 +1163,9 @@ export function PetPoints() {
             >
               确定评分
             </Button>
-          </>
+          </div>
         ) : (
-          <>
+          <div className="flex w-full gap-2 overflow-x-auto pb-1 [&>*]:shrink-0 lg:w-auto lg:flex-wrap lg:overflow-visible lg:pb-0">
             <label className="relative flex h-11 items-center rounded-xl border border-slate-200 bg-white pl-11 pr-3 font-bold">
               <Users className="absolute left-4 h-5 w-5 text-slate-500" />
               <select
@@ -1283,11 +1283,11 @@ export function PetPoints() {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-5 overflow-y-auto p-5 lg:grid-cols-2 2xl:grid-cols-3">
+      <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-y-auto p-4 sm:grid-cols-2 lg:gap-5 lg:p-5 2xl:grid-cols-3">
         {filteredStudents.map(student => {
           const pet = petOptions.find(item => item.id === student.petId);
           const genericEvolutionIndex = getEvolutionIndex(student.score);

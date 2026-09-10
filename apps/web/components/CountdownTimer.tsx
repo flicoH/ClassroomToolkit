@@ -482,11 +482,11 @@ export function CountdownTimer() {
   }, [setH, setM, setS, setTotalSeconds, setRemainingSeconds, setIsRunning]);
 
   return (
-    <div className="flex items-center justify-center w-full h-full select-none bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] rounded-xl relative">
+    <div className="relative flex h-full w-full select-none flex-col overflow-y-auto bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] p-5 text-white md:flex-row md:items-center md:justify-center md:gap-5 md:overflow-hidden md:rounded-xl md:p-0">
       {/* 左侧：文字 + 计时 + 按钮 */}
-      <div className="flex flex-col justify-center pr-8 pl-6 shrink-0">
+      <div className="flex shrink-0 flex-col items-center justify-center text-center md:items-start md:pl-4 md:text-left">
         <h1
-          className="text-4xl font-bold mb-3"
+          className="mb-2 text-3xl font-bold sm:text-4xl md:mb-3"
           style={{
             background: "linear-gradient(135deg,#60a5fa,#3b82f6)",
             WebkitBackgroundClip: "text",
@@ -495,31 +495,36 @@ export function CountdownTimer() {
         >
           滴水倒计
         </h1>
-        <p className="text-sm text-slate-400/80 mb-10">每一滴水落下的瞬间，都是时间的回响。</p>
+        <p className="mb-6 max-w-[18rem] text-sm leading-6 text-slate-400/80 md:mb-7">
+          每一滴水落下的瞬间，都是时间的回响。
+        </p>
 
         <div
-          className={`font-black tracking-wider leading-none mb-10 tabular-nums text-white ${totalSeconds >= 3600 ? "text-[56px]" : "text-[72px]"}`}
+          className={`mb-7 font-black leading-none tracking-wider tabular-nums text-white md:mb-8 ${totalSeconds >= 3600 ? "text-[clamp(44px,13vw,56px)]" : "text-[clamp(56px,17vw,72px)]"}`}
         >
           {formatTime(timeLeft, totalSeconds >= 3600)}
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center justify-center gap-3 md:gap-4">
           <button
             onClick={handleToggle}
-            className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-2xl shadow-lg transition-all duration-200 hover:scale-105 active:scale-95"
             style={{ background: "linear-gradient(135deg,#3b82f6,#2563eb)" }}
+            aria-label={isRunning ? "暂停倒计时" : "开始倒计时"}
           >
             {isRunning ? <Pause className="h-7 w-7 text-white" /> : <Play className="h-7 w-7 text-white ml-0.5" />}
           </button>
           <button
             onClick={handleReset}
-            className="w-14 h-14 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center backdrop-blur-sm transition-colors hover:bg-white/15 active:scale-95 cursor-pointer"
+            className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-white/10 backdrop-blur-sm transition-colors hover:bg-white/15 active:scale-95"
+            aria-label="重置倒计时"
           >
             <RotateCcw className="h-5 w-5 text-slate-300" />
           </button>
           <button
             onClick={() => setShowSettings(prev => !prev)}
-            className="w-14 h-14 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center backdrop-blur-sm transition-colors hover:bg-white/15 active:scale-95 cursor-pointer"
+            className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-white/10 backdrop-blur-sm transition-colors hover:bg-white/15 active:scale-95"
+            aria-label="设置倒计时时长"
           >
             <Settings className="h-5 w-5 text-slate-300" />
           </button>
@@ -527,7 +532,7 @@ export function CountdownTimer() {
       </div>
 
       {/* 右侧：滴水动画 */}
-      <div className="relative w-[260px] h-[420px] shrink-0 mr-4">
+      <div className="relative mx-auto mt-5 h-[min(44dvh,360px)] w-[min(68vw,240px)] shrink-0 md:mx-0 md:mt-0 md:h-[420px] md:w-[260px]">
         {/* 背景光晕 */}
         <div
           className="absolute inset-0 rounded-[28px]"
@@ -540,24 +545,25 @@ export function CountdownTimer() {
 
       {/* ====== 设置面板 ====== */}
       {showSettings && (
-        <div className="absolute inset-0 flex items-center justify-center z-50">
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm rounded-xl"
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm md:rounded-xl"
             onClick={() => setShowSettings(false)}
           />
 
-          <div className="relative bg-slate-800/95 border border-white/10 rounded-2xl p-6 shadow-2xl min-w-[300px]">
+          <div className="relative w-full max-w-[360px] rounded-2xl border border-white/10 bg-slate-800/95 p-5 shadow-2xl sm:p-6">
             <button
               onClick={() => setShowSettings(false)}
-              className="absolute top-3 right-3 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 transition-colors"
+              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10"
+              aria-label="关闭设置"
             >
               <X className="h-4 w-4 text-slate-400" />
             </button>
 
-            <h3 className="text-lg font-semibold text-white mb-5">设置倒计时时长</h3>
+            <h3 className="mb-5 text-lg font-semibold text-white">设置倒计时时长</h3>
 
             {/* 时分秒输入 */}
-            <div className="flex items-center gap-2 mb-6 justify-center">
+            <div className="mb-6 grid grid-cols-3 gap-2">
               {[
                 { value: setH, set: setSetH, max: 99, label: "时" },
                 { value: setM, set: setSetM, max: 59, label: "分" },
@@ -574,7 +580,7 @@ export function CountdownTimer() {
                       if (v >= 0 && v <= max) set(v);
                       else if (e.target.value === "") set(0);
                     }}
-                    className="w-16 h-12 text-center text-xl font-bold bg-slate-700/60 border border-white/10 rounded-xl text-white focus:outline-none focus:border-blue-400/50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    className="h-12 w-full rounded-xl border border-white/10 bg-slate-700/60 text-center text-xl font-bold text-white focus:border-blue-400/50 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
                   <span className="text-xs text-slate-400">{label}</span>
                 </div>
@@ -582,7 +588,7 @@ export function CountdownTimer() {
             </div>
 
             {/* 快捷选项 */}
-            <div className="grid grid-cols-3 gap-2 mb-5">
+            <div className="mb-5 grid grid-cols-3 gap-2">
               {[1, 3, 5, 10, 15, 30].map(min => (
                 <button
                   key={min}
@@ -593,7 +599,7 @@ export function CountdownTimer() {
                     setSetM(m);
                     setSetS(0);
                   }}
-                  className={`py-2 px-2.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  className={`cursor-pointer rounded-lg px-2.5 py-2 text-xs font-medium transition-all ${
                     (setH || 0) * 60 + setM === min && !setS
                       ? "bg-blue-500/90 text-white shadow-md shadow-blue-500/25"
                       : "bg-white/8 text-slate-300 hover:bg-white/15 border border-white/10"
@@ -608,7 +614,7 @@ export function CountdownTimer() {
             <button
               onClick={handleConfirmTime}
               disabled={(setH || 0) * 3600 + (setM || 0) * 60 + (setS || 0) <= 0}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold cursor-pointer transition-all bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+              className="w-full cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition-all hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
             >
               确认
             </button>
