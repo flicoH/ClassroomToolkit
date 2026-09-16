@@ -306,3 +306,30 @@ CREATE TABLE IF NOT EXISTS gacha_machine_draw_records (
   rarity ENUM('普通', '稀有', '史诗', '传说') NOT NULL DEFAULT '普通' COMMENT '稀有度快照',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '抽取时间'
 ) ENGINE=InnoDB COMMENT='扭蛋机抽取记录表';
+
+-- ==============================================================================================
+-- 互动白板模块：whiteboards
+-- ==============================================================================================
+
+CREATE TABLE IF NOT EXISTS whiteboard_documents (
+  id VARCHAR(64) PRIMARY KEY COMMENT '白板课件ID',
+  teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',
+  title VARCHAR(128) NOT NULL COMMENT '课件名称',
+  pages LONGTEXT NOT NULL COMMENT '页面及元素的版本化JSON数据',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
+  KEY idx_whiteboard_teacher_updated (teacher_id, updated_at)
+) ENGINE=InnoDB COMMENT='互动白板课件表';
+
+CREATE TABLE IF NOT EXISTS whiteboard_teaching_sessions (
+  id VARCHAR(64) PRIMARY KEY COMMENT '授课记录ID',
+  teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',
+  document_id VARCHAR(64) NOT NULL COMMENT '原始课件ID',
+  pages LONGTEXT NOT NULL COMMENT '授课批注后的独立页面快照',
+  started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '开始授课时间',
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '批注更新时间',
+  ended_at DATETIME(3) NULL COMMENT '结束授课时间',
+  KEY idx_whiteboard_session_document (teacher_id, document_id, started_at),
+  CONSTRAINT fk_whiteboard_session_document FOREIGN KEY (document_id)
+    REFERENCES whiteboard_documents(id) ON DELETE CASCADE
+) ENGINE=InnoDB COMMENT='白板课堂批注记录表';

@@ -46,6 +46,9 @@ export class AnalyticsInterceptor implements NestInterceptor {
     // 同一便签在固定 30 秒时间桶内的内容自动保存合并计数；跨桶仍会记录新使用。
     if (meta.mode === 'note')
       eventId = `${req.params.noteId}:${Math.floor(Date.now() / 30000)}`;
+    // 白板会自动保存；同一课件在固定 30 秒时间桶内只计一次有效使用。
+    if (meta.mode === 'whiteboard')
+      eventId = `${req.params.documentId}:${Math.floor(Date.now() / 30000)}`;
     // 只在业务成功产生结果后写入；异常流不会进入此回调，也就不会产生成功使用事件。
     return next.handle().pipe(
       mergeMap(async (result) => {

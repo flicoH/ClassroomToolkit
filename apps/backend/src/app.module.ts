@@ -15,6 +15,7 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { StudentsModule } from './students/students.module';
 import { TaskStatsModule } from './task-stats/task-stats.module';
 import { AuthModule } from './auth/auth.module';
+import { WhiteboardsModule } from './whiteboards/whiteboards.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AuthModule } from './auth/auth.module';
     StickyNotesModule,
     PetPointsModule,
     GachaMachineModule,
+    WhiteboardsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

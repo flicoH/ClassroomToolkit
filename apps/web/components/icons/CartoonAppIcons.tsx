@@ -39,6 +39,18 @@ export function CartoonCountdownIcon(props: IconProps) {
   );
 }
 
+export function CartoonWhiteboardIcon(props: IconProps) {
+  return (
+    <IconShell {...props} from="#60A5FA" to="#4F46E5">
+      <rect x="15" y="16" width="34" height="29" rx="5" fill="white" fillOpacity=".94" />
+      <path d="M22 25h20M22 32h13" stroke="#93C5FD" strokeWidth="3" strokeLinecap="round" />
+      <path d="m22 40 6-6 5 4 8-9" stroke="#4F46E5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M25 49h14" stroke="#C7D2FE" strokeWidth="4" strokeLinecap="round" />
+      <circle cx="46" cy="19" r="4" fill="#FDE68A" />
+    </IconShell>
+  );
+}
+
 export function CartoonRandomPickerIcon(props: IconProps) {
   return (
     <IconShell {...props} from="#A78BFA" to="#7C3AED">

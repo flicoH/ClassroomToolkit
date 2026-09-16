@@ -26,6 +26,7 @@ import { SeatingChart } from "@/components/apps/SeatingChart";
 import { StickyNoteQuick, StickyNotes } from "@/components/apps/StickyNotes";
 import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
+import { Whiteboard } from "@/components/apps/Whiteboard";
 import {
   CartoonCountdownIcon,
   CartoonGachaIcon,
@@ -34,10 +35,12 @@ import {
   CartoonSeatingIcon,
   CartoonStickyNoteIcon,
   CartoonStudentsIcon,
-  CartoonTaskStatsIcon
+  CartoonTaskStatsIcon,
+  CartoonWhiteboardIcon
 } from "@/components/icons/CartoonAppIcons";
 
 const menuItems: MenuItemData[] = [
+  { name: "互动白板", icon: CartoonWhiteboardIcon, contentKey: "whiteboard" },
   { name: "倒计时", icon: CartoonCountdownIcon, contentKey: "countdown" },
   { name: "随机点名", icon: CartoonRandomPickerIcon, contentKey: "randomPicker" },
   { name: "学生管理", icon: CartoonStudentsIcon, contentKey: "studentManagement" },
@@ -49,7 +52,7 @@ const menuItems: MenuItemData[] = [
 ];
 
 /** 桌面窗口内容路由：菜单只保存 contentKey，实际组件在这里集中映射。 */
-function WindowContent({ contentKey }: { contentKey: string }) {
+function WindowContent({ contentKey, onOpenTool }: { contentKey: string; onOpenTool: (contentKey: string) => void }) {
   switch (contentKey) {
     case "countdown":
       return <CountdownTimer />;
@@ -67,6 +70,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <StickyNotes />;
     case "studentManagement":
       return <StudentManagement />;
+    case "whiteboard":
+      return <Whiteboard onOpenTool={onOpenTool} />;
     default:
       if (contentKey.startsWith("stickyNoteQuick")) {
         return <StickyNoteQuick />;
@@ -98,6 +103,16 @@ export default function Home() {
     openWindow(item?.name || contentKey, contentKey);
   };
 
+  /** 白板授课工具以浮窗打开，避免计时、点名等应用遮住整个板书。 */
+  const handleWhiteboardTool = (contentKey: string) => {
+    const item = menuItems.find(menuItem => menuItem.contentKey === contentKey);
+    openWindow(item?.name || contentKey, contentKey, {
+      state: "normal",
+      prevState: "normal",
+      size: { w: 580, h: 510 }
+    });
+  };
+
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden">
       {/* Function Menu Area */}
@@ -108,7 +123,7 @@ export default function Home() {
       {/* 所有应用窗口都由 windowStore 驱动，保证层级、最小化、聚焦逻辑统一。 */}
       {windows.map(win => (
         <AppWindow key={win.id} window={win}>
-          <WindowContent contentKey={win.contentKey} />
+          <WindowContent contentKey={win.contentKey} onOpenTool={handleWhiteboardTool} />
         </AppWindow>
       ))}
 

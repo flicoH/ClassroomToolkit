@@ -100,6 +100,7 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
 
   return (
     <div
+      data-content-key={win.contentKey}
       className={[
         "absolute flex flex-col overflow-hidden border border-white/20 bg-white/90 shadow-2xl backdrop-blur-md dark:border-white/10 dark:bg-slate-900/90",
         isCompact ? "rounded-none" : "rounded-xl"

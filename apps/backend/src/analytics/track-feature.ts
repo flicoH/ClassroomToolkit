@@ -4,5 +4,5 @@ export const TRACK_FEATURE = 'trackFeature';
 export const TrackFeature = (
   feature: string,
   action: string,
-  mode?: 'countdown' | 'note',
+  mode?: 'countdown' | 'note' | 'whiteboard',
 ) => SetMetadata(TRACK_FEATURE, { feature, action, mode });

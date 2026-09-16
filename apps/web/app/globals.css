@@ -63,6 +63,23 @@ body {
   border-color: var(--color-border);
 }
 
+/* 授课模式让白板占满屏幕，同时允许随后打开的课堂工具浮在白板之上。 */
+body.whiteboard-presenting [data-content-key="whiteboard"] {
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+  z-index: 50 !important;
+}
+
+body.whiteboard-presenting [data-content-key="whiteboard"] > :first-child {
+  display: none;
+}
+
+body.whiteboard-presenting [data-content-key]:not([data-content-key="whiteboard"]) {
+  z-index: 60 !important;
+}
+
 /* 宠物蛋待机、破壳和进化动效只使用 transform/opacity，避免触发布局重排。 */
 @keyframes pet-egg-idle {
   0%,
