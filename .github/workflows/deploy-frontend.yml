@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   verify:
@@ -112,9 +113,42 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
 
+  wait-for-backend:
+    name: Wait for matching backend deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Wait for backend workflow when this commit triggered one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          backend_run_id=""
+          for _ in {1..6}; do
+            backend_run_id=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow deploy-backend.yml \
+              --commit "$GITHUB_SHA" \
+              --json databaseId \
+              --jq '.[0].databaseId // empty' \
+              --limit 1)
+            [[ -n "$backend_run_id" ]] && break
+            sleep 5
+          done
+
+          if [[ -z "$backend_run_id" ]]; then
+            echo "This commit did not trigger a backend deployment"
+            exit 0
+          fi
+
+          echo "Waiting for backend workflow run $backend_run_id"
+          gh run watch "$backend_run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --exit-status
+
   deploy:
     name: Deploy frontend
-    needs: publish
+    needs: [publish, wait-for-backend]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

@@ -103,7 +103,7 @@ fi
 
 log "Checking Web-to-Backend network route"
 backend_feedback_status=''
-for _ in {1..30}; do
+for _ in {1..6}; do
   backend_feedback_status=$(docker exec "$web_container_id" node -e "
 fetch(process.env.BACKEND_URL + '/feedback', {
   method: 'POST',
