@@ -18,8 +18,8 @@ services:
       NODE_OPTIONS: --max-old-space-size=320
       HOSTNAME: 0.0.0.0
       PORT: 3001
-      # 使用固定 Compose 项目下的唯一容器名，避免共享网络上其他 backend 别名被命中。
-      BACKEND_URL: http://classroom-backend-backend-1:3000
+      # 使用后端在共享网络上的唯一别名，不依赖 Compose 生成的容器名。
+      BACKEND_URL: http://classroom-backend-api:3000
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-auto}
     ports:
       - 127.0.0.1:${WEB_PORT:-3001}:3001
