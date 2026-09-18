@@ -8,7 +8,7 @@
 
 import type { DragEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Grid3X3, Loader2, Move, Plus, RotateCcw, Shuffle, Trash2, Users } from "lucide-react";
+import { Grid3X3, Loader2, Move, Plus, RotateCcw, Shuffle, Trash2, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import request from "@/lib/request";
@@ -62,6 +62,7 @@ export function SeatingChart() {
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
+  const [mobileSeatPickerOpen, setMobileSeatPickerOpen] = useState(false);
   const [draggingStudentId, setDraggingStudentId] = useState<string | null>(null);
   const [draggingSeatId, setDraggingSeatId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -229,6 +230,7 @@ export function SeatingChart() {
             method: "POST"
           });
           setChart(nextChart);
+          setMobileSeatPickerOpen(false);
         } finally {
           setLoading(false);
         }
@@ -253,6 +255,7 @@ export function SeatingChart() {
         data: { studentId, sourceSeatId }
       });
       setChart(nextChart);
+      setMobileSeatPickerOpen(false);
       setDraggingStudentId(null);
       setDraggingSeatId(null);
     } finally {
@@ -297,11 +300,12 @@ export function SeatingChart() {
   };
 
   const selectedSeat = seats.find(seat => seat.id === selectedSeatId);
+  const mobileAssignableStudents = students.filter(student => student.id !== selectedSeat?.studentId);
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 lg:flex-row">
-        <section className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-full flex-col bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 lg:h-full lg:min-h-0 lg:flex-row lg:overflow-hidden">
+        <section className="flex min-w-0 flex-none flex-col lg:min-h-0 lg:flex-1">
           <header className="border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-6 sm:py-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -366,7 +370,7 @@ export function SeatingChart() {
             </div>
           </header>
 
-          <main className="flex min-h-0 flex-1 flex-col overflow-auto p-3 sm:p-6">
+          <main className="flex flex-col p-3 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-auto">
             <div className="mx-auto mb-4 w-[min(560px,100%)] rounded-full bg-slate-800 px-6 py-3 text-center text-sm font-bold text-white shadow-lg sm:mb-6">
               讲台
             </div>
@@ -393,7 +397,10 @@ export function SeatingChart() {
                           key={seat.id}
                           draggable={Boolean(student) && !loading}
                           disabled={loading}
-                          onClick={() => setSelectedSeatId(seat.id)}
+                          onClick={() => {
+                            setSelectedSeatId(seat.id);
+                            setMobileSeatPickerOpen(true);
+                          }}
                           onDragStart={event => {
                             if (!student) return;
                             startStudentDrag(event, student.id, seat.id);
@@ -443,7 +450,7 @@ export function SeatingChart() {
           </main>
         </section>
 
-        <aside className="max-h-[34dvh] w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white/90 p-4 dark:border-slate-800 dark:bg-slate-900/90 lg:max-h-none lg:w-[260px] lg:border-l lg:border-t-0">
+        <aside className="w-full shrink-0 border-t border-slate-200 bg-white/90 p-4 dark:border-slate-800 dark:bg-slate-900/90 lg:max-h-none lg:w-[260px] lg:overflow-y-auto lg:border-l lg:border-t-0">
           <div className="mb-4 flex items-center gap-2 font-bold">
             <Users className="h-5 w-5 text-blue-600" />
             未安排学生
@@ -483,7 +490,8 @@ export function SeatingChart() {
               <Move className="h-4 w-4" />
               操作提示
             </div>
-            <p>点击座位后，可从右侧选择学生；也可以拖动学生到空座位。</p>
+            <p className="lg:hidden">点击座位即可打开选人面板并安排学生。</p>
+            <p className="hidden lg:block">点击座位后，可从右侧选择学生；也可以拖动学生到空座位。</p>
           </div>
 
           {selectedSeat && (
@@ -505,6 +513,94 @@ export function SeatingChart() {
           )}
         </aside>
       </div>
+
+      {mobileSeatPickerOpen && selectedSeat && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end bg-slate-950/40 backdrop-blur-[1px] lg:hidden"
+          onClick={() => setMobileSeatPickerOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-seat-picker-title"
+            className="flex max-h-[78dvh] w-full flex-col rounded-t-3xl bg-white text-slate-900 shadow-2xl dark:bg-slate-900 dark:text-slate-100"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+              <div>
+                <h2 id="mobile-seat-picker-title" className="font-bold">
+                  安排学生
+                </h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  第 {selectedSeat.row + 1} 排 · 第 {selectedSeat.col + 1} 列
+                  {selectedSeat.studentId && studentMap.get(selectedSeat.studentId)
+                    ? ` · 当前 ${studentMap.get(selectedSeat.studentId)?.name}`
+                    : " · 当前为空"}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">选择已安排学生时，将移动或交换座位</p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="关闭学生选择"
+                className="rounded-full bg-slate-100 dark:bg-slate-800"
+                onClick={() => setMobileSeatPickerOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-2 gap-2">
+                {mobileAssignableStudents.map(student => {
+                  const sourceSeat = seats.find(seat => seat.studentId === student.id);
+                  return (
+                    <button
+                      key={student.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void assignStudent(selectedSeat.id, student.id, sourceSeat?.id)}
+                      className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 dark:border-slate-800 dark:bg-slate-950"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white font-bold text-blue-700 dark:bg-slate-900 dark:text-blue-300">
+                        {getInitial(student.name)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold">{student.name}</div>
+                        <div className="truncate text-xs text-slate-400">
+                          {sourceSeat ? `第 ${sourceSeat.row + 1} 排 · 第 ${sourceSeat.col + 1} 列` : "未安排"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {mobileAssignableStudents.length === 0 && (
+                <div className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-400 dark:bg-slate-950">
+                  暂无其他学生
+                </div>
+              )}
+            </div>
+
+            {selectedSeat.studentId && (
+              <div className="border-t border-slate-100 p-4 dark:border-slate-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full text-rose-500 hover:text-rose-600"
+                  onClick={() => clearSeat(selectedSeat.id)}
+                  disabled={loading}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  清空当前座位
+                </Button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
       <ConfirmDialog
         open={Boolean(confirmAction)}
         title={confirmAction?.title ?? ""}

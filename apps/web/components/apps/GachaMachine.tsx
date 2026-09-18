@@ -728,8 +728,8 @@ export function GachaMachine() {
               </div>
             </div>
 
-            <div className="grid min-h-0 gap-4 overflow-y-auto p-4 sm:gap-5 sm:p-5 lg:grid-cols-[330px_1fr] lg:overflow-hidden">
-              <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-slate-50/80 p-5">
+            <div className="grid min-h-0 auto-rows-max content-start gap-4 overflow-y-auto p-4 sm:gap-5 sm:p-5 lg:auto-rows-fr lg:grid-cols-[330px_1fr] lg:content-stretch lg:overflow-hidden">
+              <div className="grid grid-rows-[auto_auto] rounded-[26px] bg-slate-50/80 p-5 lg:min-h-0 lg:grid-rows-[auto_1fr]">
                 <h3 className="mb-4 font-black">{editingId ? "编辑奖励" : "新增奖励"}</h3>
                 <div className="grid content-start gap-3">
                   <Input
@@ -803,8 +803,8 @@ export function GachaMachine() {
                 </div>
               </div>
 
-              <div className="grid min-h-0 gap-4 sm:gap-5 lg:grid-rows-[minmax(0,1fr)_210px]">
-                <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)]">
+              <div className="grid gap-4 sm:gap-5 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_210px]">
+                <div className="grid grid-rows-[auto_auto] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)] lg:min-h-0 lg:grid-rows-[auto_1fr]">
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="font-black">奖池管理</h3>
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-black text-slate-400">
@@ -875,7 +875,7 @@ export function GachaMachine() {
                   </div>
                 </div>
 
-                <div className="grid min-h-0 grid-rows-[auto_1fr] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)]">
+                <div className="grid grid-rows-[auto_auto] rounded-[26px] bg-white p-5 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.9)] lg:min-h-0 lg:grid-rows-[auto_1fr]">
                   <div className="mb-4 flex items-center gap-2">
                     <History className="h-5 w-5 text-[#0ea5e9]" />
                     <h3 className="font-black">最近抽取</h3>
