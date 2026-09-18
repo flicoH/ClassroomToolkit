@@ -44,6 +44,11 @@ const router = createRouter({
       component: () => import('../views/DirectoryView.vue'),
       meta: { title: '班级管理' },
     },
+    {
+      path: '/feedback',
+      component: () => import('../views/FeedbackView.vue'),
+      meta: { title: '意见反馈' },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

@@ -8,4 +8,5 @@ export const FEATURES: Record<string, string> = {
   'sticky-notes': '便签',
   'pet-points': '宠物积分',
   'gacha-machine': '扭蛋机',
+  feedback: '意见反馈',
 };

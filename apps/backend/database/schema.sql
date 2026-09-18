@@ -212,6 +212,21 @@ CREATE TABLE IF NOT EXISTS sticky_notes_notes (
 ) ENGINE=InnoDB COMMENT='便签表';
 
 -- ==============================================================================================
+-- 意见反馈模块：feedback
+-- ==============================================================================================
+
+CREATE TABLE IF NOT EXISTS teacher_feedback (
+  id VARCHAR(64) PRIMARY KEY COMMENT '意见ID',
+  teacher_id VARCHAR(64) NOT NULL COMMENT '提交教师ID',
+  content TEXT NOT NULL COMMENT '意见内容',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '提交时间',
+  INDEX idx_teacher_feedback_created (created_at),
+  INDEX idx_teacher_feedback_teacher (teacher_id, created_at),
+  CONSTRAINT fk_teacher_feedback_teacher
+    FOREIGN KEY (teacher_id) REFERENCES teacher_auth_teachers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师意见反馈表';
+
+-- ==============================================================================================
 -- 宠物积分模块：pet-points
 -- ==============================================================================================
 

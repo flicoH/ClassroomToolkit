@@ -13,6 +13,7 @@ const links = [
   { path: '/teachers', label: '教师管理', icon: '人' },
   { path: '/students', label: '学生档案', icon: '册' },
   { path: '/classrooms', label: '班级管理', icon: '班' },
+  { path: '/feedback', label: '意见反馈', icon: '言' },
 ]
 async function logout() {
   try {

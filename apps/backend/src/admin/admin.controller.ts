@@ -40,6 +40,10 @@ export class AdminController {
   @Get('classrooms') classrooms(@Query(AdminQueryPipe) q: AdminQueryDto) {
     return this.service.list('classrooms', q);
   }
+  /** 分页查看教师提交的意见，支持按教师或意见内容搜索。 */
+  @Get('feedback') feedback(@Query(AdminQueryPipe) q: AdminQueryDto) {
+    return this.service.feedback(q);
+  }
   /** 获取所选日期范围内的新增及累计教师注册趋势。 */
   @Get('analytics/registrations') registrations(
     @Query(AdminQueryPipe) q: AdminQueryDto,

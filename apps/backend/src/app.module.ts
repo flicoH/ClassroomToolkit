@@ -15,6 +15,7 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { StudentsModule } from './students/students.module';
 import { TaskStatsModule } from './task-stats/task-stats.module';
 import { AuthModule } from './auth/auth.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { AuthModule } from './auth/auth.module';
     AnalyticsModule,
     AdminModule,
     AuthModule,
+    FeedbackModule,
     StudentsModule,
     TaskStatsModule,
     SeatingChartModule,

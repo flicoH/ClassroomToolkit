@@ -17,7 +17,7 @@ import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
 import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
-import { GraduationCap } from "lucide-react";
+import { GraduationCap, MessageSquareHeart } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
 import { GachaMachine } from "@/components/apps/GachaMachine";
 import { RandomPicker } from "@/components/apps/RandomPicker";
@@ -26,6 +26,7 @@ import { SeatingChart } from "@/components/apps/SeatingChart";
 import { StickyNoteQuick, StickyNotes } from "@/components/apps/StickyNotes";
 import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
+import { Feedback } from "@/components/apps/Feedback";
 import {
   CartoonCountdownIcon,
   CartoonGachaIcon,
@@ -45,7 +46,8 @@ const menuItems: MenuItemData[] = [
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
-  { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" }
+  { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
+  { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
 ];
 
 /** 桌面窗口内容路由：菜单只保存 contentKey，实际组件在这里集中映射。 */
@@ -67,6 +69,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <StickyNotes />;
     case "studentManagement":
       return <StudentManagement />;
+    case "feedback":
+      return <Feedback />;
     default:
       if (contentKey.startsWith("stickyNoteQuick")) {
         return <StickyNoteQuick />;
