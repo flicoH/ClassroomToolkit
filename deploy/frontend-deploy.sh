@@ -101,6 +101,20 @@ if [[ "$admin_image" != "$expected_admin_image" ]]; then
   exit 1
 fi
 
+log "Checking Web-to-Backend feedback route"
+feedback_proxy_status=$(docker exec "$web_container_id" node -e "
+fetch('http://127.0.0.1:3001/api/feedback', {
+  method: 'POST',
+  headers: { cookie: 'auth_token=invalid-deploy-route-probe' },
+})
+  .then((response) => { console.log(response.status); })
+  .catch(() => { process.exit(1); });
+")
+if [[ "$feedback_proxy_status" != "401" ]]; then
+  log "Web feedback proxy smoke check failed: expected 401, got $feedback_proxy_status"
+  exit 1
+fi
+
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
 log "Frontend deployment complete: $(git rev-parse --short HEAD)"

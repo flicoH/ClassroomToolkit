@@ -110,6 +110,17 @@ if [[ "$reset_route_status" != "403" ]]; then
   exit 1
 fi
 
+log "Checking teacher feedback route"
+feedback_route_status=$(docker exec "$backend_container_id" node -e "
+fetch('http://127.0.0.1:3000/feedback', { method: 'POST' })
+  .then((response) => { console.log(response.status); })
+  .catch(() => { process.exit(1); });
+")
+if [[ "$feedback_route_status" != "401" ]]; then
+  log "Teacher feedback route smoke check failed: expected 401, got $feedback_route_status"
+  exit 1
+fi
+
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
 log "Backend deployment complete: $(git rev-parse --short HEAD)"

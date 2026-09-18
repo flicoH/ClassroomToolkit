@@ -94,7 +94,7 @@ services:
     logging: *default-logging
     networks:
       classroom_internal:
-        aliases: [backend]
+        aliases: [classroom-backend-api]
 
 networks:
   classroom_internal:
