@@ -1,6 +1,63 @@
 import { PetPointsService } from './pet-points.service';
 
 describe('PetPointsService', () => {
+  it('creates server-side default rubrics and rewards for a teacher without configuration', async () => {
+    const database = {
+      findRubrics: jest.fn().mockResolvedValue([]),
+      findRewards: jest.fn().mockResolvedValue([]),
+      findStudents: jest.fn().mockResolvedValue([]),
+      findRecords: jest.fn().mockResolvedValue([]),
+      findRedemptions: jest.fn().mockResolvedValue([]),
+      createRubric: jest.fn().mockImplementation(async (rubric) => rubric),
+      createReward: jest.fn().mockImplementation(async (reward) => reward),
+    };
+    const service = new PetPointsService(database as never);
+
+    const overview = await service.overview();
+
+    expect(overview.rubrics).toHaveLength(7);
+    expect(overview.rewards).toHaveLength(4);
+    expect(database.createRubric).toHaveBeenCalledWith(
+      expect.objectContaining({ category: '课堂表现', label: '积极发言' }),
+    );
+    expect(database.createRubric).toHaveBeenCalledWith(
+      expect.objectContaining({ category: '纪律常规', label: '迟到早退' }),
+    );
+  });
+
+  it('updates a teacher rubric category and score on the server', async () => {
+    const rubric = {
+      id: 'rubric-1',
+      category: '课堂表现' as const,
+      label: '认真听讲',
+      score: 1,
+      enabled: true,
+    };
+    const database = {
+      findRubricById: jest.fn().mockResolvedValue(rubric),
+      updateRubric: jest.fn().mockImplementation(async (_rubricId, patch) => ({
+        ...rubric,
+        ...patch,
+      })),
+    };
+    const service = new PetPointsService(database as never);
+
+    await service.updateRubric('rubric-1', {
+      category: '品德修养',
+      label: ' 主动帮助同学 ',
+      score: 20,
+    });
+
+    expect(database.updateRubric).toHaveBeenCalledWith(
+      'rubric-1',
+      expect.objectContaining({
+        category: '品德修养',
+        label: '主动帮助同学',
+        score: 10,
+      }),
+    );
+  });
+
   it('syncs classroom students into pet points while preserving existing score state', async () => {
     const existing = {
       id: '2026001',

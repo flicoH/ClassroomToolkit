@@ -151,6 +151,25 @@ export class PetPointsDatabase {
     );
   }
 
+  /** 查询当前教师名下的单个评价指标。 */
+  async findRubricById(rubricId: string) {
+    const row = await this.rubrics.findOne({
+      where: { id: rubricId, teacherId: this.teacherContext.teacherId },
+    });
+    return row ? this.toRubric(row) : undefined;
+  }
+
+  /** 局部更新当前教师名下的评价指标。 */
+  async updateRubric(rubricId: string, patch: Partial<RubricItem>) {
+    const current = await this.rubrics.findOne({
+      where: { id: rubricId, teacherId: this.teacherContext.teacherId },
+    });
+    if (!current) return undefined;
+    return this.toRubric(
+      await this.rubrics.save(this.rubrics.merge(current, patch)),
+    );
+  }
+
   /** 查询兑换奖品列表。 */
   async findRewards() {
     return (

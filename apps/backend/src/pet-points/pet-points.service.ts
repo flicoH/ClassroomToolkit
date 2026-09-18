@@ -11,12 +11,28 @@ import {
   CreateRubricDto,
   RedeemRewardDto,
   SyncPetClassDto,
+  UpdateRubricDto,
 } from './pet-points.dto';
 import { PetPointsDatabase } from './pet-points.database';
 import { PetStage, StudentPet } from './pet-points.types';
 
 const stages: PetStage[] = ['初始形态', '成长形态', '进阶形态', '终极形态'];
 const petEvolutionThresholds = [4, 10, 18, 26] as const;
+const defaultRubrics: CreateRubricDto[] = [
+  { category: '课堂表现', label: '积极发言', score: 2 },
+  { category: '课堂表现', label: '认真听讲', score: 1 },
+  { category: '作业情况', label: '按时交作业', score: 3 },
+  { category: '作业情况', label: '作业优秀', score: 2 },
+  { category: '品德修养', label: '乐于助人', score: 5 },
+  { category: '纪律常规', label: '扰乱课堂', score: -2 },
+  { category: '纪律常规', label: '迟到早退', score: -1 },
+];
+const defaultRewards: CreateRewardDto[] = [
+  { name: '星星贴纸', cost: 5, stock: 12 },
+  { name: '作业免写卡', cost: 12, stock: 6 },
+  { name: '座位优先选择', cost: 18, stock: 4 },
+  { name: '惊喜盲盒', cost: 25, stock: 3 },
+];
 
 @Injectable()
 export class PetPointsService {
@@ -24,10 +40,22 @@ export class PetPointsService {
 
   /** 汇总宠物积分首页需要的所有数据。 */
   async overview() {
+    let rubrics = await this.database.findRubrics();
+    if (!rubrics.length) {
+      rubrics = await Promise.all(
+        defaultRubrics.map((rubric) => this.createRubric(rubric)),
+      );
+    }
+    let rewards = await this.database.findRewards();
+    if (!rewards.length) {
+      rewards = await Promise.all(
+        defaultRewards.map((reward) => this.createReward(reward)),
+      );
+    }
     return {
       students: await this.database.findStudents(),
-      rubrics: await this.database.findRubrics(),
-      rewards: await this.database.findRewards(),
+      rubrics,
+      rewards,
       records: await this.database.findRecords(),
       redemptions: await this.database.findRedemptions(),
     };
@@ -139,6 +167,24 @@ export class PetPointsService {
       id: createEntityId('rubric'),
       ...dto,
       enabled: true,
+    });
+  }
+
+  /** 更新当前教师的评价指标，允许调整名称、分类、分值和启用状态。 */
+  async updateRubric(rubricId: string, dto: UpdateRubricDto) {
+    const current = await this.database.findRubricById(rubricId);
+    if (!current) throw new NotFoundException('评价指标不存在');
+    const label = dto.label?.trim();
+    if (dto.label !== undefined && !label)
+      throw new BadRequestException('指标名称不能为空');
+    return this.database.updateRubric(rubricId, {
+      category: dto.category,
+      label,
+      score:
+        dto.score === undefined
+          ? undefined
+          : Math.max(-10, Math.min(10, Math.round(dto.score))),
+      enabled: dto.enabled,
     });
   }
 

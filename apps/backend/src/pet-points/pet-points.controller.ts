@@ -15,6 +15,7 @@ import {
   CreateRubricDto,
   RedeemRewardDto,
   SyncPetClassDto,
+  UpdateRubricDto,
 } from './pet-points.dto';
 import { PetPointsService } from './pet-points.service';
 
@@ -51,6 +52,15 @@ export class PetPointsController {
   @Post('rubrics')
   createRubric(@Body() dto: CreateRubricDto) {
     return this.petPointsService.createRubric(dto);
+  }
+
+  /** 更新评价指标。 */
+  @Patch('rubrics/:rubricId')
+  updateRubric(
+    @Param('rubricId') rubricId: string,
+    @Body() dto: UpdateRubricDto,
+  ) {
+    return this.petPointsService.updateRubric(rubricId, dto);
   }
 
   /** 创建积分兑换奖品。 */

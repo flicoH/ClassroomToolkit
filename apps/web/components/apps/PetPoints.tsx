@@ -25,6 +25,7 @@ import {
   Medal,
   Minus,
   PawPrint,
+  Pencil,
   Plus,
   RotateCcw,
   Save,
@@ -154,23 +155,6 @@ const fallbackClassrooms: Classroom[] = [
   { id: "grade-3", name: "三年级", groups: ["一组"], students: [] }
 ];
 const evaluationCategories: EvaluationCategory[] = ["课堂表现", "作业情况", "品德修养", "纪律常规"];
-
-const initialRubrics: RubricItem[] = [
-  { id: "class-speaking", category: "课堂表现", label: "积极发言", score: 2, enabled: true },
-  { id: "class-listening", category: "课堂表现", label: "认真听讲", score: 1, enabled: true },
-  { id: "homework-on-time", category: "作业情况", label: "按时交作业", score: 3, enabled: true },
-  { id: "homework-excellent", category: "作业情况", label: "作业优秀", score: 2, enabled: true },
-  { id: "character-helpful", category: "品德修养", label: "乐于助人", score: 5, enabled: true },
-  { id: "discipline-disrupt", category: "纪律常规", label: "扰乱课堂", score: -2, enabled: true },
-  { id: "discipline-late", category: "纪律常规", label: "迟到早退", score: -1, enabled: true }
-];
-
-const initialRewards: RewardItem[] = [
-  { id: "reward-sticker", name: "星星贴纸", cost: 5, stock: 12, enabled: true },
-  { id: "reward-homework-pass", name: "作业免写卡", cost: 12, stock: 6, enabled: true },
-  { id: "reward-seat-choice", name: "座位优先选择", cost: 18, stock: 4, enabled: true },
-  { id: "reward-mystery-box", name: "惊喜盲盒", cost: 25, stock: 3, enabled: true }
-];
 
 const families: PetFamily[] = ["图鉴", "萌芽系", "焰岩系", "潮汐系", "星辉系"];
 const evolutionThresholds = [0, 8, 16, 24] as const;
@@ -537,8 +521,8 @@ export function PetPoints() {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
   const [records, setRecords] = useState<EvaluationRecord[]>([]);
-  const [rubrics, setRubrics] = useState<RubricItem[]>(initialRubrics);
-  const [rewards, setRewards] = useState<RewardItem[]>(initialRewards);
+  const [rubrics, setRubrics] = useState<RubricItem[]>([]);
+  const [rewards, setRewards] = useState<RewardItem[]>([]);
   const [redemptions, setRedemptions] = useState<RedemptionRecord[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [query, setQuery] = useState("");
@@ -574,6 +558,10 @@ export function PetPoints() {
   const [newRubricLabel, setNewRubricLabel] = useState("");
   const [newRubricCategory, setNewRubricCategory] = useState<EvaluationCategory>("课堂表现");
   const [newRubricScore, setNewRubricScore] = useState(1);
+  const [editingRubricId, setEditingRubricId] = useState<string | null>(null);
+  const [editingRubricLabel, setEditingRubricLabel] = useState("");
+  const [editingRubricCategory, setEditingRubricCategory] = useState<EvaluationCategory>("课堂表现");
+  const [editingRubricScore, setEditingRubricScore] = useState(1);
   const [newRewardName, setNewRewardName] = useState("");
   const [newRewardCost, setNewRewardCost] = useState(5);
   const [newRewardStock, setNewRewardStock] = useState(1);
@@ -863,6 +851,35 @@ export function PetPoints() {
     await loadPetPointsOverview();
     setNewRubricLabel("");
     setNewRubricScore(1);
+  };
+
+  /** 将指标修改保存到服务端，并用返回值更新当前列表。 */
+  const updateRubric = async (rubricId: string, patch: Partial<Omit<RubricItem, "id">>) => {
+    const updated = await request<RubricItem, RubricItem>({
+      url: `/api/pet-points/rubrics/${rubricId}`,
+      method: "PATCH",
+      data: patch
+    });
+    setRubrics(current => current.map(rubric => (rubric.id === rubricId ? updated : rubric)));
+  };
+
+  /** 打开指标编辑状态并复制当前服务端数据作为草稿。 */
+  const editRubric = (rubric: RubricItem) => {
+    setEditingRubricId(rubric.id);
+    setEditingRubricLabel(rubric.label);
+    setEditingRubricCategory(rubric.category);
+    setEditingRubricScore(rubric.score);
+  };
+
+  /** 保存指标名称、分类和分值。 */
+  const saveRubric = async () => {
+    if (!editingRubricId || !editingRubricLabel.trim()) return;
+    await updateRubric(editingRubricId, {
+      label: editingRubricLabel.trim(),
+      category: editingRubricCategory,
+      score: Math.max(-10, Math.min(10, Math.round(editingRubricScore)))
+    });
+    setEditingRubricId(null);
   };
 
   /** 新增兑换奖品，并规范化消耗积分和库存数值。 */
@@ -2152,7 +2169,7 @@ export function PetPoints() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-black">{settingsPanel}</h3>
-                <p className="text-sm font-semibold text-slate-400">宠物积分本地配置与数据概览</p>
+                <p className="text-sm font-semibold text-slate-400">宠物积分云端配置与数据概览</p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setSettingsPanel(null)} aria-label="关闭设置">
                 <X className="h-5 w-5" />
@@ -2160,67 +2177,122 @@ export function PetPoints() {
             </div>
             {settingsPanel === "指标配置" && (
               <div className="mt-5 grid gap-3">
+                <div className="grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-[minmax(0,1fr)_150px_100px_auto] sm:items-end">
+                  <label className="grid gap-1 text-sm font-bold text-slate-600">
+                    指标名称
+                    <Input
+                      value={newRubricLabel}
+                      onChange={event => setNewRubricLabel(event.target.value)}
+                      placeholder="例如：主动整理课桌"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-sm font-bold text-slate-600">
+                    所属类型
+                    <select
+                      value={newRubricCategory}
+                      onChange={event => setNewRubricCategory(event.target.value as EvaluationCategory)}
+                      className="h-9 rounded-md border border-input bg-white px-3 text-sm"
+                    >
+                      {evaluationCategories.map(category => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-sm font-bold text-slate-600">
+                    分值
+                    <Input
+                      type="number"
+                      min={-10}
+                      max={10}
+                      value={newRubricScore}
+                      onChange={event => setNewRubricScore(Number(event.target.value))}
+                    />
+                  </label>
+                  <Button
+                    className="bg-orange-500 font-bold hover:bg-orange-600"
+                    disabled={!newRubricLabel.trim()}
+                    onClick={() => void addRubric()}
+                  >
+                    <Plus className="h-4 w-4" />
+                    新增指标
+                  </Button>
+                </div>
                 {rubrics.map(item => (
                   <div
                     key={item.id}
                     className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 p-4"
                   >
-                    <button
-                      onClick={() =>
-                        setRubrics(current =>
-                          current.map(rubric =>
-                            rubric.id === item.id ? { ...rubric, enabled: !rubric.enabled } : rubric
-                          )
-                        )
-                      }
-                      className={cn(
-                        "relative h-7 w-12 rounded-full transition",
-                        item.enabled ? "bg-emerald-500" : "bg-slate-300"
-                      )}
-                      aria-label={`${item.enabled ? "停用" : "启用"}${item.label}`}
-                    >
-                      <span
-                        className={cn(
-                          "absolute top-1 h-5 w-5 rounded-full bg-white transition",
-                          item.enabled ? "left-6" : "left-1"
-                        )}
-                      />
-                    </button>
-                    <div className="min-w-32 flex-1">
-                      <strong className="block">{item.label}</strong>
-                      <span className="text-xs font-semibold text-slate-400">{item.category}</span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() =>
-                        setRubrics(current =>
-                          current.map(rubric =>
-                            rubric.id === item.id ? { ...rubric, score: Math.max(-10, rubric.score - 1) } : rubric
-                          )
-                        )
-                      }
-                    >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <strong className={cn("w-10 text-center", item.score >= 0 ? "text-emerald-600" : "text-rose-500")}>
-                      {item.score > 0 ? `+${item.score}` : item.score}
-                    </strong>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() =>
-                        setRubrics(current =>
-                          current.map(rubric =>
-                            rubric.id === item.id ? { ...rubric, score: Math.min(10, rubric.score + 1) } : rubric
-                          )
-                        )
-                      }
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
+                    {editingRubricId === item.id ? (
+                      <>
+                        <Input
+                          value={editingRubricLabel}
+                          onChange={event => setEditingRubricLabel(event.target.value)}
+                          className="min-w-40 flex-1"
+                          aria-label="指标名称"
+                        />
+                        <select
+                          value={editingRubricCategory}
+                          onChange={event => setEditingRubricCategory(event.target.value as EvaluationCategory)}
+                          className="h-9 rounded-md border border-input bg-white px-3 text-sm"
+                          aria-label="指标所属类型"
+                        >
+                          {evaluationCategories.map(category => (
+                            <option key={category} value={category}>
+                              {category}
+                            </option>
+                          ))}
+                        </select>
+                        <Input
+                          type="number"
+                          min={-10}
+                          max={10}
+                          value={editingRubricScore}
+                          onChange={event => setEditingRubricScore(Number(event.target.value))}
+                          className="w-24"
+                          aria-label="指标分值"
+                        />
+                        <Button size="sm" disabled={!editingRubricLabel.trim()} onClick={() => void saveRubric()}>
+                          <Save className="h-4 w-4" />
+                          保存
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setEditingRubricId(null)}>
+                          取消
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => void updateRubric(item.id, { enabled: !item.enabled })}
+                          className={cn(
+                            "relative h-7 w-12 rounded-full transition",
+                            item.enabled ? "bg-emerald-500" : "bg-slate-300"
+                          )}
+                          aria-label={`${item.enabled ? "停用" : "启用"}${item.label}`}
+                        >
+                          <span
+                            className={cn(
+                              "absolute top-1 h-5 w-5 rounded-full bg-white transition",
+                              item.enabled ? "left-6" : "left-1"
+                            )}
+                          />
+                        </button>
+                        <div className="min-w-32 flex-1">
+                          <strong className="block">{item.label}</strong>
+                          <span className="text-xs font-semibold text-slate-400">{item.category}</span>
+                        </div>
+                        <strong
+                          className={cn("w-10 text-center", item.score >= 0 ? "text-emerald-600" : "text-rose-500")}
+                        >
+                          {item.score > 0 ? `+${item.score}` : item.score}
+                        </strong>
+                        <Button variant="outline" size="sm" onClick={() => editRubric(item)}>
+                          <Pencil className="h-4 w-4" />
+                          编辑
+                        </Button>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>

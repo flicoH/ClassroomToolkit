@@ -32,6 +32,13 @@ export class CreateRubricDto {
   score!: number;
 }
 
+export class UpdateRubricDto {
+  category?: EvaluationCategory;
+  label?: string;
+  score?: number;
+  enabled?: boolean;
+}
+
 export class CreateRewardDto {
   name!: string;
   cost!: number;
