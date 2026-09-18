@@ -101,7 +101,30 @@ if [[ "$admin_image" != "$expected_admin_image" ]]; then
   exit 1
 fi
 
-log "Checking Web-to-Backend feedback route"
+log "Checking Web-to-Backend network route"
+backend_feedback_status=''
+for _ in {1..30}; do
+  backend_feedback_status=$(docker exec "$web_container_id" node -e "
+fetch(process.env.BACKEND_URL + '/feedback', {
+  method: 'POST',
+  headers: {
+    authorization: 'Bearer invalid-deploy-route-probe',
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({ content: 'deploy-route-probe' }),
+})
+  .then((response) => { console.log(response.status); })
+  .catch((error) => { console.error(error); process.exit(1); });
+" || true)
+  [[ "$backend_feedback_status" == "401" ]] && break
+  sleep 5
+done
+if [[ "$backend_feedback_status" != "401" ]]; then
+  log "Backend feedback route check failed: expected 401, got ${backend_feedback_status:-connection error}"
+  exit 1
+fi
+
+log "Checking Web feedback proxy route"
 feedback_proxy_status=$(docker exec "$web_container_id" node -e "
 fetch('http://127.0.0.1:3001/api/feedback', {
   method: 'POST',
@@ -111,11 +134,14 @@ fetch('http://127.0.0.1:3001/api/feedback', {
   },
   body: JSON.stringify({ content: 'deploy-route-probe' }),
 })
-  .then((response) => { console.log(response.status); })
-  .catch(() => { process.exit(1); });
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
 ")
 if [[ "$feedback_proxy_status" != "401" ]]; then
-  log "Web feedback proxy smoke check failed: expected 401, got $feedback_proxy_status"
+  log "Web feedback proxy route check failed: expected 401, got $feedback_proxy_status"
   exit 1
 fi
 

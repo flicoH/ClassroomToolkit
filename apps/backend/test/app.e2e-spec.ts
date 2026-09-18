@@ -26,4 +26,11 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect('Hello World!');
   });
+
+  it('/feedback (POST) is registered and protected', () => {
+    return request(app.getHttpServer())
+      .post('/feedback')
+      .send({ content: 'route probe' })
+      .expect(401);
+  });
 });
