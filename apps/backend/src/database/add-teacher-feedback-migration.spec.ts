@@ -1,4 +1,4 @@
-import { AddTeacherFeedback20260918000000 } from './20260918000000-add-teacher-feedback';
+import { AddTeacherFeedback20260918000000 } from './migrations/20260918000000-add-teacher-feedback';
 
 describe('AddTeacherFeedback20260918000000', () => {
   it('skips table creation when schema.sql already created it', async () => {
@@ -29,7 +29,7 @@ describe('AddTeacherFeedback20260918000000', () => {
   it('never deletes collected feedback during a revert', async () => {
     const queryRunner = { query: jest.fn() };
 
-    await new AddTeacherFeedback20260918000000().down(queryRunner as never);
+    await new AddTeacherFeedback20260918000000().down();
 
     expect(queryRunner.query).not.toHaveBeenCalled();
   });
