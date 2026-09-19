@@ -15,8 +15,13 @@ log() {
   printf '[frontend-deploy] %s\n' "$*"
 }
 
-restore_managed_deploy_scripts() {
-  local files=(deploy/backend-deploy.sh deploy/frontend-deploy.sh)
+restore_managed_deploy_files() {
+  local files=(
+    deploy/backend-deploy.sh
+    deploy/frontend-deploy.sh
+    deploy/compose.frontend.yml
+    deploy/docker/admin.nginx.conf
+  )
   local dirty=()
 
   for file in "${files[@]}"; do
@@ -26,7 +31,7 @@ restore_managed_deploy_scripts() {
   done
 
   if (( ${#dirty[@]} > 0 )); then
-    log "Restoring local changes in managed deploy scripts: ${dirty[*]}"
+    log "Restoring local changes in managed deploy files: ${dirty[*]}"
     git checkout -- "${dirty[@]}"
   fi
 }
@@ -41,7 +46,7 @@ cd "$APP_DIR"
 log "Updating origin/$BRANCH"
 git fetch --prune origin "$BRANCH"
 git checkout "$BRANCH"
-restore_managed_deploy_scripts
+restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -82,7 +87,7 @@ log "Pulling frontend image $FRONTEND_IMAGE_TAG"
 compose pull web admin
 
 log "Starting frontend services"
-compose up -d --wait --remove-orphans --pull=never web admin
+compose up -d --wait --force-recreate --remove-orphans --pull=never web admin
 
 expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
 expected_admin_image="${IMAGE_NAMESPACE}-admin:${FRONTEND_IMAGE_TAG}"
@@ -90,6 +95,9 @@ web_container_id=$(compose ps -q web)
 admin_container_id=$(compose ps -q admin)
 web_image=$(docker inspect "$web_container_id" --format '{{.Config.Image}}')
 admin_image=$(docker inspect "$admin_container_id" --format '{{.Config.Image}}')
+expected_backend_url=http://classroom-backend-backend-1:3000
+actual_backend_url=$(docker inspect "$web_container_id" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^BACKEND_URL=//p')
 
 if [[ "$web_image" != "$expected_web_image" ]]; then
   log "Web image mismatch: expected $expected_web_image, got $web_image"
@@ -98,6 +106,11 @@ fi
 
 if [[ "$admin_image" != "$expected_admin_image" ]]; then
   log "Admin image mismatch: expected $expected_admin_image, got $admin_image"
+  exit 1
+fi
+
+if [[ "$actual_backend_url" != "$expected_backend_url" ]]; then
+  log "Web backend URL mismatch: expected $expected_backend_url, got ${actual_backend_url:-unset}"
   exit 1
 fi
 
