@@ -15,8 +15,13 @@ log() {
   printf '[backend-deploy] %s\n' "$*"
 }
 
-restore_managed_deploy_scripts() {
-  local files=(deploy/backend-deploy.sh deploy/frontend-deploy.sh)
+restore_managed_deploy_files() {
+  local files=(
+    deploy/backend-deploy.sh
+    deploy/frontend-deploy.sh
+    deploy/compose.backend.yml
+    deploy/mysql/low-memory.cnf
+  )
   local dirty=()
 
   for file in "${files[@]}"; do
@@ -26,7 +31,7 @@ restore_managed_deploy_scripts() {
   done
 
   if (( ${#dirty[@]} > 0 )); then
-    log "Restoring local changes in managed deploy scripts: ${dirty[*]}"
+    log "Restoring local changes in managed deploy files: ${dirty[*]}"
     git checkout -- "${dirty[@]}"
   fi
 }
@@ -41,7 +46,7 @@ cd "$APP_DIR"
 log "Updating origin/$BRANCH"
 git fetch --prune origin "$BRANCH"
 git checkout "$BRANCH"
-restore_managed_deploy_scripts
+restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -88,14 +93,22 @@ log "Running database migrations"
 compose --profile tools run --rm migrate
 
 log "Starting backend"
-compose up -d --wait --remove-orphans --pull=never backend
+compose up -d --wait --force-recreate --remove-orphans --pull=never backend
 
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"
 backend_container_id=$(compose ps -q backend)
 backend_image=$(docker inspect "$backend_container_id" --format '{{.Config.Image}}')
+expected_revision=${BACKEND_IMAGE_TAG#sha-}
+backend_revision=$(docker image inspect "$expected_backend_image" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 
 if [[ "$backend_image" != "$expected_backend_image" ]]; then
   log "Backend image mismatch: expected $expected_backend_image, got $backend_image"
+  exit 1
+fi
+
+if [[ "$backend_revision" != "$expected_revision" ]]; then
+  log "Backend revision mismatch: expected $expected_revision, got ${backend_revision:-unset}"
   exit 1
 fi
 
@@ -118,6 +131,17 @@ fetch('http://127.0.0.1:3000/feedback', { method: 'POST' })
 ")
 if [[ "$feedback_route_status" != "401" ]]; then
   log "Teacher feedback route smoke check failed: expected 401, got $feedback_route_status"
+  exit 1
+fi
+
+log "Checking admin feedback route"
+admin_feedback_route_status=$(docker exec "$backend_container_id" node -e "
+fetch('http://127.0.0.1:3000/admin/feedback')
+  .then((response) => { console.log(response.status); })
+  .catch(() => { process.exit(1); });
+")
+if [[ "$admin_feedback_route_status" != "401" ]]; then
+  log "Admin feedback route smoke check failed: expected 401, got $admin_feedback_route_status"
   exit 1
 fi
 

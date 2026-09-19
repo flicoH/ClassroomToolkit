@@ -133,6 +133,24 @@ fetch(process.env.BACKEND_URL + '/feedback', {
   sleep 5
 done
 if [[ "$backend_feedback_status" != "401" ]]; then
+  backend_feedback_details=$(docker exec "$web_container_id" node -e "
+const url = new URL(process.env.BACKEND_URL + '/feedback');
+const dns = require('node:dns').promises;
+Promise.all([
+  dns.lookup(url.hostname, { all: true }),
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer invalid-deploy-route-probe',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ content: 'deploy-route-probe' }),
+  }).then(async (response) => ({ status: response.status, body: await response.text() })),
+])
+  .then(([addresses, response]) => { console.log(JSON.stringify({ url: url.href, addresses, response })); })
+  .catch((error) => { console.log(JSON.stringify({ url: url.href, error: error.message })); });
+" || true)
+  log "Backend feedback diagnostics: $backend_feedback_details"
   log "Backend feedback route check failed: expected 401, got ${backend_feedback_status:-connection error}"
   exit 1
 fi
