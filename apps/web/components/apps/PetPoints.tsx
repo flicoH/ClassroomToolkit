@@ -46,7 +46,7 @@ import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 type PetFamily = "图鉴" | "萌芽系" | "焰岩系" | "潮汐系" | "星辉系";
-type PetStage = "初始形态" | "成长形态" | "进阶形态" | "终极形态";
+type PetStage = string;
 type ClassName = string;
 
 interface PetOption {
@@ -147,6 +147,7 @@ interface PetPointsOverview {
   rewards: RewardItem[];
   records: EvaluationRecord[];
   redemptions: RedemptionRecord[];
+  settings: { maxLevel: number; finalEnergy: number };
 }
 
 const fallbackClassrooms: Classroom[] = [
@@ -158,11 +159,41 @@ const evaluationCategories: EvaluationCategory[] = ["课堂表现", "作业情�
 
 const families: PetFamily[] = ["图鉴", "萌芽系", "焰岩系", "潮汐系", "星辉系"];
 const evolutionThresholds = [0, 8, 16, 24] as const;
-const evolutionStages: PetStage[] = ["初始形态", "成长形态", "进阶形态", "终极形态"];
+const formStages = [
+  "宠物蛋",
+  "幼生形态",
+  "萌发形态",
+  "成长形态",
+  "蓄能形态",
+  "进阶形态",
+  "觉醒形态",
+  "强化形态",
+  "超凡形态",
+  "终极形态"
+] as const;
 const eggStages = ["沉睡蛋", "裂纹蛋", "共鸣蛋", "待孵化"] as const;
-const hatchThreshold = 4;
-const petEvolutionThresholds = [4, 10, 18, 26] as const;
-const maxEvolutionScore = 30;
+const defaultFinalEnergy = 200;
+const maxScoreAdjustment = 200;
+const defaultMaxLevel = 10;
+
+function getPetLevel(progress: number, maxLevel: number, finalEnergy = defaultFinalEnergy) {
+  return Math.min(maxLevel, Math.floor((Math.max(0, progress) * (maxLevel - 1)) / finalEnergy) + 1);
+}
+
+function getFormIndex(level: number, maxLevel: number) {
+  return Math.round(((level - 1) * 9) / (maxLevel - 1));
+}
+
+function getNextPetThreshold(level: number, maxLevel: number, finalEnergy = defaultFinalEnergy) {
+  return level >= maxLevel ? null : Math.ceil((level * finalEnergy) / (maxLevel - 1));
+}
+
+function getPetFormName(pet: PetOption, index: number) {
+  if (index === 0) return `${pet.name}蛋`;
+  if (index === 9) return pet.evolutions[3];
+  const assetIndex = Math.min(3, Math.floor((index - 1) / 2));
+  return `${pet.evolutions[assetIndex]}·${formStages[index]}`;
+}
 
 /** 根据通用积分计算未绑定宠物蛋时的蛋阶段。 */
 function getEvolutionIndex(score: number) {
@@ -170,19 +201,6 @@ function getEvolutionIndex(score: number) {
   if (score >= evolutionThresholds[2]) return 2;
   if (score >= evolutionThresholds[1]) return 1;
   return 0;
-}
-
-/** 根据宠物成长能量计算已绑定宠物的进化阶段。 */
-function getPetEvolutionIndex(progress: number) {
-  if (progress >= petEvolutionThresholds[3]) return 3;
-  if (progress >= petEvolutionThresholds[2]) return 2;
-  if (progress >= petEvolutionThresholds[1]) return 1;
-  return 0;
-}
-
-/** 返回宠物阶段索引；未达到孵化线时返回 -1。 */
-function getPetPhase(progress: number) {
-  return progress < hatchThreshold ? -1 : getPetEvolutionIndex(progress);
 }
 
 const petOptions: PetOption[] = [
@@ -326,9 +344,10 @@ const petOptions: PetOption[] = [
 const initialStudents: StudentPet[] = [];
 
 /** 宠物卡片与详情预览共用同一套透明素材。 */
-function PetSprite({ pet, stageIndex = 0, className }: { pet: PetOption; stageIndex?: number; className?: string }) {
-  const formName = pet.evolutions[stageIndex] ?? pet.name;
-  const imageName = stageIndex === 0 ? pet.id : `${pet.id}-${stageIndex + 1}`;
+function PetSprite({ pet, stageIndex = 1, className }: { pet: PetOption; stageIndex?: number; className?: string }) {
+  const formName = getPetFormName(pet, stageIndex);
+  const assetIndex = Math.min(3, Math.floor((Math.max(stageIndex, 1) - 1) / 2));
+  const imageName = assetIndex === 0 ? pet.id : `${pet.id}-${assetIndex + 1}`;
   return (
     <div className={cn("relative aspect-square", className)} aria-label={formName}>
       <img
@@ -336,6 +355,10 @@ function PetSprite({ pet, stageIndex = 0, className }: { pet: PetOption; stageIn
         alt={formName}
         draggable={false}
         className="pointer-events-none h-full w-full select-none object-contain"
+        style={{
+          transform: `scale(${1 + stageIndex * 0.012})`,
+          filter: `saturate(${1 + stageIndex * 0.035}) hue-rotate(${stageIndex * 2}deg)`
+        }}
       />
     </div>
   );
@@ -383,7 +406,17 @@ function IncubatingEgg({ score, className }: { score: number; className?: string
 }
 
 /** 通过色相和系列标识区分每一枚已绑定的宠物蛋，避免额外露出被裁切的宠物预览。 */
-function PetEgg({ pet, progress, className }: { pet: PetOption; progress: number; className?: string }) {
+function PetEgg({
+  pet,
+  progress,
+  hatchThreshold,
+  className
+}: {
+  pet: PetOption;
+  progress: number;
+  hatchThreshold: number;
+  className?: string;
+}) {
   const hue = Array.from(pet.id).reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 280;
   const energyRatio = Math.min(1, progress / hatchThreshold);
   return (
@@ -457,18 +490,23 @@ function normalizeClassId(value: unknown, className: ClassName): string {
 }
 
 /** 规范化学生宠物字段，并根据成长值重新推导等级和阶段。 */
-function normalizeStudent(student: StudentPet): StudentPet {
+function normalizeStudent(
+  student: StudentPet,
+  maxLevel = defaultMaxLevel,
+  finalEnergy = defaultFinalEnergy
+): StudentPet {
   const petProgress = student.petProgress ?? (student.petId ? student.score : 0);
-  const petHatched = student.petHatched ?? Boolean(student.petId);
-  const evolutionIndex = getPetEvolutionIndex(petProgress);
+  const level = getPetLevel(petProgress, maxLevel, finalEnergy);
+  const petHatched = level > 1;
+  const formIndex = getFormIndex(level, maxLevel);
   return {
     ...student,
     className: normalizeClassName(student.className),
     classId: normalizeClassId(student.classId, normalizeClassName(student.className)),
     petProgress,
     petHatched,
-    level: petHatched ? evolutionIndex + 1 : 1,
-    stage: petHatched ? evolutionStages[evolutionIndex]! : "初始形态",
+    level,
+    stage: formIndex === 0 ? "初始形态" : (formStages[formIndex] ?? "终极形态"),
     absent: Boolean(student.absent),
     completedPets: student.completedPets ?? 0
   };
@@ -484,7 +522,7 @@ function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): Stu
     className: classroom.name,
     group: student.group || "未分组",
     score: 0,
-    maxScore: maxEvolutionScore,
+    maxScore: 30,
     trophies: 0,
     level: 1,
     stage: "初始形态",
@@ -518,6 +556,10 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
 /** 宠物积分主界面，串联学生筛选、批量评分、宠物选择、兑换和报表弹窗。 */
 export function PetPoints() {
   const [students, setStudents] = useState<StudentPet[]>(initialStudents);
+  const [maxPetLevel, setMaxPetLevel] = useState(defaultMaxLevel);
+  const [maxPetLevelDraft, setMaxPetLevelDraft] = useState(defaultMaxLevel);
+  const [maxPetEnergy, setMaxPetEnergy] = useState(defaultFinalEnergy);
+  const [maxPetEnergyDraft, setMaxPetEnergyDraft] = useState(defaultFinalEnergy);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
   const [records, setRecords] = useState<EvaluationRecord[]>([]);
@@ -597,12 +639,28 @@ export function PetPoints() {
   /** 从后端加载宠物积分总览，包括学生、规则、奖品、记录和兑换数据。 */
   const loadPetPointsOverview = useCallback(async () => {
     const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points");
-    setStudents(overview.students.map(normalizeStudent));
+    const nextMaxLevel = overview.settings?.maxLevel ?? defaultMaxLevel;
+    const nextFinalEnergy = overview.settings?.finalEnergy ?? defaultFinalEnergy;
+    setMaxPetLevel(nextMaxLevel);
+    setMaxPetLevelDraft(nextMaxLevel);
+    setMaxPetEnergy(nextFinalEnergy);
+    setMaxPetEnergyDraft(nextFinalEnergy);
+    setStudents(overview.students.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
     setRubrics(overview.rubrics);
     setRewards(overview.rewards);
     setRecords(overview.records);
     setRedemptions(overview.redemptions);
   }, []);
+
+  const savePetSettings = async () => {
+    await request<{ maxLevel: number }, { maxLevel: number }>({
+      url: "/api/pet-points/settings",
+      method: "PATCH",
+      data: { maxLevel: maxPetLevelDraft, finalEnergy: maxPetEnergyDraft }
+    });
+    await loadPetPointsOverview();
+    setNotice("宠物等级和能力设置已更新");
+  };
 
   /** 按当前筛选条件加载班级学生，并同步到宠物积分学生表。 */
   const requestClassroomStudents = useCallback(
@@ -824,7 +882,7 @@ export function PetPoints() {
   /** 提交手动积分调整，限制单次调整值在允许范围内。 */
   const applyScoreAdjust = (value = scoreAdjustValue, reason = scoreAdjustReason) => {
     if (!scoreAdjustStudent) return;
-    const normalizedValue = Math.max(1, Math.min(maxEvolutionScore, Math.round(Math.abs(value))));
+    const normalizedValue = Math.max(1, Math.min(maxScoreAdjustment, Math.round(Math.abs(value))));
     const delta = scoreAdjustMode === "add" ? normalizedValue : -normalizedValue;
     void updateStudentScore(
       scoreAdjustStudent.id,
@@ -1033,7 +1091,7 @@ export function PetPoints() {
               score: 0,
               level: 1,
               stage: "初始形态",
-              completedPets: item.completedPets + (item.petId && item.petProgress >= petEvolutionThresholds[3] ? 1 : 0)
+              completedPets: item.completedPets + (item.petId && item.petProgress >= maxPetEnergy ? 1 : 0)
             }
           : item
       )
@@ -1308,11 +1366,11 @@ export function PetPoints() {
         {filteredStudents.map(student => {
           const pet = petOptions.find(item => item.id === student.petId);
           const genericEvolutionIndex = getEvolutionIndex(student.score);
-          const petEvolutionIndex = getPetEvolutionIndex(student.petProgress);
-          const currentFormName = pet?.evolutions[petEvolutionIndex];
-          const nextPetThreshold = petEvolutionThresholds[petEvolutionIndex + 1];
+          const petEvolutionIndex = getFormIndex(student.level, maxPetLevel);
+          const currentFormName = pet ? getPetFormName(pet, petEvolutionIndex) : "";
+          const nextPetThreshold = getNextPetThreshold(student.level, maxPetLevel, maxPetEnergy);
           const growthValue = pet ? student.petProgress : student.score;
-          const percent = Math.round((growthValue / student.maxScore) * 100);
+          const percent = Math.min(100, Math.round((growthValue / (pet ? maxPetEnergy : student.maxScore)) * 100));
           const petEffect = petEffects[student.id];
           return (
             <section
@@ -1370,6 +1428,7 @@ export function PetPoints() {
                       key={`${pet.id}-egg-${student.petProgress}`}
                       pet={pet}
                       progress={student.petProgress}
+                      hatchThreshold={getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!}
                       className="w-40 transition duration-300 group-hover:scale-105"
                     />
                   ) : (
@@ -1394,9 +1453,7 @@ export function PetPoints() {
                       <strong className="mt-1 text-lg font-black text-slate-950">
                         {petEffect === "hatch" ? "孵化成功" : "进化成功"}
                       </strong>
-                      <span className="text-xs font-bold text-slate-500">
-                        {petEffect === "hatch" ? pet.evolutions[0] : currentFormName}
-                      </span>
+                      <span className="text-xs font-bold text-slate-500">{currentFormName}</span>
                     </div>
                   </div>
                 )}
@@ -1467,18 +1524,16 @@ export function PetPoints() {
               </div>
               <div className="mt-2 flex items-center gap-3">
                 <Badge className="bg-orange-100 text-orange-600 hover:bg-orange-100">
-                  {pet && !student.petHatched ? "孵化中" : `Lv.${student.level}`}
+                  {pet ? `Lv.${student.level}` : "未绑定"}
                 </Badge>
                 <span className="text-sm font-black text-slate-500">
-                  {pet ? (student.petHatched ? student.stage : `${pet.name}蛋`) : eggStages[genericEvolutionIndex]}
+                  {pet ? currentFormName : eggStages[genericEvolutionIndex]}
                 </span>
                 <span className={cn("ml-auto text-xs font-bold", pet ? "text-emerald-600" : "text-amber-600")}>
                   {pet
-                    ? !student.petHatched
-                      ? `再得 ${hatchThreshold - student.petProgress} 分孵化`
-                      : nextPetThreshold
-                        ? `再得 ${nextPetThreshold - student.petProgress} 分进化`
-                        : "已达终极形态"
+                    ? nextPetThreshold
+                      ? `再得 ${Math.max(0, nextPetThreshold - student.petProgress)} 能量进化`
+                      : "已达终极形态"
                     : student.score >= evolutionThresholds[3]
                       ? "能量已满，点击选择宠物蛋"
                       : `再得 ${evolutionThresholds[genericEvolutionIndex + 1]! - student.score} 分进入下一阶段`}
@@ -1852,7 +1907,12 @@ export function PetPoints() {
                           selectedPet.tone
                         )}
                       >
-                        <PetEgg pet={selectedPet} progress={0} className="w-[220px] max-w-full" />
+                        <PetEgg
+                          pet={selectedPet}
+                          progress={0}
+                          hatchThreshold={getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!}
+                          className="w-[220px] max-w-full"
+                        />
                       </div>
                       <div className="mt-5 flex items-center gap-2">
                         <h4 className="text-2xl font-black">{selectedPet.name}</h4>
@@ -1861,25 +1921,29 @@ export function PetPoints() {
                         </span>
                       </div>
                       <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{selectedPet.description}</p>
-                      <div className="mt-4 grid grid-cols-4 gap-1 rounded-xl bg-slate-50 p-2">
-                        {selectedPet.evolutions.map((formName, index) => (
-                          <div key={formName} className="min-w-0 px-1 py-2 text-center">
-                            <div
-                              className={cn(
-                                "mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black",
-                                index === 0 ? selectedPet.badge : "bg-white text-slate-400"
-                              )}
-                            >
-                              {index + 1}
+                      <div className="mt-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-50 p-2 sm:grid-cols-5">
+                        {Array.from({ length: maxPetLevel }, (_, index) => {
+                          const formIndex = getFormIndex(index + 1, maxPetLevel);
+                          const formName = getPetFormName(selectedPet, formIndex);
+                          return (
+                            <div key={formName} className="min-w-0 px-1 py-2 text-center">
+                              <div
+                                className={cn(
+                                  "mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black",
+                                  index === 0 ? selectedPet.badge : "bg-white text-slate-400"
+                                )}
+                              >
+                                {index + 1}
+                              </div>
+                              <p className="truncate text-[11px] font-black text-slate-600" title={formName}>
+                                {formName}
+                              </p>
+                              <p className="mt-0.5 text-[10px] font-bold text-slate-400">
+                                {index === 0 ? 0 : Math.ceil((index * maxPetEnergy) / (maxPetLevel - 1))} 能量
+                              </p>
                             </div>
-                            <p className="truncate text-[11px] font-black text-slate-600" title={formName}>
-                              {formName}
-                            </p>
-                            <p className="mt-0.5 text-[10px] font-bold text-slate-400">
-                              {petEvolutionThresholds[index]} 能量
-                            </p>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       <Input
                         value={petNickname}
@@ -1937,11 +2001,9 @@ export function PetPoints() {
               </div>
               <div className="rounded-xl bg-sky-50 p-4">
                 <Sparkles className="h-5 w-5 text-sky-500" />
-                <strong className="mt-3 block text-2xl">
-                  {historyStudent.petId && !historyStudent.petHatched ? "孵化中" : `Lv.${historyStudent.level}`}
-                </strong>
+                <strong className="mt-3 block text-2xl">{`Lv.${historyStudent.level}`}</strong>
                 <span className="text-sm font-bold text-sky-700">
-                  {historyStudent.petId ? `${historyStudent.petProgress}/${maxEvolutionScore} 能量` : "未绑定宠物蛋"}
+                  {historyStudent.petId ? `${historyStudent.petProgress}/${maxPetEnergy} 能量` : "未绑定宠物蛋"}
                 </span>
               </div>
             </div>
@@ -1968,21 +2030,22 @@ export function PetPoints() {
                   重置
                 </Button>
               </div>
-              <div className="mt-4 grid grid-cols-4 gap-2">
-                {evolutionStages.map((stage, index) => (
-                  <div
-                    key={stage}
-                    className={cn(
-                      "rounded-lg p-3 text-center",
-                      historyStudent.petHatched && historyStudent.level > index
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-slate-50 text-slate-300"
-                    )}
-                  >
-                    <div className="font-black">{index + 1}</div>
-                    <div className="mt-1 text-xs font-bold">{stage}</div>
-                  </div>
-                ))}
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                {Array.from({ length: maxPetLevel }, (_, index) => {
+                  const stage = formStages[getFormIndex(index + 1, maxPetLevel)];
+                  return (
+                    <div
+                      key={stage}
+                      className={cn(
+                        "rounded-lg p-3 text-center",
+                        historyStudent.level > index ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-300"
+                      )}
+                    >
+                      <div className="font-black">{index + 1}</div>
+                      <div className="mt-1 text-xs font-bold">{stage}</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
             <div className="mt-5 rounded-xl border border-slate-100 p-5">
@@ -2032,9 +2095,9 @@ export function PetPoints() {
               <h4 className="font-black">成长成就</h4>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 {[
-                  { score: 4, label: "破壳新星" },
-                  { score: 18, label: "成长伙伴" },
-                  { score: 26, label: "终极羁绊" }
+                  { score: getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!, label: "破壳新星" },
+                  { score: Math.ceil(maxPetEnergy / 2), label: "成长伙伴" },
+                  { score: maxPetEnergy, label: "终极羁绊" }
                 ].map(achievement => (
                   <div
                     key={achievement.label}
@@ -2298,19 +2361,67 @@ export function PetPoints() {
               </div>
             )}
             {settingsPanel === "等级规则" && (
-              <div className="mt-5">
+              <div className="mt-5 space-y-4">
                 <p className="rounded-xl bg-orange-50 p-4 text-sm font-bold leading-6 text-orange-800">
-                  选择宠物后会先获得对应宠物蛋，旧积分不会继承为成长能量。获得 4
-                  点新能量后孵化第一形态，随后逐级进化，最多四个形态。
+                  宠物从蛋开始成长，到 {maxPetEnergy} 点能力时达到最终形态。默认 10 级；设置较少等级时，会从 10
+                  个形态中均匀选取，始终保留蛋和最终形态。
                 </p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-4">
-                  {evolutionStages.map((stage, index) => (
-                    <div key={stage} className="rounded-xl border border-slate-100 p-4 text-center">
-                      <strong className="text-2xl text-orange-500">{petEvolutionThresholds[index]}</strong>
-                      <span className="mt-2 block text-sm font-black">{stage}</span>
-                      <span className="text-xs font-semibold text-slate-400">成长能量</span>
-                    </div>
-                  ))}
+                <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 p-4">
+                  <label className="text-sm font-bold text-slate-600">
+                    最大等级（2–10）
+                    <Input
+                      className="mt-2 w-32"
+                      type="number"
+                      min={2}
+                      max={10}
+                      value={maxPetLevelDraft}
+                      onChange={event => {
+                        const nextLevel = Math.max(2, Math.min(10, Number(event.target.value) || 2));
+                        setMaxPetLevelDraft(nextLevel);
+                        setMaxPetEnergyDraft(current => Math.max(current, nextLevel - 1));
+                      }}
+                    />
+                  </label>
+                  <label className="text-sm font-bold text-slate-600">
+                    最终能力值（至少 {maxPetLevelDraft - 1}）
+                    <Input
+                      className="mt-2 w-36"
+                      type="number"
+                      min={maxPetLevelDraft - 1}
+                      max={100000}
+                      value={maxPetEnergyDraft}
+                      onChange={event =>
+                        setMaxPetEnergyDraft(
+                          Math.max(
+                            maxPetLevelDraft - 1,
+                            Math.min(100000, Number(event.target.value) || maxPetLevelDraft - 1)
+                          )
+                        )
+                      }
+                    />
+                  </label>
+                  <Button
+                    onClick={() => void savePetSettings()}
+                    disabled={maxPetLevelDraft === maxPetLevel && maxPetEnergyDraft === maxPetEnergy}
+                  >
+                    保存设置
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  {Array.from({ length: maxPetLevel }, (_, index) => {
+                    const formIndex = getFormIndex(index + 1, maxPetLevel);
+                    return (
+                      <div key={index} className="rounded-xl border border-slate-100 p-4 text-center">
+                        <strong className="text-2xl text-orange-500">
+                          {index === 0 ? 0 : Math.ceil((index * maxPetEnergy) / (maxPetLevel - 1))}
+                        </strong>
+                        <span className="mt-2 block text-sm font-black">
+                          Lv.{index + 1} · {formStages[formIndex]}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-400">成长能量</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2321,7 +2432,7 @@ export function PetPoints() {
                   <StatTile label="待孵化" value={classStudents.length - hatchedCount} />
                   <StatTile
                     label="终极形态"
-                    value={classStudents.filter(student => student.petHatched && student.level === 4).length}
+                    value={classStudents.filter(student => student.petHatched && student.level === maxPetLevel).length}
                   />
                 </div>
                 <div className="mt-5 grid gap-2">
@@ -2408,7 +2519,7 @@ export function PetPoints() {
                 </h3>
                 <p className="mt-1 text-sm font-semibold text-slate-400">
                   当前 {scoreAdjustStudent.score}/{scoreAdjustStudent.maxScore} 分，宠物能量{" "}
-                  {scoreAdjustStudent.petProgress}/{maxEvolutionScore}
+                  {scoreAdjustStudent.petProgress}/{maxPetEnergy}
                 </p>
               </div>
               <Button variant="ghost" size="icon" onClick={closeScoreAdjust} aria-label="关闭积分调整">
@@ -2484,10 +2595,10 @@ export function PetPoints() {
                   id="score-adjust-value"
                   type="number"
                   min={1}
-                  max={maxEvolutionScore}
+                  max={maxScoreAdjustment}
                   value={scoreAdjustValue}
                   onChange={event =>
-                    setScoreAdjustValue(Math.max(1, Math.min(maxEvolutionScore, Number(event.target.value) || 1)))
+                    setScoreAdjustValue(Math.max(1, Math.min(maxScoreAdjustment, Number(event.target.value) || 1)))
                   }
                   className="h-11 flex-1 rounded-xl bg-slate-50 text-center text-xl font-black"
                 />
@@ -2495,7 +2606,7 @@ export function PetPoints() {
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 rounded-lg"
-                  onClick={() => setScoreAdjustValue(value => Math.min(maxEvolutionScore, value + 1))}
+                  onClick={() => setScoreAdjustValue(value => Math.min(maxScoreAdjustment, value + 1))}
                   aria-label="增加调整分值"
                 >
                   <Plus className="h-4 w-4" />

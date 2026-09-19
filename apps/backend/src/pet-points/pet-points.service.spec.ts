@@ -8,6 +8,9 @@ describe('PetPointsService', () => {
       findStudents: jest.fn().mockResolvedValue([]),
       findRecords: jest.fn().mockResolvedValue([]),
       findRedemptions: jest.fn().mockResolvedValue([]),
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
       createRubric: jest.fn().mockImplementation(async (rubric) => rubric),
       createReward: jest.fn().mockImplementation(async (reward) => reward),
     };
@@ -79,6 +82,9 @@ describe('PetPointsService', () => {
     const database = {
       deleteClassStudentsExcept: jest.fn().mockResolvedValue(undefined),
       findStudentForSync: jest.fn().mockResolvedValue(existing),
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
       saveStudent: jest.fn().mockImplementation(async (student) => student),
     };
     const service = new PetPointsService(database as never);
@@ -118,6 +124,58 @@ describe('PetPointsService', () => {
     expect(synced[0].score).toBe(12);
   });
 
+  it('saves the teacher final ability and recalculates existing pets', async () => {
+    const database = {
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
+      setSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 4, finalEnergy: 90 }),
+      findStudents: jest
+        .fn()
+        .mockResolvedValue([{ id: 'student-1', petProgress: 120 }]),
+      updateStudent: jest.fn().mockResolvedValue({}),
+    };
+    const service = new PetPointsService(database as never);
+    await expect(
+      service.updateSettings({ maxLevel: 4, finalEnergy: 90 }),
+    ).resolves.toEqual({
+      maxLevel: 4,
+      finalEnergy: 90,
+    });
+    expect(database.setSettings).toHaveBeenCalledWith(4, 90);
+    expect(database.updateStudent).toHaveBeenCalledWith(
+      'student-1',
+      expect.objectContaining({
+        petProgress: 90,
+        level: 4,
+        stage: '终极形态',
+      }),
+    );
+  });
+
+  it('starts a newly bound pet as an egg without inheriting old points', async () => {
+    const database = {
+      findStudentById: jest
+        .fn()
+        .mockResolvedValue({ id: 'student-1', score: 42, petProgress: 0 }),
+      updateStudent: jest.fn().mockResolvedValue({ id: 'student-1' }),
+    };
+    const service = new PetPointsService(database as never);
+
+    await service.bindPet('student-1', { petId: 'sprout-puff' });
+    expect(database.updateStudent).toHaveBeenCalledWith(
+      'student-1',
+      expect.objectContaining({
+        petId: 'sprout-puff',
+        petProgress: 0,
+        level: 1,
+        petHatched: false,
+      }),
+    );
+  });
+
   it('adjusts scores in the backend and writes evaluation records', async () => {
     const student = {
       id: '2026001',
@@ -131,6 +189,7 @@ describe('PetPointsService', () => {
       trophies: 0,
       level: 1,
       stage: '初始形态' as const,
+      petId: 'sprout-puff',
       petProgress: 0,
       petHatched: false,
       absent: false,
@@ -145,6 +204,9 @@ describe('PetPointsService', () => {
           ...patch,
         })),
       createRecord: jest.fn().mockImplementation(async (record) => record),
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
     };
     const service = new PetPointsService(database as never);
 
@@ -161,7 +223,7 @@ describe('PetPointsService', () => {
       expect.objectContaining({
         score: 8,
         petProgress: 5,
-        petHatched: true,
+        petHatched: false,
       }),
     );
     expect(database.createRecord).toHaveBeenCalledWith(
@@ -175,6 +237,41 @@ describe('PetPointsService', () => {
       }),
     );
     expect(changed[0].score).toBe(8);
+  });
+
+  it('caps final growth at 200 and records only the growth actually earned', async () => {
+    const student = {
+      id: 'student-1',
+      score: 30,
+      petId: 'sprout-puff',
+      petProgress: 195,
+    };
+    const database = {
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
+      findStudentById: jest.fn().mockResolvedValue(student),
+      updateStudent: jest
+        .fn()
+        .mockImplementation(async (_id, patch) => ({ ...student, ...patch })),
+      createRecord: jest.fn().mockResolvedValue({}),
+    };
+    const service = new PetPointsService(database as never);
+    await service.adjustScore({
+      studentIds: ['student-1'],
+      delta: 10,
+      label: '表现优秀',
+    });
+    expect(database.updateStudent).toHaveBeenCalledWith(
+      'student-1',
+      expect.objectContaining({
+        petProgress: 200,
+        level: 10,
+      }),
+    );
+    expect(database.createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ petDelta: 5 }),
+    );
   });
 
   it('deletes evaluation records through the backend and rolls student scores back', async () => {
@@ -212,6 +309,9 @@ describe('PetPointsService', () => {
         .fn()
         .mockResolvedValue({ ...student, score: 3, petProgress: 0 }),
       deleteRecord: jest.fn().mockResolvedValue(true),
+      getSettings: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
     };
     const service = new PetPointsService(database as never);
 

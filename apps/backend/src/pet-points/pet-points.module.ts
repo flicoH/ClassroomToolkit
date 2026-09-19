@@ -4,6 +4,7 @@ import { PetEvaluationRecordEntity } from './entities/pet-evaluation-record.enti
 import { PetRedemptionEntity } from './entities/pet-redemption.entity';
 import { PetRewardEntity } from './entities/pet-reward.entity';
 import { PetRubricEntity } from './entities/pet-rubric.entity';
+import { PetSettingEntity } from './entities/pet-setting.entity';
 import { PetStudentEntity } from './entities/pet-student.entity';
 import { PetPointsController } from './pet-points.controller';
 import { PetPointsDatabase } from './pet-points.database';
@@ -13,6 +14,7 @@ import { PetPointsService } from './pet-points.service';
   imports: [
     TypeOrmModule.forFeature([
       PetStudentEntity,
+      PetSettingEntity,
       PetRubricEntity,
       PetRewardEntity,
       PetEvaluationRecordEntity,

@@ -49,3 +49,8 @@ export class RedeemRewardDto {
   studentId!: string;
   rewardId!: string;
 }
+
+export class UpdatePetSettingsDto {
+  maxLevel?: number;
+  finalEnergy?: number;
+}

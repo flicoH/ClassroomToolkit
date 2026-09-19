@@ -5,6 +5,7 @@ import { PetEvaluationRecordEntity } from './entities/pet-evaluation-record.enti
 import { PetRedemptionEntity } from './entities/pet-redemption.entity';
 import { PetRewardEntity } from './entities/pet-reward.entity';
 import { PetRubricEntity } from './entities/pet-rubric.entity';
+import { PetSettingEntity } from './entities/pet-setting.entity';
 import { PetStudentEntity } from './entities/pet-student.entity';
 import {
   EvaluationRecord,
@@ -28,8 +29,29 @@ export class PetPointsDatabase {
     private readonly records: Repository<PetEvaluationRecordEntity>,
     @InjectRepository(PetRedemptionEntity)
     private readonly redemptions: Repository<PetRedemptionEntity>,
+    @InjectRepository(PetSettingEntity)
+    private readonly settings: Repository<PetSettingEntity>,
     private readonly teacherContext: TeacherContext,
   ) {}
+
+  async getSettings() {
+    const setting = await this.settings.findOneBy({
+      teacherId: this.teacherContext.teacherId,
+    });
+    return {
+      maxLevel: setting?.maxLevel ?? 10,
+      finalEnergy: setting?.finalEnergy ?? 200,
+    };
+  }
+
+  async setSettings(maxLevel: number, finalEnergy: number) {
+    await this.settings.save({
+      teacherId: this.teacherContext.teacherId,
+      maxLevel,
+      finalEnergy,
+    });
+    return { maxLevel, finalEnergy };
+  }
 
   /** 查询当前教师的宠物积分学生列表。 */
   async findStudents() {

@@ -16,6 +16,7 @@ import {
   RedeemRewardDto,
   SyncPetClassDto,
   UpdateRubricDto,
+  UpdatePetSettingsDto,
 } from './pet-points.dto';
 import { PetPointsService } from './pet-points.service';
 
@@ -27,6 +28,11 @@ export class PetPointsController {
   @Get()
   overview() {
     return this.petPointsService.overview();
+  }
+
+  @Patch('settings')
+  updateSettings(@Body() dto: UpdatePetSettingsDto) {
+    return this.petPointsService.updateSettings(dto);
   }
 
   /** 调整学生积分并记录评价。 */

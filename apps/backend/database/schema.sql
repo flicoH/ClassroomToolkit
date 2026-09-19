@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS pet_points_students (
   max_score INT NOT NULL DEFAULT 30 COMMENT '最高成长积分',
   trophies INT NOT NULL DEFAULT 0 COMMENT '奖杯数',
   level_num INT NOT NULL DEFAULT 1 COMMENT '等级',
-  stage ENUM('初始形态', '成长形态', '进阶形态', '终极形态') NOT NULL DEFAULT '初始形态' COMMENT '成长阶段',
+  stage VARCHAR(32) NOT NULL DEFAULT '初始形态' COMMENT '成长阶段',
   pet_id VARCHAR(64) NULL COMMENT '绑定宠物ID',
   pet_name VARCHAR(64) NULL COMMENT '宠物昵称',
   pet_progress INT NOT NULL DEFAULT 0 COMMENT '宠物成长值',
@@ -250,6 +250,12 @@ CREATE TABLE IF NOT EXISTS pet_points_students (
   absent BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否缺勤',
   completed_pets INT NOT NULL DEFAULT 0 COMMENT '已完成宠物数量'
 ) ENGINE=InnoDB COMMENT='宠物积分学生表';
+
+CREATE TABLE IF NOT EXISTS pet_points_settings (
+  teacher_id VARCHAR(64) PRIMARY KEY,
+  max_level INT NOT NULL DEFAULT 10,
+  final_energy INT NOT NULL DEFAULT 200
+) ENGINE=InnoDB COMMENT='教师宠物等级设置';
 
 CREATE TABLE IF NOT EXISTS pet_points_rubrics (
   teacher_id VARCHAR(64) NOT NULL COMMENT '数据所属教师ID',

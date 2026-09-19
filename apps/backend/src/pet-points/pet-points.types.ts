@@ -3,7 +3,7 @@ export type EvaluationCategory =
   | '作业情况'
   | '品德修养'
   | '纪律常规';
-export type PetStage = '初始形态' | '成长形态' | '进阶形态' | '终极形态';
+export type PetStage = string;
 
 export interface StudentPet {
   id: string;

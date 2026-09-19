@@ -35,12 +35,8 @@ export class PetStudentEntity {
   @Column({ name: 'level_num', type: 'int', default: 1 })
   level!: number;
 
-  @Column({
-    type: 'enum',
-    enum: ['初始形态', '成长形态', '进阶形态', '终极形态'],
-    default: '初始形态',
-  })
-  stage!: '初始形态' | '成长形态' | '进阶形态' | '终极形态';
+  @Column({ type: 'varchar', length: 32, default: '初始形态' })
+  stage!: string;
 
   @Column({ name: 'pet_id', type: 'varchar', length: 64, nullable: true })
   petId!: string | null;
