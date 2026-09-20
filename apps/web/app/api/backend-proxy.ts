@@ -16,9 +16,8 @@
  */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getBackendUrl } from "./backend-url";
 import { AUTH_COOKIE_NAME, clearAuthCookie } from "./auth-cookie";
-
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
 
 export interface ProxyRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -28,7 +27,7 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
   const { path = [] } = await context.params;
   const suffix = path.map(segment => encodeURIComponent(segment)).join("/");
   const query = new URL(request.url).search;
-  const targetUrl = `${BACKEND_URL}/${resource}${suffix ? `/${suffix}` : ""}${query}`;
+  const targetUrl = `${getBackendUrl()}/${resource}${suffix ? `/${suffix}` : ""}${query}`;
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
   const token = (await cookies()).get(AUTH_COOKIE_NAME)?.value;
 

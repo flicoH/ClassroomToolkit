@@ -10,6 +10,7 @@ ENV_FILE=deploy/.env.frontend
 RELEASE_FILE=deploy/.frontend-release.env
 CANDIDATE_FILE=deploy/.frontend-candidate.env
 NETWORK_NAME=classroom_internal
+preflight_container=''
 
 log() {
   printf '[frontend-deploy] %s\n' "$*"
@@ -69,7 +70,13 @@ docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create 
 
 umask 077
 printf 'IMAGE_NAMESPACE=%s\nFRONTEND_IMAGE_TAG=%s\n' "$IMAGE_NAMESPACE" "$FRONTEND_IMAGE_TAG" > "$CANDIDATE_FILE"
-trap 'rm -f "$CANDIDATE_FILE"' EXIT
+cleanup() {
+  if [[ -n "$preflight_container" ]]; then
+    docker rm -f "$preflight_container" >/dev/null 2>&1 || true
+  fi
+  rm -f "$CANDIDATE_FILE"
+}
+trap cleanup EXIT
 
 compose() {
   docker compose \
@@ -86,16 +93,61 @@ compose config --quiet
 log "Pulling frontend image $FRONTEND_IMAGE_TAG"
 compose pull web admin
 
+expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
+expected_backend_url=http://classroom-backend-backend-1:3000
+
+log "Checking candidate Web-to-Backend route before replacing the live Web container"
+backend_pet_settings_status=$(docker run --rm --network "$NETWORK_NAME" \
+  -e BACKEND_URL="$expected_backend_url" --entrypoint node "$expected_web_image" -e "
+fetch(process.env.BACKEND_URL + '/pet-points/settings', { method: 'PATCH' })
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
+")
+if [[ "$backend_pet_settings_status" != "401" ]]; then
+  log "Candidate backend route check failed: expected 401, got $backend_pet_settings_status"
+  exit 1
+fi
+
+preflight_container="classroom-web-preflight-$$"
+docker run -d --name "$preflight_container" --network "$NETWORK_NAME" \
+  --memory=512m -e BACKEND_URL="$expected_backend_url" \
+  -e NODE_ENV=production -e PORT=3001 "$expected_web_image" >/dev/null
+pet_settings_preflight_status=''
+for _ in {1..12}; do
+  pet_settings_preflight_status=$(docker exec "$preflight_container" node -e "
+fetch('http://127.0.0.1:3001/api/pet-points/settings', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json', cookie: 'auth_token=invalid-deploy-route-probe' },
+  body: JSON.stringify({ maxLevel: 10, finalEnergy: 200 }),
+})
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch(() => { process.exit(1); });
+" 2>/dev/null || true)
+  [[ "$pet_settings_preflight_status" == "401" ]] && break
+  sleep 2
+done
+if [[ "$pet_settings_preflight_status" != "401" ]]; then
+  docker logs --tail 40 "$preflight_container" || true
+  log "Candidate Web proxy route check failed: expected 401, got ${pet_settings_preflight_status:-connection error}"
+  exit 1
+fi
+docker rm -f "$preflight_container" >/dev/null
+preflight_container=''
+
 log "Starting frontend services"
 compose up -d --wait --force-recreate --remove-orphans --pull=never web admin
 
-expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
 expected_admin_image="${IMAGE_NAMESPACE}-admin:${FRONTEND_IMAGE_TAG}"
 web_container_id=$(compose ps -q web)
 admin_container_id=$(compose ps -q admin)
 web_image=$(docker inspect "$web_container_id" --format '{{.Config.Image}}')
 admin_image=$(docker inspect "$admin_container_id" --format '{{.Config.Image}}')
-expected_backend_url=http://classroom-backend-backend-1:3000
 actual_backend_url=$(docker inspect "$web_container_id" --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | sed -n 's/^BACKEND_URL=//p')
 

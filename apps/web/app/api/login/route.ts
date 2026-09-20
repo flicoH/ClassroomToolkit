@@ -9,15 +9,14 @@
  * @LastEditTime: 2026-04-19 00:30:00
  */
 import { NextResponse } from "next/server";
+import { getBackendUrl } from "../backend-url";
 import { setAuthCookie } from "../auth-cookie";
-
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
 
 /** 登录接口代理到 Nest 教师认证模块，由后端完成真实密码校验。 */
 export async function POST(request: Request) {
   try {
     const { username, password } = await request.json();
-    const response = await fetch(`${BACKEND_URL}/auth/teacher/login`, {
+    const response = await fetch(`${getBackendUrl()}/auth/teacher/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username, password })
