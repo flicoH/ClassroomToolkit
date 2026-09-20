@@ -176,6 +176,27 @@ if [[ "$feedback_proxy_status" != "401" ]]; then
   exit 1
 fi
 
+log "Checking Web pet settings proxy route"
+pet_settings_proxy_status=$(docker exec "$web_container_id" node -e "
+fetch('http://127.0.0.1:3001/api/pet-points/settings', {
+  method: 'PATCH',
+  headers: {
+    'content-type': 'application/json',
+    cookie: 'auth_token=invalid-deploy-route-probe',
+  },
+  body: JSON.stringify({ maxLevel: 10, finalEnergy: 200 }),
+})
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
+")
+if [[ "$pet_settings_proxy_status" != "401" ]]; then
+  log "Web pet settings proxy route check failed: expected 401, got $pet_settings_proxy_status"
+  exit 1
+fi
+
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
 log "Frontend deployment complete: $(git rev-parse --short HEAD)"

@@ -134,6 +134,17 @@ if [[ "$feedback_route_status" != "401" ]]; then
   exit 1
 fi
 
+log "Checking pet settings route"
+pet_settings_route_status=$(docker exec "$backend_container_id" node -e "
+fetch('http://127.0.0.1:3000/pet-points/settings', { method: 'PATCH' })
+  .then((response) => { console.log(response.status); })
+  .catch(() => { process.exit(1); });
+")
+if [[ "$pet_settings_route_status" != "401" ]]; then
+  log "Pet settings route smoke check failed: expected 401, got $pet_settings_route_status"
+  exit 1
+fi
+
 log "Checking admin feedback route"
 admin_feedback_route_status=$(docker exec "$backend_container_id" node -e "
 fetch('http://127.0.0.1:3000/admin/feedback')

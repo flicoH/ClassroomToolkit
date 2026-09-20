@@ -33,4 +33,11 @@ describe('AppController (e2e)', () => {
       .send({ content: 'route probe' })
       .expect(401);
   });
+
+  it('/pet-points/settings (PATCH) is registered and protected', () => {
+    return request(app.getHttpServer())
+      .patch('/pet-points/settings')
+      .send({ maxLevel: 10, finalEnergy: 200 })
+      .expect(401);
+  });
 });

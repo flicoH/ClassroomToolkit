@@ -540,14 +540,14 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
     const apiStudent = toPetPointStudent(classroom, student);
     const currentStudent = currentById.get(apiStudent.id);
     return currentStudent
-      ? normalizeStudent({
+      ? {
           ...currentStudent,
           name: apiStudent.name,
           studentNo: apiStudent.studentNo,
           classId: apiStudent.classId,
           className: apiStudent.className,
           group: apiStudent.group
-        })
+        }
       : apiStudent;
   });
   return [...currentStudents.filter(student => student.classId !== classroom.id), ...nextClassStudents];
@@ -1497,9 +1497,12 @@ export function PetPoints() {
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
-                  <div className="text-3xl font-black text-slate-950">
-                    {student.score}
-                    <span className="text-lg text-slate-300">/{student.maxScore}</span>
+                  <div className="text-right">
+                    <span className="block text-[11px] font-bold text-slate-400">课堂积分</span>
+                    <div className="text-3xl font-black text-slate-950">
+                      {student.score}
+                      <span className="text-lg text-slate-300">/{student.maxScore}</span>
+                    </div>
                   </div>
                   <Button
                     size="icon"
@@ -1522,6 +1525,18 @@ export function PetPoints() {
                   style={{ width: `${percent}%` }}
                 />
               </div>
+              {pet && (
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-xs font-bold text-slate-500">
+                  <span>
+                    宠物能力 {student.petProgress}/{maxPetEnergy}
+                  </span>
+                  <span>
+                    {nextPetThreshold === null
+                      ? "已达最终形态"
+                      : `下一级 Lv.${student.level + 1}：${nextPetThreshold} 能力`}
+                  </span>
+                </div>
+              )}
               <div className="mt-2 flex items-center gap-3">
                 <Badge className="bg-orange-100 text-orange-600 hover:bg-orange-100">
                   {pet ? `Lv.${student.level}` : "未绑定"}
@@ -1531,8 +1546,8 @@ export function PetPoints() {
                 </span>
                 <span className={cn("ml-auto text-xs font-bold", pet ? "text-emerald-600" : "text-amber-600")}>
                   {pet
-                    ? nextPetThreshold
-                      ? `再得 ${Math.max(0, nextPetThreshold - student.petProgress)} 能量进化`
+                    ? nextPetThreshold !== null
+                      ? `还需 ${Math.max(0, nextPetThreshold - student.petProgress)} 能力进化`
                       : "已达终极形态"
                     : student.score >= evolutionThresholds[3]
                       ? "能量已满，点击选择宠物蛋"
