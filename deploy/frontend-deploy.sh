@@ -90,8 +90,28 @@ compose() {
 log "Validating Compose configuration"
 compose config --quiet
 
-log "Pulling frontend image $FRONTEND_IMAGE_TAG"
-compose pull web admin
+pull_with_retry() {
+  local target=$1
+  local max_attempts=5
+  local delay=6
+  local attempt=1
+
+  log "Pulling $target image with retry support..."
+  until compose pull "$target"; do
+    if (( attempt >= max_attempts )); then
+      log "Failed to pull $target image after $max_attempts attempts"
+      return 1
+    fi
+    log "Pull failed (attempt $attempt/$max_attempts). Retrying in ${delay}s..."
+    sleep "$delay"
+    (( attempt++ ))
+  done
+  log "Successfully pulled $target image"
+}
+
+log "Pulling frontend images ($FRONTEND_IMAGE_TAG) sequentially"
+pull_with_retry web
+pull_with_retry admin
 
 expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
 expected_backend_url=http://classroom-backend-backend-1:3000
@@ -251,4 +271,8 @@ fi
 
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
+
+log "Pruning dangling images to save disk space"
+docker image prune -f || true
+
 log "Frontend deployment complete: $(git rev-parse --short HEAD)"

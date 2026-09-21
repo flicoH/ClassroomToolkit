@@ -83,8 +83,27 @@ compose() {
 log "Validating Compose configuration"
 compose config --quiet
 
+pull_with_retry() {
+  local target=$1
+  local max_attempts=5
+  local delay=6
+  local attempt=1
+
+  log "Pulling $target image with retry support..."
+  until compose pull "$target"; do
+    if (( attempt >= max_attempts )); then
+      log "Failed to pull $target image after $max_attempts attempts"
+      return 1
+    fi
+    log "Pull failed (attempt $attempt/$max_attempts). Retrying in ${delay}s..."
+    sleep "$delay"
+    (( attempt++ ))
+  done
+  log "Successfully pulled $target image"
+}
+
 log "Pulling backend image $BACKEND_IMAGE_TAG"
-compose pull backend
+pull_with_retry backend
 
 log "Starting MySQL"
 compose up -d --wait mysql
@@ -158,4 +177,8 @@ fi
 
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
+
+log "Pruning dangling images to save disk space"
+docker image prune -f || true
+
 log "Backend deployment complete: $(git rev-parse --short HEAD)"
