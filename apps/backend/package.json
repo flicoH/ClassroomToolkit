@@ -29,6 +29,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/typeorm": "^11.0.3",
+    "multer": "^2.1.1",
     "mysql2": "^3.23.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

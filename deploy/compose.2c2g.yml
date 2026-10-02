@@ -1,0 +1,160 @@
+name: classroom-small
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 5m
+    max-file: "2"
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  NODE_OPTIONS: --max-old-space-size=256
+  HOST: 0.0.0.0
+  PORT: 3000
+  MYSQL_HOST: mysql
+  MYSQL_PORT: 3306
+  MYSQL_USER: ${MYSQL_USER:-classroom_app}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+  MYSQL_DATABASE: classroom_toolkit
+  TYPEORM_SYNCHRONIZE: "false"
+  TYPEORM_MIGRATIONS_RUN: "false"
+  ADMIN_INITIAL_USERNAME: ${ADMIN_INITIAL_USERNAME:-}
+  ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+  ADMIN_COOKIE_SECURE: "true"
+  TEACHER_DATA_UTC_OFFSET: ${TEACHER_DATA_UTC_OFFSET:-}
+  LEGACY_DATA_OWNER_USERNAME: ${LEGACY_DATA_OWNER_USERNAME:-}
+  REPORT_GENERATION_MODE: template
+  REPORT_AI_BASE_URL: ""
+  REPORT_AI_API_KEY: ""
+  REPORT_AI_MODEL: ""
+  SEMESTER_REPORT_PARSER_URL: ${SEMESTER_REPORT_PARSER_URL:?Configure an independent Docling service}
+  SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:?Parser authentication key is required}
+  REPORT_SHARE_ENCRYPTION_KEY: ${REPORT_SHARE_ENCRYPTION_KEY:?Report encryption key is required}
+  REPORT_PUBLIC_BASE_URL: ${REPORT_PUBLIC_BASE_URL:?Public HTTPS URL is required}
+  SEMESTER_REPORT_STORAGE_DIR: /app/data/semester-reports
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 768m
+    cpus: 0.6
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: classroom_toolkit
+      MYSQL_USER: ${MYSQL_USER:-classroom_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    volumes:
+      - classroom_mysql_data:/var/lib/mysql
+      - ../apps/backend/database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro,Z
+      - ./mysql/2c2g.cnf:/etc/mysql/conf.d/low-memory.cnf:ro,Z
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -uroot --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    logging: *logging
+    networks: [app]
+
+  init-storage:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    profiles: [tools]
+    user: "0:0"
+    mem_limit: 64m
+    cpus: 0.25
+    network_mode: none
+    volumes: [classroom_reports_data:/app/data/semester-reports]
+    command: [node, -e, "const fs=require('node:fs');const p='/app/data/semester-reports';fs.mkdirSync(p,{recursive:true});fs.chownSync(p,1000,1000);fs.chmodSync(p,0o750)"]
+    logging: *logging
+
+  migrate:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    profiles: [tools]
+    init: true
+    mem_limit: 384m
+    cpus: 0.5
+    environment: *backend-env
+    command: [node, node_modules/typeorm/cli.js, migration:run, -d, dist/database/data-source.js]
+    depends_on:
+      mysql: {condition: service_healthy}
+    logging: *logging
+    networks: [app]
+
+  backend:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    mem_limit: 384m
+    memswap_limit: 512m
+    cpus: 0.5
+    environment: *backend-env
+    ports: ["127.0.0.1:${BACKEND_PORT:-3000}:3000"]
+    volumes: [classroom_reports_data:/app/data/semester-reports]
+    depends_on:
+      mysql: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+    networks: [app]
+
+  web:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-web:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    mem_limit: 384m
+    memswap_limit: 512m
+    cpus: 0.7
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256
+      NEXT_TELEMETRY_DISABLED: "1"
+      HOSTNAME: 0.0.0.0
+      PORT: 3001
+      BACKEND_URL: http://backend:3000
+      AUTH_COOKIE_SECURE: "true"
+    ports: ["127.0.0.1:${WEB_PORT:-3001}:3001"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+    networks: [app]
+
+  admin:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-admin:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.1
+    ports: ["127.0.0.1:${ADMIN_PORT:-8080}:80"]
+    volumes: [./docker/admin.2c2g.nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, --quiet, --tries=1, --spider, http://127.0.0.1/]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    logging: *logging
+    networks: [app]
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  classroom_mysql_data:
+    name: classroom_mysql_data
+  classroom_reports_data:
+    name: classroom_reports_data

@@ -23,8 +23,43 @@ x-backend-environment: &backend-environment
   TEACHER_DATA_UTC_OFFSET: ${TEACHER_DATA_UTC_OFFSET:-}
   ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
   LEGACY_DATA_OWNER_USERNAME: ${LEGACY_DATA_OWNER_USERNAME:-}
+  SEMESTER_REPORT_PARSER_URL: ${SEMESTER_REPORT_PARSER_URL:-http://docling-parser:8000/parse}
+  SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:-}
+  REPORT_AI_BASE_URL: ${REPORT_AI_BASE_URL:-}
+  REPORT_GENERATION_MODE: ${REPORT_GENERATION_MODE:-auto}
+  REPORT_AI_API_KEY: ${REPORT_AI_API_KEY:-}
+  REPORT_AI_MODEL: ${REPORT_AI_MODEL:-}
+  REPORT_SHARE_ENCRYPTION_KEY: ${REPORT_SHARE_ENCRYPTION_KEY:-}
+  REPORT_PUBLIC_BASE_URL: ${REPORT_PUBLIC_BASE_URL:-http://localhost:3001}
+  SEMESTER_REPORT_STORAGE_DIR: /app/data/semester-reports
 
 services:
+  docling-parser:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-docling-parser:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    mem_limit: 1536m
+    cpus: 1.0
+    environment:
+      SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:-}
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      OMP_NUM_THREADS: 1
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    logging: *default-logging
+    networks:
+      - classroom_internal
+
   mysql:
     image: mysql:8.0
     restart: unless-stopped
@@ -92,6 +127,8 @@ services:
       retries: 6
       start_period: 15s
     logging: *default-logging
+    volumes:
+      - classroom_reports_data:/app/data/semester-reports
     networks:
       classroom_internal:
         aliases: [classroom-backend-api]
@@ -103,3 +140,5 @@ networks:
 volumes:
   classroom_mysql_data:
     name: classroom_mysql_data
+  classroom_reports_data:
+    name: classroom_reports_data

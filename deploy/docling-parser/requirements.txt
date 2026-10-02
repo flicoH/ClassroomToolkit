@@ -1,0 +1,4 @@
+docling-slim[extract-core,format-pdf,models-local,feat-ocr-rapidocr-onnx]==2.130.0
+fastapi==0.135.1
+python-multipart==0.0.32
+uvicorn[standard]==0.41.0

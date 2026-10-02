@@ -20,6 +20,9 @@ export class PetEvaluationRecordEntity {
   @Column({ name: 'delta_score', type: 'int' })
   delta!: number;
 
+  @Column({ name: 'subject_id', type: 'varchar', length: 64, nullable: true })
+  subjectId!: string | null;
+
   @Column({ name: 'pet_delta', type: 'int', nullable: true })
   petDelta!: number | null;
 

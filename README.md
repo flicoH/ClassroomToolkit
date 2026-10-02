@@ -16,6 +16,18 @@ pnpm install
 pnpm dev
 ```
 
+## 开发规范与验证
+
+开发和评审遵守 [项目开发与验收规范](docs/development-standards.md)；课程 PDF 的识别规则另见 [课程 PDF 识别基准](docs/semester-reports-setup.md#课程-pdf-识别基准)。面向用户的弹窗统一使用站内组件，禁止浏览器原生 `alert/confirm/prompt`；行为改动需附对应测试与说明关键约束的代码注释。
+
+提交前运行完整自动验证：
+
+```bash
+pnpm verify
+```
+
+该命令执行规范检查、Backend/Web/Admin 测试及三端构建；Pull Request 的 GitHub Actions 也执行同一命令。
+
 ## 端口说明
 
 - 3000 为后端api端口

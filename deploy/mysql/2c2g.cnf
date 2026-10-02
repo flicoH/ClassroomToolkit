@@ -1,0 +1,15 @@
+[mysqld]
+character-set-server=utf8mb4
+collation-server=utf8mb4_0900_ai_ci
+innodb-buffer-pool-size=128M
+innodb-log-buffer-size=8M
+max-connections=30
+table-open-cache=128
+table-definition-cache=256
+tmp-table-size=8M
+max-heap-table-size=8M
+performance-schema=OFF
+skip-name-resolve=ON
+
+[client]
+default-character-set=utf8mb4

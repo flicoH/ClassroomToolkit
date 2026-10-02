@@ -104,6 +104,8 @@ pull_with_retry() {
 
 log "Pulling backend image $BACKEND_IMAGE_TAG"
 pull_with_retry backend
+log "Pulling Docling parser image $BACKEND_IMAGE_TAG"
+pull_with_retry docling-parser
 
 log "Starting MySQL"
 compose up -d --wait mysql
@@ -111,8 +113,8 @@ compose up -d --wait mysql
 log "Running database migrations"
 compose --profile tools run --rm migrate
 
-log "Starting backend"
-compose up -d --wait --force-recreate --remove-orphans --pull=never backend
+log "Starting Docling parser and backend"
+compose up -d --wait --force-recreate --remove-orphans --pull=never docling-parser backend
 
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"
 backend_container_id=$(compose ps -q backend)
@@ -128,6 +130,15 @@ fi
 
 if [[ "$backend_revision" != "$expected_revision" ]]; then
   log "Backend revision mismatch: expected $expected_revision, got ${backend_revision:-unset}"
+  exit 1
+fi
+
+parser_image="${IMAGE_NAMESPACE}-docling-parser:${BACKEND_IMAGE_TAG}"
+parser_container_id=$(compose ps -q docling-parser)
+parser_revision=$(docker image inspect "$parser_image" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+if [[ -z "$parser_container_id" || "$parser_revision" != "$expected_revision" ]]; then
+  log "Docling parser image verification failed"
   exit 1
 fi
 

@@ -263,6 +263,7 @@ export class PetPointsDatabase {
       category: record.category,
       label: record.label,
       delta: record.delta,
+      subjectId: null,
       petDelta: record.petDelta ?? null,
       note: record.note,
       createdAt: new Date(record.createdAt),

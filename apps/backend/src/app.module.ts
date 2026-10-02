@@ -16,6 +16,7 @@ import { StudentsModule } from './students/students.module';
 import { TaskStatsModule } from './task-stats/task-stats.module';
 import { AuthModule } from './auth/auth.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { SemesterReportsModule } from './semester-reports/semester-reports.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     StickyNotesModule,
     PetPointsModule,
     GachaMachineModule,
+    SemesterReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

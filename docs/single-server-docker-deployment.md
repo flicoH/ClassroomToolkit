@@ -1,5 +1,7 @@
 # 2C2G 单服务器 Docker 部署
 
+包含学期报告和 Docling 的部署请使用 [新版 2C2G Docker 部署](deployment-2c2g.md)。下面保留原前后端分离部署的说明；当前后端配置已增加 Docling，不适合将原配置中的全部服务一起放在 2GB 主机上。
+
 本方案面向一台 2 核 2GB Linux 服务器。GitHub Actions 在云端完成测试和镜像构建，服务器只负责拉取镜像与运行容器。
 
 ## CentOS 7.8 重要说明

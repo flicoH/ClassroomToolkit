@@ -1,10 +1,13 @@
 import './common/load-env';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 
 /** 创建 Nest 应用，设置管理端禁缓存中间件并启动 HTTP 服务。 */
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Batch reports can contain mastery ratings for 30 students and 500 goals.
+  app.useBodyParser('json', { limit: '2mb' });
   app.use(
     '/admin',
     (

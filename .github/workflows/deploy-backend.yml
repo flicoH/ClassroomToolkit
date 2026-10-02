@@ -6,6 +6,7 @@ on:
     paths:
       - apps/backend/**
       - deploy/docker/backend.Dockerfile
+      - deploy/docling-parser/**
       - deploy/mysql/**
       - deploy/compose.backend.yml
       - deploy/backend-deploy.sh
@@ -118,6 +119,7 @@ jobs:
         with:
           context: .
           file: deploy/docker/backend.Dockerfile
+          target: runner
           push: true
           tags: |
             ${{ steps.image.outputs.namespace }}-backend:latest
@@ -128,7 +130,24 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
+      - name: Build and push Docling parser image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/backend.Dockerfile
+          target: docling-parser
+          push: true
+          tags: |
+            ${{ steps.image.outputs.namespace }}-docling-parser:latest
+            ${{ steps.image.outputs.namespace }}-docling-parser:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=docling-parser
+          cache-to: type=gha,mode=max,scope=docling-parser
+
   deploy:
+    if: ${{ vars.DEPLOY_PROFILE != '2c2g' }}
     name: Deploy backend
     needs: publish
     runs-on: ubuntu-latest

@@ -16,3 +16,16 @@ npm-debug.log
 
 .git/
 docs/ai-lesson-planner.md
+apps/backend/data/semester-reports/
+
+!deploy/.env.2c2g.example
+deploy/.2c2g-release.env
+deploy/.2c2g-previous.env
+deploy/.2c2g-candidate.*
+deploy/backups/
+deploy/.2c2g-deploy.lock
+deploy/**/__pycache__/
+
+docs/semester-reports-plan.md
+docs/semester-reports-setup.md
+docs/development-standards.md

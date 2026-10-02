@@ -147,6 +147,7 @@ jobs:
             --exit-status
 
   deploy:
+    if: ${{ vars.DEPLOY_PROFILE != '2c2g' }}
     name: Deploy frontend
     needs: [publish, wait-for-backend]
     runs-on: ubuntu-latest

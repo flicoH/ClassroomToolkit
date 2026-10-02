@@ -78,6 +78,22 @@ export function CartoonTaskStatsIcon(props: IconProps) {
   );
 }
 
+export function CartoonSemesterReportIcon(props: IconProps) {
+  return (
+    <IconShell {...props} from="#818CF8" to="#7C3AED">
+      <path d="M22 15h16l9 9v23a5 5 0 0 1-5 5H22a5 5 0 0 1-5-5V20a5 5 0 0 1 5-5Z" fill="#F5F3FF" />
+      <path d="M38 15v6a3 3 0 0 0 3 3h6" fill="#C4B5FD" />
+      <path d="M24 25h7M24 31h15" stroke="#A78BFA" strokeWidth="3" strokeLinecap="round" />
+      <rect x="24" y="42" width="4" height="5" rx="1.5" fill="#C4B5FD" />
+      <rect x="31" y="38" width="4" height="9" rx="1.5" fill="#A78BFA" />
+      <rect x="38" y="34" width="4" height="13" rx="1.5" fill="#8B5CF6" />
+      <circle cx="47" cy="46" r="9" fill="#FDE68A" />
+      <path d="m43 46 3 3 5-6" stroke="#B45309" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="m17 11 1.5 3.5L22 16l-3.5 1.5L17 21l-1.5-3.5L12 16l3.5-1.5L17 11Z" fill="white" />
+    </IconShell>
+  );
+}
+
 export function CartoonSeatingIcon(props: IconProps) {
   return (
     <IconShell {...props} from="#F59E0B" to="#EA580C">
