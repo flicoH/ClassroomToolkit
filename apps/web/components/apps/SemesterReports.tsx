@@ -185,7 +185,7 @@ export function SemesterReports() {
   const [documentRefreshFailed, setDocumentRefreshFailed] = useState(false);
   const [imageReport, setImageReport] = useState<{ studentName: string; url: string } | null>(null);
   const [events, setEvents] = useState<Array<{ action: string; createdAt: string }>>([]);
-
+  const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
   useEffect(() => {
     if (!editing) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -1291,7 +1291,9 @@ export function SemesterReports() {
                 ))}
               </div>
               <div className="rounded-xl border bg-slate-50 p-3" aria-live="polite">
-                <h4 className="mb-2 text-sm font-semibold">{feedbackStudent.name} · 本期积分加减情况</h4>
+                <h4 className="mb-2 text-sm font-semibold">
+                  {feedbackStudent.name} · {periodTitles[period]}积分加减情况
+                </h4>
                 {selectedScore ? (
                   <ScoreDetailsView key={feedbackStudent.id} details={selectedScore} />
                 ) : scorePreviewError ? (
@@ -1573,7 +1575,7 @@ export function SemesterReports() {
                   <>
                     <p className="mb-3 text-xs text-muted-foreground">检查事实表述与每条建议的引用。</p>
                     <section className="space-y-3">
-                      <h3 className="font-semibold">本期学习内容与掌握</h3>
+                      <h3 className="font-semibold">{periodTitles[period]}学习内容与掌握</h3>
                       <p className="text-xs text-muted-foreground">
                         学习目标来自课程 PDF；掌握情况请依据实际课堂观察逐项填写，默认待评价。
                       </p>
@@ -1623,7 +1625,7 @@ export function SemesterReports() {
                       )}
                     </section>
                     <section className="space-y-3">
-                      <h3 className="font-semibold">本期的课堂表现</h3>
+                      <h3 className="font-semibold">{periodTitles[period]}的课堂表现</h3>
                       <p className="text-xs text-muted-foreground">
                         仅填写实际观察，如“基本完成”“能说词”“引导参与”；留空的项目不会展示。
                       </p>
@@ -1663,7 +1665,7 @@ export function SemesterReports() {
                     </label>
                     {(
                       [
-                        ["本期最值得肯定", "strengths"],
+                        [`{periodTitles[period]}最值得肯定`, "strengths"],
                         ["下一步重点", "areasToImprove"],
                         ["回家可以这样练", "homeSuggestions"]
                       ] as const
