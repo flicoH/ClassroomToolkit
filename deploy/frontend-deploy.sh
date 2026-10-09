@@ -5,6 +5,7 @@ APP_DIR=${APP_DIR:-/opt/classroom-toolkit}
 BRANCH=${BRANCH:-main}
 IMAGE_NAMESPACE=${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}
 FRONTEND_IMAGE_TAG=${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+EXPECTED_REVISION=${FRONTEND_IMAGE_TAG#sha-}
 COMPOSE_FILE=deploy/compose.frontend.yml
 ENV_FILE=deploy/.env.frontend
 RELEASE_FILE=deploy/.frontend-release.env
@@ -50,6 +51,13 @@ git checkout "$BRANCH"
 restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"
 
+# Refuse a stale CI run before it can replace a newer frontend release.
+server_revision=$(git rev-parse HEAD)
+if [[ -n "${DEPLOY_COMMIT:-}" && ( "$server_revision" != "$DEPLOY_COMMIT" || "$EXPECTED_REVISION" != "$DEPLOY_COMMIT" ) ]]; then
+  log "Release mismatch: server checkout=$server_revision, requested frontend=$FRONTEND_IMAGE_TAG. Run deployment for the current branch commit."
+  exit 1
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   log "Missing $APP_DIR/$ENV_FILE"
   exit 1
@@ -67,6 +75,10 @@ if [[ "$(printf '%s\n%s\n' '2.20.0' "$compose_version" | sort -V | head -n 1)" !
 fi
 
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME" >/dev/null
+
+deployment_host=$(hostname)
+docker_context=$(docker context show)
+log "Deployment target: host=$deployment_host docker-context=$docker_context repository=$APP_DIR revision=$EXPECTED_REVISION"
 
 umask 077
 printf 'IMAGE_NAMESPACE=%s\nFRONTEND_IMAGE_TAG=%s\n' "$IMAGE_NAMESPACE" "$FRONTEND_IMAGE_TAG" > "$CANDIDATE_FILE"
@@ -186,6 +198,23 @@ if [[ "$actual_backend_url" != "$expected_backend_url" ]]; then
   exit 1
 fi
 
+# Tags alone do not prove which image is running after recreation.
+for service in web admin; do
+  container_id=$web_container_id
+  [[ "$service" != admin ]] || container_id=$admin_container_id
+  expected_image="${IMAGE_NAMESPACE}-${service}:${FRONTEND_IMAGE_TAG}"
+  actual_revision=$(docker inspect "$container_id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+  running_image_id=$(docker inspect "$container_id" --format '{{.Image}}')
+  pulled_image_id=$(docker image inspect "$expected_image" --format '{{.Id}}')
+  if [[ "$actual_revision" != "$EXPECTED_REVISION" || "$running_image_id" != "$pulled_image_id" ]]; then
+    log "$service running image mismatch: expected revision=$EXPECTED_REVISION image-id=$pulled_image_id; got revision=$actual_revision image-id=$running_image_id"
+    exit 1
+  fi
+  label=Web
+  [[ "$service" != admin ]] || label=Admin
+  log "$label deployed revision: $actual_revision image=$expected_image container=$container_id image-id=$running_image_id"
+done
+
 log "Checking Web-to-Backend network route"
 backend_feedback_status=''
 for _ in {1..6}; do
@@ -275,4 +304,4 @@ trap - EXIT
 log "Pruning dangling images to save disk space"
 docker image prune -f || true
 
-log "Frontend deployment complete: $(git rev-parse --short HEAD)"
+log "Frontend deployment complete: $EXPECTED_REVISION (server checkout: $server_revision)"

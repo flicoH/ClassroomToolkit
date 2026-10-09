@@ -5,6 +5,7 @@ APP_DIR=${APP_DIR:-/opt/classroom-toolkit}
 BRANCH=${BRANCH:-main}
 IMAGE_NAMESPACE=${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}
 BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+EXPECTED_REVISION=${BACKEND_IMAGE_TAG#sha-}
 COMPOSE_FILE=deploy/compose.backend.yml
 ENV_FILE=deploy/.env.backend
 RELEASE_FILE=deploy/.backend-release.env
@@ -49,6 +50,13 @@ git checkout "$BRANCH"
 restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"
 
+# The branch's deployment files and the CI image must describe the same release.
+server_revision=$(git rev-parse HEAD)
+if [[ -n "${DEPLOY_COMMIT:-}" && ( "$server_revision" != "$DEPLOY_COMMIT" || "$EXPECTED_REVISION" != "$DEPLOY_COMMIT" ) ]]; then
+  log "Release mismatch: server checkout=$server_revision, requested backend=$BACKEND_IMAGE_TAG. Run deployment for the current branch commit."
+  exit 1
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   log "Missing $APP_DIR/$ENV_FILE"
   exit 1
@@ -66,6 +74,10 @@ if [[ "$(printf '%s\n%s\n' '2.20.0' "$compose_version" | sort -V | head -n 1)" !
 fi
 
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME" >/dev/null
+
+deployment_host=$(hostname)
+docker_context=$(docker context show)
+log "Deployment target: host=$deployment_host docker-context=$docker_context repository=$APP_DIR revision=$EXPECTED_REVISION"
 
 umask 077
 printf 'IMAGE_NAMESPACE=%s\nBACKEND_IMAGE_TAG=%s\n' "$IMAGE_NAMESPACE" "$BACKEND_IMAGE_TAG" > "$CANDIDATE_FILE"
@@ -133,7 +145,8 @@ log "Starting MySQL"
 compose up -d --wait mysql
 
 log "Running database migrations"
-compose --profile tools run --rm migrate
+# Migrations must never consume a deployment script supplied via stdin.
+compose --profile tools run -T --rm migrate </dev/null
 
 log "Starting backend with $PARSER_PROVIDER PDF parsing"
 if [[ "$PARSER_PROVIDER" == docling ]]; then
@@ -145,9 +158,12 @@ fi
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"
 backend_container_id=$(compose ps -q backend)
 backend_image=$(docker inspect "$backend_container_id" --format '{{.Config.Image}}')
-expected_revision=${BACKEND_IMAGE_TAG#sha-}
-backend_revision=$(docker image inspect "$expected_backend_image" \
+expected_revision=$EXPECTED_REVISION
+# Inspect the running container, not only the local image tag that was pulled.
+backend_revision=$(docker inspect "$backend_container_id" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+backend_running_image_id=$(docker inspect "$backend_container_id" --format '{{.Image}}')
+backend_pulled_image_id=$(docker image inspect "$expected_backend_image" --format '{{.Id}}')
 
 if [[ "$backend_image" != "$expected_backend_image" ]]; then
   log "Backend image mismatch: expected $expected_backend_image, got $backend_image"
@@ -158,6 +174,11 @@ if [[ "$backend_revision" != "$expected_revision" ]]; then
   log "Backend revision mismatch: expected $expected_revision, got ${backend_revision:-unset}"
   exit 1
 fi
+if [[ "$backend_running_image_id" != "$backend_pulled_image_id" ]]; then
+  log "Backend running image mismatch: expected $backend_pulled_image_id, got $backend_running_image_id"
+  exit 1
+fi
+log "Backend deployed revision: $backend_revision image=$backend_image container=$backend_container_id image-id=$backend_running_image_id"
 
 if [[ "$PARSER_PROVIDER" == docling ]]; then
   parser_image="${IMAGE_NAMESPACE}-docling-parser:${BACKEND_IMAGE_TAG}"
@@ -220,4 +241,4 @@ trap - EXIT
 log "Pruning dangling images to save disk space"
 docker image prune -f || true
 
-log "Backend deployment complete: $(git rev-parse --short HEAD)"
+log "Backend deployment complete: $backend_revision (server checkout: $server_revision)"

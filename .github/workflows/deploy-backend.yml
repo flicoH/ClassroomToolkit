@@ -208,8 +208,13 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         run: |
-          IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          IMAGE_NAMESPACE="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          # Save the whole script before running it: migration containers can read stdin.
           cat deploy/backend-deploy.sh | ssh -i ~/.ssh/ssh_key \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
-            "APP_DIR='$SERVER_APP_DIR' BRANCH='main' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash -s"
+            "set -eu
+            deploy_script=\$(mktemp /tmp/classroom-backend-deploy.XXXXXX)
+            trap 'rm -f \"\$deploy_script\"' EXIT
+            cat > \"\$deploy_script\"
+            APP_DIR='$SERVER_APP_DIR' BRANCH='main' DEPLOY_COMMIT='$GITHUB_SHA' IMAGE_NAMESPACE='$IMAGE_NAMESPACE' BACKEND_IMAGE_TAG='sha-$GITHUB_SHA' bash \"\$deploy_script\" </dev/null"

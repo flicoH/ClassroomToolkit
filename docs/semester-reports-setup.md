@@ -144,6 +144,8 @@ pnpm --filter ClassRoomToolkitWeb build
 
 CI 中 `Deploy Backend` 默认不构建可选 Docling 镜像；仅仓库 Actions Variable `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时执行解析镜像构建，其依赖安装或模型下载失败仍会阻断发布。使用 Kimi 时此变量留空或设为 `kimi`，服务器 `.env` 仍需设置 Kimi 密钥；仓库变量不会将密钥传入镜像，也不会替代服务器环境文件。选择规则回归位于 `scripts/check-deployment-workflows.test.mjs`，加入 `pnpm verify` 与后端部署验证 job。此次仅调整 CI 镜像选择，无 API、报告数据、解析内容或数据库结构变化，无新增迁移。
 
+若部署成功日志止于迁移 `COMMIT` 而容器仍运行旧 SHA，应检查 SSH 脚本是否被迁移进程从标准输入读走。当前工作流先完整保存脚本再执行，迁移禁用 TTY 并使用空标准输入；完成后验证实际运行容器的 revision 和镜像 ID，并输出部署完成行。后端部署脚本/工作流修复同步触发前端，恢复此前跳过的发布。详见 [SSH 脚本执行与版本验收](single-server-docker-deployment.md#ssh-脚本执行与版本验收)；此修复不改变 PDF 解析内容或报告数据，无新增迁移。
+
 ## 教师流程
 
 1. 在桌面打开「学期报告」，建立学期和学科，选择一份 PDF 上传。

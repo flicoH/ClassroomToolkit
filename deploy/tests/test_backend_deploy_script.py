@@ -12,7 +12,7 @@ MOCK = r'''
 import sys, os, json, pathlib
 args=sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name == 'git':
-    if args[:1] == ['rev-parse']: print('aaaaaaa')
+    if args[:1] == ['rev-parse']: print(os.environ['MOCK_GIT_SHA'] if args == ['rev-parse','HEAD'] else 'aaaaaaa')
     sys.exit(0)
 with pathlib.Path(os.environ['MOCK_DIR'],'events.jsonl').open('a') as f: f.write(json.dumps(args)+'\n')
 if args[:2] == ['compose','version']: print('2.29.0')
@@ -33,15 +33,26 @@ elif args[0] == 'compose':
         print('mysql\nbackend')
         if has_parser and '--profile' in args and args[args.index('--profile')+1] == 'docling':
             print('docling-parser')
+    elif 'run' in args and 'migrate' in args:
+        remaining_script = sys.stdin.read()
+        if remaining_script:
+            print('migration consumed deployment script', file=sys.stderr)
+            sys.exit(1)
     elif 'ps' in args: print('container-id')
-elif args[0] == 'inspect': print('ghcr.io/flicoh/classroomtoolkit-backend:'+os.environ['BACKEND_IMAGE_TAG'])
-elif args[:2] == ['image','inspect']: print(os.environ['BACKEND_IMAGE_TAG'][4:])
+elif args[0] == 'inspect':
+    if args[-1] == '{{.Image}}': print(os.environ['MOCK_CONTAINER_IMAGE_ID'])
+    elif 'org.opencontainers.image.revision' in args[-1]: print(os.environ['MOCK_CONTAINER_REVISION'])
+    else: print('ghcr.io/flicoh/classroomtoolkit-backend:'+os.environ['BACKEND_IMAGE_TAG'])
+elif args[:2] == ['image','inspect']:
+    print('sha256:candidate' if args[-1] == '{{.Id}}' else os.environ['BACKEND_IMAGE_TAG'][4:])
 elif args[0] == 'exec': print('403' if any('reset-password' in a for a in args) else '401')
 sys.exit(0)
 '''
 
 class BackendDeploymentTests(unittest.TestCase):
-    def run_deploy(self, provider, has_parser=True, stop_failure=False, config_failure=False, expected_status=0):
+    def run_deploy(self, provider, has_parser=True, stop_failure=False, config_failure=False, expected_status=0,
+                   container_revision=TAG[4:], container_image_id='sha256:candidate', git_sha=TAG[4:], ci=True,
+                   streamed=False):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / '.git').mkdir()
@@ -54,15 +65,20 @@ class BackendDeploymentTests(unittest.TestCase):
             script.write_text('#!' + sys.executable + '\n' + MOCK); script.chmod(0o700)
             for name in ['docker','git','sleep']: (binary / name).symlink_to(script)
             env = {**os.environ, 'PATH':str(binary)+':'+os.environ['PATH'], 'APP_DIR':str(work), 'BACKEND_IMAGE_TAG':TAG, 'MOCK_DIR':str(work), 'MOCK_PROVIDER':provider,
-                   'MOCK_HAS_DOCLING':'1' if has_parser else '0', 'MOCK_STOP_FAILURE':'1' if stop_failure else '0', 'MOCK_CONFIG_FAILURE':'1' if config_failure else '0'}
-            result = subprocess.run(['bash',str(ROOT/'deploy/backend-deploy.sh')],env=env,capture_output=True,text=True)
+                   'MOCK_HAS_DOCLING':'1' if has_parser else '0', 'MOCK_STOP_FAILURE':'1' if stop_failure else '0', 'MOCK_CONFIG_FAILURE':'1' if config_failure else '0',
+                   'MOCK_CONTAINER_REVISION':container_revision, 'MOCK_CONTAINER_IMAGE_ID':container_image_id, 'MOCK_GIT_SHA':git_sha,
+                   'DEPLOY_COMMIT':TAG[4:] if ci else ''}
+            command = ['bash','-s'] if streamed else ['bash',str(ROOT/'deploy/backend-deploy.sh')]
+            result = subprocess.run(command, input=(ROOT/'deploy/backend-deploy.sh').read_text() if streamed else '',
+                                    env=env,capture_output=True,text=True)
             self.assertEqual(result.returncode,expected_status,result.stdout+result.stderr)
             self.assertFalse((work / 'deploy/.backend-candidate.env').exists())
             if expected_status == 0:
                 self.assertIn(TAG, release.read_text())
             else:
                 self.assertEqual(release.read_text(), 'BACKEND_IMAGE_TAG=previous-release\n')
-            return [json.loads(line) for line in (work/'events.jsonl').read_text().splitlines()]
+            events = work/'events.jsonl'
+            return [json.loads(line) for line in events.read_text().splitlines()] if events.exists() else []
 
     def test_default_cloud_deploy_does_not_pull_or_start_docling(self):
         events = self.run_deploy('kimi')
@@ -100,3 +116,19 @@ class BackendDeploymentTests(unittest.TestCase):
             with self.subTest(provider=provider):
                 events = self.run_deploy(provider, config_failure=failure, expected_status=1)
                 self.assertFalse(any('pull' in event or 'up' in event or 'run' in event or 'stop' in event for event in events))
+
+    def test_matching_image_tag_cannot_hide_a_stale_running_backend(self):
+        for revision, image_id in [('b'*40, 'sha256:candidate'), (TAG[4:], 'sha256:old')]:
+            with self.subTest(revision=revision, image_id=image_id):
+                self.run_deploy('kimi', container_revision=revision, container_image_id=image_id, expected_status=1)
+
+    def test_old_workflow_cannot_replace_a_newer_branch_release(self):
+        events = self.run_deploy('kimi', git_sha='b'*40, expected_status=1)
+        self.assertFalse(any('pull' in event or 'up' in event or 'run' in event for event in events))
+
+    def test_migration_cannot_consume_a_streamed_deployment_script(self):
+        events = self.run_deploy('kimi', streamed=True)
+        self.assertTrue(any('up' in event and 'backend' in event for event in events))
+
+    def test_manual_pinned_image_rollback_is_still_allowed(self):
+        self.run_deploy('kimi', git_sha='b'*40, ci=False)
