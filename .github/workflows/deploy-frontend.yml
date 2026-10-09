@@ -15,6 +15,7 @@ on:
       - deploy/backend-deploy.sh
       - .github/workflows/deploy-backend.yml
       - deploy/tests/test_frontend_deploy_script.py
+      - deploy/tests/test_deploy_git_update.py
       - scripts/check-deployment-workflows.test.mjs
       - package.json
       - pnpm-lock.yaml
@@ -60,6 +61,7 @@ jobs:
         run: |
           node --test scripts/check-deployment-workflows.test.mjs
           python3 -m unittest discover -s deploy/tests -p 'test_frontend_deploy_script.py' -v
+          python3 -m unittest discover -s deploy/tests -p 'test_deploy_git_update.py' -v
 
       - name: Test admin
         run: pnpm --filter ClassRoomToolkitAdmin exec vitest run

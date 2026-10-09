@@ -10,6 +10,7 @@ on:
       - deploy/mysql/**
       - deploy/compose.backend.yml
       - deploy/backend-deploy.sh
+      - deploy/tests/test_deploy_git_update.py
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -74,7 +75,9 @@ jobs:
         run: node --test scripts/check-deployment-workflows.test.mjs
 
       - name: Test backend deployment script
-        run: python3 -m unittest discover -s deploy/tests -p 'test_backend_deploy_script.py' -v
+        run: |
+          python3 -m unittest discover -s deploy/tests -p 'test_backend_deploy_script.py' -v
+          python3 -m unittest discover -s deploy/tests -p 'test_deploy_git_update.py' -v
 
       - name: Initialize CI database
         run: pnpm --filter ClassRoomToolkitBackend db:init

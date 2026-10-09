@@ -45,7 +45,8 @@ fi
 cd "$APP_DIR"
 
 log "Updating origin/$BRANCH"
-git fetch --prune origin "$BRANCH"
+# A branch-only fetch may leave origin/$BRANCH stale with a restricted fetch mapping.
+git fetch --prune origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 git checkout "$BRANCH"
 restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"

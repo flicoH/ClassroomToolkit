@@ -46,7 +46,8 @@ fi
 cd "$APP_DIR"
 
 log "Updating origin/$BRANCH"
-git fetch --prune origin "$BRANCH"
+# Explicitly update the tracking ref even when the server maps a different branch.
+git fetch --prune origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 git checkout "$BRANCH"
 restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"

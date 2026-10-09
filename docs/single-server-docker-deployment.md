@@ -302,6 +302,8 @@ Actions 先将完整部署脚本写入服务器上 `mktemp` 创建的私有临�
 
 CI 显式传入 `DEPLOY_COMMIT`，在拉取镜像和迁移前核对服务器快进后的提交与本次镜像提交；旧运行遇到已更新的 `main` 会失败，应运行最新提交的工作流。该变量由 Actions 设置，无需写入服务器环境文件。人工执行固定 SHA 镜像的回滚不传此变量，保留原有回滚入口。
 
+两端脚本使用 `git fetch --prune origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"` 明确更新目标远程分支，再执行快进合并。只写 `git fetch origin main` 时，服务器受限的 `remote.origin.fetch` 配置可能使拉取仅更新 `FETCH_HEAD`；随后合并旧 `origin/main` 会误报已是最新，并触发 `Release mismatch`。不改服务器 Git 配置、不重置本地分支；拉取失败、历史分叉或真实 CI 提交不一致仍会终止部署。`deploy/tests/test_deploy_git_update.py` 使用真实本地 Git 仓库覆盖这一情况，验证环境文件、远程映射与分叉的本地提交得到保留，纳入两端 CI 与 `pnpm verify`。此修复无接口、权限、数据库或 PDF 解析行为变化。
+
 发布日志记录目标主机、Docker context、仓库路径，以及运行容器的镜像标签、revision 和 image ID。Backend、Web、Admin 均需核对运行容器的 revision 与目标 SHA、运行 image ID 与已拉取镜像 ID，再完成原有接口验收并更新发布标记；只检查本地镜像标签不足以证明新代码已运行。失败保留上一版发布标记，不承诺自动回滚已启动的容器或已执行的迁移。
 
 回归位于 `scripts/check-deployment-workflows.test.mjs` 和 `deploy/tests/test_{backend,frontend}_deploy_script.py`，覆盖读取标准输入、失败退出码和临时文件清理、旧容器伪装相同标签、权限失败、旧 CI 提交及人工回滚。测试使用本地 SSH/Git/Docker 替身，纳入两端 CI 和 `pnpm verify`；真实服务器上的迁移、网络和容器版本仍需发布后核对。此修复仅调整部署行为，无业务 API、数据结构、权限或数据库迁移变更。
