@@ -127,7 +127,13 @@ Docling 适配器的标题候选由 `deploy/docling-parser/heading_units.py` 提
 openssl rand -base64 32
 ```
 
-设置 `REPORT_SHARE_ENCRYPTION_KEY`。密钥与数据库备份分开保存并纳入密钥轮换/灾备流程；更换密钥前，先迁移仍需复制的活跃链接密文，否则教师无法从历史报告列表重新取回链接。`REPORT_PUBLIC_BASE_URL` 设置家长访问的 HTTPS 网站根地址。
+### 报告分享地址
+
+设置 `REPORT_SHARE_ENCRYPTION_KEY`。密钥与数据库备份分开保存并纳入密钥轮换/灾备流程；更换密钥前，先迁移仍需复制的活跃链接密文，否则教师无法从历史报告列表重新取回链接。`REPORT_PUBLIC_BASE_URL` 设置家长实际访问的网站根地址，配置 HTTPS 域名时填写该域名；原部署通过 HTTP 公网 IP 访问时填写对应 HTTP 根地址，2C2G 专用部署仍按其预检要求使用 HTTPS。
+
+分享 URL 由后端该配置与 `/r/<原令牌>` 拼接，不依赖前端构建变量 `NEXT_PUBLIC_SITE_URL` 或请求 Host。`NODE_ENV=production` 时必须显式设置有效的 HTTP(S) 根地址；localhost、回环/通配地址、示例域名，以及包含凭据、路径、查询参数或片段的配置均拒绝，返回带配置项名称的 503，不在错误中输出配置值。发布和创建链接在写入状态、分享记录与事件前校验；原有教师归属、锁和事务规则保留。本地开发仍可默认 `http://localhost:3001`。
+
+服务器的 `deploy/.env.backend` 设置 `REPORT_PUBLIC_BASE_URL=http://119.23.147.212`（按实际访问域名/IP 和协议填写），随后重新创建后端容器；单纯 restart 不更新 Compose 环境变量。Compose 不再为生产环境填充 localhost，CI 部署在运行容器中复用同一校验函数，失败不更新发布标记；人工选择旧镜像回滚时不加载新增模块，旧版本沿用其原有链接行为，需人工核对配置。修改后刷新报告列表并重新复制分享链接；数据库只保存令牌，不保存网站域名，原有活跃令牌继续有效，无需重生成报告或撤销分享。已复制到聊天中的旧 URL 文字不会自动变化，需要发送新地址。无接口字段、报告内容、权限或数据库迁移变更。回归位于 `report-publishing.spec.ts` 和 `deploy/tests/test_backend_deploy_script.py`，覆盖公网 HTTP/HTTPS、尾斜杠、本地默认值、生产缺失/非法配置、原令牌复用与部署验收失败。
 
 ## 部署
 
@@ -145,6 +151,8 @@ pnpm --filter ClassRoomToolkitWeb build
 CI 中 `Deploy Backend` 默认不构建可选 Docling 镜像；仅仓库 Actions Variable `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时执行解析镜像构建，其依赖安装或模型下载失败仍会阻断发布。使用 Kimi 时此变量留空或设为 `kimi`，服务器 `.env` 仍需设置 Kimi 密钥；仓库变量不会将密钥传入镜像，也不会替代服务器环境文件。选择规则回归位于 `scripts/check-deployment-workflows.test.mjs`，加入 `pnpm verify` 与后端部署验证 job。此次仅调整 CI 镜像选择，无 API、报告数据、解析内容或数据库结构变化，无新增迁移。
 
 若部署成功日志止于迁移 `COMMIT` 而容器仍运行旧 SHA，应检查 SSH 脚本是否被迁移进程从标准输入读走。当前工作流先完整保存脚本再执行，迁移禁用 TTY 并使用空标准输入；完成后验证实际运行容器的 revision 和镜像 ID，并输出部署完成行。后端部署脚本/工作流修复同步触发前端，恢复此前跳过的发布。详见 [SSH 脚本执行与版本验收](single-server-docker-deployment.md#ssh-脚本执行与版本验收)；此修复不改变 PDF 解析内容或报告数据，无新增迁移。
+
+上传请求先将 PDF 保存到私有卷并创建队列记录，之后 worker 才调用 Kimi；上传 HTTP 500 需先看后端异常。旧版后端 Compose 现已补齐 `init-storage` 和运行用户写入验收，处理新卷目录归属造成的 `EACCES`；保留已有原件，后端继续以 uid 1000 运行，无新增迁移。见 [PDF 上传存储权限](single-server-docker-deployment.md#pdf-上传存储权限)。
 
 ## 教师流程
 

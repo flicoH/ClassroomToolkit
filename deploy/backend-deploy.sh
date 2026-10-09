@@ -132,6 +132,11 @@ pull_with_retry() {
 
 log "Pulling backend image $BACKEND_IMAGE_TAG"
 pull_with_retry backend
+
+# Repair only the volume directory; do not rewrite or delete uploaded PDFs.
+log "Initializing private PDF storage ownership"
+compose --profile tools run -T --rm --no-deps init-storage </dev/null
+
 if [[ "$PARSER_PROVIDER" == docling ]]; then
   log "Pulling Docling parser image $BACKEND_IMAGE_TAG"
   pull_with_retry docling-parser
@@ -180,6 +185,27 @@ if [[ "$backend_running_image_id" != "$backend_pulled_image_id" ]]; then
   exit 1
 fi
 log "Backend deployed revision: $backend_revision image=$backend_image container=$backend_container_id image-id=$backend_running_image_id"
+
+# CI images include this validator; older manually selected rollback images may not.
+if [[ -n "${DEPLOY_COMMIT:-}" ]]; then
+  log "Checking parent report website configuration"
+  docker exec "$backend_container_id" node -e \
+    "console.log(require('./dist/semester-reports/report-public-url.js').readReportPublicBaseUrl())"
+fi
+
+# HTTP health checks do not exercise storage; probe with the actual runtime user.
+log "Checking PDF storage write access as the backend user"
+docker exec "$backend_container_id" node -e "
+const fs = require('node:fs');
+const path = require('node:path');
+const directory = fs.mkdtempSync(path.join(process.env.SEMESTER_REPORT_STORAGE_DIR, '.deploy-check-'));
+try {
+  fs.writeFileSync(path.join(directory, 'probe'), 'storage check', { mode: 0o600, flag: 'wx' });
+} finally {
+  fs.rmSync(directory, { recursive: true, force: true });
+}
+"
+log "PDF storage write check passed"
 
 if [[ "$PARSER_PROVIDER" == docling ]]; then
   parser_image="${IMAGE_NAMESPACE}-docling-parser:${BACKEND_IMAGE_TAG}"

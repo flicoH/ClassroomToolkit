@@ -4,6 +4,8 @@ import { SemesterReportsService } from './semester-reports.service';
 
 describe('report publishing', () => {
   const previousKey = process.env.REPORT_SHARE_ENCRYPTION_KEY;
+  const previousBase = process.env.REPORT_PUBLIC_BASE_URL;
+  const previousNodeEnv = process.env.NODE_ENV;
   const content = {
     summary: '课堂表现记录',
     courseOverview: '本期课程',
@@ -100,10 +102,16 @@ describe('report publishing', () => {
   }
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.REPORT_PUBLIC_BASE_URL = 'https://reports.school.test';
     process.env.REPORT_SHARE_ENCRYPTION_KEY =
       randomBytes(32).toString('base64');
   });
   afterEach(() => {
+    if (previousBase === undefined) delete process.env.REPORT_PUBLIC_BASE_URL;
+    else process.env.REPORT_PUBLIC_BASE_URL = previousBase;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
     if (previousKey === undefined)
       delete process.env.REPORT_SHARE_ENCRYPTION_KEY;
     else process.env.REPORT_SHARE_ENCRYPTION_KEY = previousKey;
@@ -120,6 +128,80 @@ describe('report publishing', () => {
       'share-created',
       'report-published',
     ]);
+  });
+
+  it.each(['http://198.51.100.2', 'https://reports.school.test/'])(
+    'uses the configured public website %s in production',
+    async (base) => {
+      process.env.NODE_ENV = 'production';
+      process.env.REPORT_PUBLIC_BASE_URL = base;
+      const { service } = setup();
+      const url = new URL((await service.publish('report')).url);
+      expect(url.origin).toBe(new URL(base).origin);
+      expect(url.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{43}$/);
+    },
+  );
+
+  it.each([
+    undefined,
+    '',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+    'http://[::1]:3001',
+    'http://0.0.0.0:3001',
+    'https://classroom.example.com',
+    'ftp://reports.school.test',
+    'https://reports.school.test/path',
+    'https://user:password@reports.school.test',
+    'https://reports.school.test?token=private',
+    'https://reports.school.test/#fragment',
+    'invalid',
+  ])(
+    'rejects an invalid production public URL %s before publishing or creating a link',
+    async (base) => {
+      process.env.NODE_ENV = 'production';
+      if (base === undefined) delete process.env.REPORT_PUBLIC_BASE_URL;
+      else process.env.REPORT_PUBLIC_BASE_URL = base;
+      const { service, row, reports, shares, events } = setup();
+      await expect(service.publish('report')).rejects.toThrow(
+        'REPORT_PUBLIC_BASE_URL',
+      );
+      expect(row.status).toBe('draft');
+      expect(reports.save).not.toHaveBeenCalled();
+      expect(shares.save).not.toHaveBeenCalled();
+      expect(events.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves the localhost fallback for local development', async () => {
+    delete process.env.REPORT_PUBLIC_BASE_URL;
+    const { service } = setup();
+    expect((await service.publish('report')).url).toMatch(
+      /^http:\/\/localhost:3001\/r\//,
+    );
+  });
+
+  it('returns the existing token on the new website after correcting deployment configuration', async () => {
+    const { service, shares } = setup();
+    const first = await service.publish('report');
+    process.env.REPORT_PUBLIC_BASE_URL = 'https://new.school.test/';
+    const second = await service.createShare('report');
+    expect(new URL(second.url).origin).toBe('https://new.school.test');
+    expect(new URL(second.url).pathname).toBe(new URL(first.url).pathname);
+    expect(second.shareId).toBe(first.shareId);
+    expect(shares.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not return or replace an existing parent link when production configuration becomes invalid', async () => {
+    const { service, shares } = setup();
+    await service.publish('report');
+    process.env.NODE_ENV = 'production';
+    process.env.REPORT_PUBLIC_BASE_URL = 'http://localhost:3001';
+    await expect(service.createShare('report')).rejects.toThrow(
+      'REPORT_PUBLIC_BASE_URL',
+    );
+    expect(shares.save).toHaveBeenCalledTimes(1);
+    expect(shares.update).not.toHaveBeenCalled();
   });
 
   it('returns the same link on retry without duplicate publication or sharing events', async () => {

@@ -1251,11 +1251,11 @@ export function SemesterReports() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {labels[report.status] ?? report.status}
-                  {report.generationMode === "template"
+                  {/* {report.generationMode === "template"
                     ? " · 本地模板"
                     : report.generationMode === "ai"
                       ? " · AI 生成"
-                      : ""}
+                      : ""} */}
                   {report.errorMessage ? ` · ${report.errorMessage}` : ""}
                 </p>
               </div>

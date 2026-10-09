@@ -33,7 +33,7 @@ x-backend-environment: &backend-environment
   REPORT_AI_API_KEY: ${REPORT_AI_API_KEY:-}
   REPORT_AI_MODEL: ${REPORT_AI_MODEL:-}
   REPORT_SHARE_ENCRYPTION_KEY: ${REPORT_SHARE_ENCRYPTION_KEY:-}
-  REPORT_PUBLIC_BASE_URL: ${REPORT_PUBLIC_BASE_URL:-http://localhost:3001}
+  REPORT_PUBLIC_BASE_URL: ${REPORT_PUBLIC_BASE_URL:?Set the publicly accessible website root URL}
   SEMESTER_REPORT_STORAGE_DIR: /app/data/semester-reports
 
 services:
@@ -90,6 +90,24 @@ services:
     networks:
       classroom_internal:
         aliases: [mysql]
+
+  # The Node runtime is uid 1000; a newly created named volume needs an owner.
+  init-storage:
+    image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
+    profiles: [tools]
+    user: "0:0"
+    mem_limit: 64m
+    cpus: 0.25
+    network_mode: none
+    volumes:
+      - classroom_reports_data:/app/data/semester-reports
+    command:
+      [
+        "node",
+        "-e",
+        "const fs=require('node:fs');const p='/app/data/semester-reports';fs.mkdirSync(p,{recursive:true});fs.chownSync(p,1000,1000);fs.chmodSync(p,0o750)"
+      ]
+    logging: *default-logging
 
   migrate:
     image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}

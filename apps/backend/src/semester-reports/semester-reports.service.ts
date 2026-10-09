@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
+import { readReportPublicBaseUrl } from './report-public-url';
 import {
   detectCourseUnits as detectUnits,
   selectCoursePages,
@@ -556,6 +557,7 @@ export class SemesterReportsService {
       if (row.status !== 'draft' || !row.content)
         throw new BadRequestException('仅可发布已生成并校验的草稿');
       this.key();
+      readReportPublicBaseUrl();
       this.validateContent(row.content, row.snapshot ?? {});
       row.status = 'published';
       row.publishedAt = new Date();
@@ -601,6 +603,7 @@ export class SemesterReportsService {
     if (report.status !== 'published')
       throw new BadRequestException('请先发布报告');
     this.key();
+    readReportPublicBaseUrl();
     const existing = await shares.findOne({
       where: {
         teacherId: this.teacher.teacherId,
@@ -1138,10 +1141,7 @@ export class SemesterReportsService {
     return createHash('sha256').update(token).digest('hex');
   }
   private shareUrl(token: string) {
-    const base = (
-      process.env.REPORT_PUBLIC_BASE_URL || 'http://localhost:3001'
-    ).replace(/\/$/, '');
-    return `${base}/r/${token}`;
+    return `${readReportPublicBaseUrl()}/r/${token}`;
   }
   private key() {
     const configured = process.env.REPORT_SHARE_ENCRYPTION_KEY;
