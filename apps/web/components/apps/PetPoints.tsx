@@ -1275,10 +1275,10 @@ export function PetPoints() {
               onClick={() => setReportOpen(true)}
             >
               <ClipboardList className="h-5 w-5" />
-              学期报告
-              <Badge className="absolute -right-2 -top-2 bg-red-500 text-white">限时</Badge>
+              积分报告
+              {/* <Badge className="absolute -right-2 -top-2 bg-red-500 text-white">限时</Badge> */}
             </Button>
-            <Button
+            {/* <Button
               variant="ghost"
               className="h-11 rounded-xl bg-amber-100 px-4 font-bold text-amber-700 hover:bg-amber-200"
               disabled={!hasBackendClassrooms}
@@ -1289,7 +1289,7 @@ export function PetPoints() {
             >
               <Gift className="h-5 w-5" />
               兑换站
-            </Button>
+            </Button> */}
             <Button
               variant="ghost"
               className="h-11 rounded-xl bg-slate-100 px-4 font-bold"

@@ -14,7 +14,7 @@ import {
 } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { IsNull, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
 import {
@@ -523,42 +523,47 @@ export class SemesterReportsService {
   }
 
   async editDraft(id: string, content: Record<string, unknown>) {
-    const row = await this.findReport(id);
-    if (row.status !== 'draft')
-      throw new BadRequestException('只有草稿可以编辑');
-    const reviewedSnapshot = {
-      ...row.snapshot,
-      allowedReferences: [
-        ...new Set([
-          ...((row.snapshot?.allowedReferences as string[]) ?? []),
-          'teacher-review',
-        ]),
-      ],
-      teacherReviewedAt: new Date().toISOString(),
-    };
-    this.validateContent(content, reviewedSnapshot);
-    row.snapshot = reviewedSnapshot;
-    row.content = content;
-    await this.reports.save(row);
-    await this.log('draft-edited', { reportId: id });
-    return this.reportDto(row);
+    return this.withReportLock(id, async (row, manager) => {
+      if (row.status !== 'draft')
+        throw new BadRequestException('只有草稿可以编辑');
+      const reviewedSnapshot = {
+        ...row.snapshot,
+        allowedReferences: [
+          ...new Set([
+            ...((row.snapshot?.allowedReferences as string[]) ?? []),
+            'teacher-review',
+          ]),
+        ],
+        teacherReviewedAt: new Date().toISOString(),
+      };
+      this.validateContent(content, reviewedSnapshot);
+      row.snapshot = reviewedSnapshot;
+      row.content = content;
+      await manager.getRepository(SemesterReportEntity).save(row);
+      await this.log('draft-edited', { reportId: id }, manager);
+      return this.reportDto(row);
+    });
   }
 
   async publish(id: string) {
-    const row = await this.findReport(id);
-    if (row.status === 'published' && row.content) {
-      return { report: this.reportDto(row), ...(await this.createShare(id)) };
-    }
-    if (row.status !== 'draft' || !row.content)
-      throw new BadRequestException('仅可发布已生成并校验的草稿');
-    this.key();
-    this.validateContent(row.content, row.snapshot ?? {});
-    row.status = 'published';
-    row.publishedAt = new Date();
-    await this.reports.save(row);
-    const share = await this.createShare(id);
-    await this.log('report-published', { reportId: id });
-    return { report: this.reportDto(row), ...share };
+    return this.withReportLock(id, async (row, manager) => {
+      if (row.status === 'published' && row.content) {
+        return {
+          report: this.reportDto(row),
+          ...(await this.createShareForReport(row, manager)),
+        };
+      }
+      if (row.status !== 'draft' || !row.content)
+        throw new BadRequestException('仅可发布已生成并校验的草稿');
+      this.key();
+      this.validateContent(row.content, row.snapshot ?? {});
+      row.status = 'published';
+      row.publishedAt = new Date();
+      await manager.getRepository(SemesterReportEntity).save(row);
+      const share = await this.createShareForReport(row, manager);
+      await this.log('report-published', { reportId: id }, manager);
+      return { report: this.reportDto(row), ...share };
+    });
   }
 
   async regenerate(id: string) {
@@ -582,11 +587,21 @@ export class SemesterReportsService {
   }
 
   async createShare(id: string) {
-    const report = await this.findReport(id);
+    return this.withReportLock(id, (report, manager) =>
+      this.createShareForReport(report, manager),
+    );
+  }
+
+  private async createShareForReport(
+    report: SemesterReportEntity,
+    manager: EntityManager,
+  ) {
+    const id = report.id;
+    const shares = manager.getRepository(ReportShareEntity);
     if (report.status !== 'published')
       throw new BadRequestException('请先发布报告');
     this.key();
-    const existing = await this.shares.findOne({
+    const existing = await shares.findOne({
       where: {
         teacherId: this.teacher.teacherId,
         reportId: id,
@@ -602,11 +617,11 @@ export class SemesterReportsService {
     }
     if (existing) {
       existing.revokedAt = new Date();
-      await this.shares.save(existing);
+      await shares.save(existing);
     }
     const token = randomBytes(32).toString('base64url');
-    const share = await this.shares.save(
-      this.shares.create({
+    const share = await shares.save(
+      shares.create({
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
         reportId: id,
@@ -616,7 +631,7 @@ export class SemesterReportsService {
         revokedAt: null,
       }),
     );
-    await this.log('share-created', { reportId: id });
+    await this.log('share-created', { reportId: id }, manager);
     return {
       url: this.shareUrl(token),
       shareId: share.id,
@@ -625,14 +640,49 @@ export class SemesterReportsService {
   }
 
   async revokeShare(id: string, shareId: string) {
-    const share = await this.shares.findOne({
-      where: { id: shareId, reportId: id, teacherId: this.teacher.teacherId },
+    return this.withReportLock(id, async (report, manager) => {
+      const share = await manager.getRepository(ReportShareEntity).findOne({
+        where: { id: shareId, reportId: id, teacherId: this.teacher.teacherId },
+      });
+      if (!share) throw new NotFoundException('分享链接不存在');
+      // A delayed retry for an old link must not withdraw a newer publication.
+      if (share.revokedAt) return { revoked: true, status: report.status };
+      await this.reopenDraft(report, manager);
+      return { revoked: true, status: report.status };
     });
-    if (!share) throw new NotFoundException('分享链接不存在');
-    share.revokedAt = new Date();
-    await this.shares.save(share);
-    await this.log('share-revoked', { reportId: id });
-    return { revoked: true };
+  }
+
+  /** Also handles historical published reports whose links were already revoked. */
+  async unpublish(id: string) {
+    return this.withReportLock(id, async (report, manager) => {
+      if (report.status !== 'published' && report.status !== 'draft')
+        throw new BadRequestException('仅可重新编辑已发布报告或草稿');
+      if (report.status === 'published')
+        await this.reopenDraft(report, manager);
+      return { status: report.status };
+    });
+  }
+
+  private async reopenDraft(
+    report: SemesterReportEntity,
+    manager: EntityManager,
+  ) {
+    // Revoke every link for this report so an older token cannot expose later edits.
+    await manager.getRepository(ReportShareEntity).update(
+      {
+        reportId: report.id,
+        teacherId: this.teacher.teacherId,
+        revokedAt: IsNull(),
+      },
+      { revokedAt: new Date(), tokenCiphertext: '' },
+    );
+    await this.log('share-revoked', { reportId: report.id }, manager);
+    if (report.status === 'published') {
+      report.status = 'draft';
+      report.publishedAt = null;
+      await manager.getRepository(SemesterReportEntity).save(report);
+      await this.log('report-unpublished', { reportId: report.id }, manager);
+    }
   }
 
   async deleteReport(id: string) {
@@ -971,6 +1021,23 @@ export class SemesterReportsService {
       throw new NotFoundException('报告不存在');
     return row;
   }
+  /** Serialize publication, link creation, withdrawal and editing across tabs;
+   * the report state, links and audit events commit or roll back together.
+   */
+  private async withReportLock<T>(
+    id: string,
+    action: (row: SemesterReportEntity, manager: EntityManager) => Promise<T>,
+  ) {
+    return this.reports.manager.transaction(async (manager) => {
+      const row = await manager.getRepository(SemesterReportEntity).findOne({
+        where: { id, teacherId: this.teacher.teacherId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row || row.status === 'deleted')
+        throw new NotFoundException('报告不存在');
+      return action(row, manager);
+    });
+  }
   private publicDocument(row: ReportDocumentEntity) {
     return {
       id: row.id,
@@ -1040,9 +1107,13 @@ export class SemesterReportsService {
       documentId?: string;
       details?: Record<string, unknown>;
     } = {},
+    manager?: EntityManager,
   ) {
-    await this.events.save(
-      this.events.create({
+    const events = manager
+      ? manager.getRepository(ReportEventEntity)
+      : this.events;
+    await events.save(
+      events.create({
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
         reportId: input.reportId ?? null,

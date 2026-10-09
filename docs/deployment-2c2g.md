@@ -12,7 +12,7 @@
 | 管理端 nginx | 64 MiB   | 0.1      |
 | 合计         | 1344 MiB | 1.9      |
 
-采用模板生成报告，无需 AI 密钥。课程内容仍由 Docling 提取；本配置要求连接**独立 Docling 服务**，不会在这台 2GB 服务器加载 OCR 和布局模型。生成报告、登录和匿名家长链接均保留。
+报告采用本地模板生成；课程 PDF 使用 Kimi 云端 PDF 文件解析，需要 Kimi API key。这台服务器只用轻量 Node 依赖复制 PDF 分页，不加载 Docling、OCR 或布局模型，MySQL/backend/web/admin 可全部部署在同一台 2GB 服务器。也保留独立 Docling 接入：必须显式设置 `SEMESTER_REPORT_PARSER_PROVIDER=docling`；未设置时默认 Kimi。详细解析限制、数据发送范围和原课件验收见 [学期报告配置](semester-reports-setup.md#kimi-云端-pdf-解析默认)。
 
 这是小规模使用的初始资源配置，内存上限不保证实际负载一定可用。上线后通过 `status` 和日志观察内存、OOM 和响应时间。数据库较大或并发较多时应升级内存。
 
@@ -42,12 +42,13 @@ bash deploy/2c2g-deploy.sh init
 chmod 600 deploy/.env.2c2g
 ```
 
-生成的文件包含随机数据库密码、管理员密码、PDF 解析密钥和报告加密密钥。再次运行不会覆盖。编辑文件，填入：
+生成的文件包含随机数据库密码、管理员密码和报告加密密钥；Kimi 密钥留空，需自行填入已注册的密钥。再次运行不会覆盖。编辑文件，填入：
 
 - `REPORT_PUBLIC_BASE_URL`：例如 `https://你的正式网站域名`，无需尾部路径；用于家长链接。
-- `SEMESTER_REPORT_PARSER_URL`：独立 Docling 适配器的 `/parse` 地址；例如 `https://你的解析域名/parse`。支持 HTTPS 或私有 IP 的 HTTP 地址，不能填 backend 容器的 localhost。
-- `SEMESTER_REPORT_PARSER_API_KEY`：与独立解析容器设置一致。
-- `ADMIN_INITIAL_USERNAME`/`ADMIN_INITIAL_PASSWORD`：首次创建管理员；已有管理员可清空初始密码。
+- `SEMESTER_REPORT_PARSER_PROVIDER=kimi`，`KIMI_API_KEY` 填真实服务端密钥。
+- `KIMI_BASE_URL=https://api.moonshot.cn/v1`；PDF 使用文件提取接口，不需要配置 `KIMI_MODEL`。
+- Kimi 模式下 `SEMESTER_REPORT_PARSER_URL` / `SEMESTER_REPORT_PARSER_API_KEY` 可留空。若改为 `docling` 则必须填写独立适配器 `/parse` 地址和匹配的 Bearer 密钥。
+- `ADMIN_INITIAL_USERNAME`/`ADMIN_INITIAL_PASSWORD`：首次创建管理员；已有管理员可同时清空这两个字段；不能只清空密码。
 
 `REPORT_SHARE_ENCRYPTION_KEY` 必须是 32 字节随机值的 Base64。不要随发布更换，也不要提交环境文件。安全保存环境文件和备份，恢复时需同一报告密钥。
 
@@ -75,11 +76,11 @@ bash deploy/2c2g-deploy.sh check
 bash deploy/2c2g-deploy.sh deploy
 ```
 
-`check` 校验环境、内存、端口、主机和数据卷占用；旧容器若占用 3000、3001、8080 或共享数据卷，会在拉取镜像和迁移前拒绝执行。`check` 不拉镜像、不停服务。`deploy` 获取操作锁，串行拉镜像并核对 revision，停止新项目的网站/后台，启动 MySQL，初始化 PDF 卷权限，备份数据库/PDF，执行 TypeORM migration，再依次启动后端和前端并检查健康状态。迁移期间网站暂停，避免请求与迁移争用内存；迁移和常驻后端不会同时运行。
+`check` 校验环境、内存、端口、主机和数据卷占用；旧容器若占用 3000、3001、8080 或共享数据卷，会在拉取镜像和迁移前拒绝执行。`check` 不拉镜像、不停服务。`deploy` 获取操作锁，串行拉镜像并核对 revision，先用临时 backend 容器检查 Kimi `/models` 的密钥及网络可用性（或 Docling `/health`），失败时保留当前服务；然后停止新项目的网站/后台，启动 MySQL，初始化 PDF 卷权限，备份数据库/PDF，执行 TypeORM migration，再依次启动后端和前端并检查健康状态。迁移期间网站暂停，避免请求与迁移争用内存；迁移和常驻后端不会同时运行。
 
-健康检查覆盖后端、教师报告代理、匿名家长报告接口和 Docling `/health`。**不自动产生或发布真实学生报告**。部署完成后手动验收登录、PDF 上传解析、生成报告、课堂表现、发布复制链接、家长匿名访问、删除与移动端显示。健康检查不会解析真实 PDF；还需一次实际上传确认模型与 Bearer 密钥可用。
+健康检查覆盖后端、教师报告代理、匿名家长报告接口；解析器检查在停止应用前执行。**不自动产生或发布真实学生报告**。部署完成后手动验收登录、PDF 上传解析、生成报告、课堂表现、发布复制链接、家长匿名访问、删除与移动端显示。健康检查不会解析真实 PDF；还需一次实际上传确认云端文件提取与 Bearer 密钥可用。
 
-部署成功后保存当前和上一版镜像标签。下一次可只设置要升级的标签；不设置则沿用当前标签。
+部署成功后保存当前和上一版镜像标签。回滚镜像必须支持当前解析提供方；不支持 Kimi 的旧镜像需要先恢复 Docling 配置与独立服务，配置文件不会随镜像标签自动回滚。下一次可只设置要升级的标签；不设置则沿用当前标签。
 
 ## 从旧 Compose 迁移
 
@@ -92,7 +93,9 @@ docker compose --env-file deploy/.env.backend -f deploy/compose.backend.yml stop
 
 新配置复用 `classroom_mysql_data` 和 `classroom_reports_data`，无需导入或复制卷。不要执行 `down -v`，不要让两台 MySQL 容器同时挂载同一个数据卷。原 MySQL 版本应为 8.0；其他版本的数据卷必须先验证数据库升级/降级兼容性。脚本会拒绝仍被其他运行项目占用的数据卷。旧容器停止后再执行新入口的 `check` 和 `deploy`。
 
-## 独立 Docling（也是 Docker）
+## 可选：独立 Docling（也是 Docker）
+
+只有 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 才需要以下步骤；使用 Kimi 可跳过。网站端同时填入解析 `/parse` URL 和相同 Bearer 密钥。
 
 在另外一台主机准备 `deploy/compose.docling.remote.yml` 和权限 600 的环境文件，例如 `deploy/.env.docling.remote`：
 

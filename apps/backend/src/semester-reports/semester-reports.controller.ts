@@ -109,6 +109,9 @@ export class SemesterReportsController {
   @Post('reports/:id/shares') createShare(@Param('id') id: string) {
     return this.reports.createShare(id);
   }
+  @Post('reports/:id/unpublish') unpublish(@Param('id') id: string) {
+    return this.reports.unpublish(id);
+  }
   @Delete('reports/:id/shares/:shareId') revokeShare(
     @Param('id') id: string,
     @Param('shareId') shareId: string,

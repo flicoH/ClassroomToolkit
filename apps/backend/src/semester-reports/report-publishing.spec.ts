@@ -20,18 +20,70 @@ describe('report publishing', () => {
       status,
       content,
       snapshot: {},
+      publishedAt: status === 'published' ? new Date() : null,
     } as SemesterReportEntity;
     const reports = {
-      findOne: jest.fn().mockResolvedValue(row),
+      findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) =>
+        where.id === row.id &&
+        (where.teacherId === undefined || where.teacherId === row.teacherId) &&
+        (!where.status || where.status === row.status)
+          ? row
+          : null,
+      ),
       save: jest.fn().mockResolvedValue(row),
+      manager: {} as Record<string, unknown>,
     };
-    let share: Record<string, unknown> | null = null;
+    let storedShares: Record<string, unknown>[] = [];
+    const matches = (
+      value: Record<string, unknown>,
+      where: Record<string, unknown>,
+    ) =>
+      Object.entries(where).every(([key, expected]) =>
+        expected &&
+        typeof expected === 'object' &&
+        'type' in expected &&
+        expected.type === 'isNull'
+          ? value[key] === null
+          : value[key] === expected,
+      );
     const shares = {
-      findOne: jest.fn(async () => share),
+      findOne: jest.fn(
+        async ({ where }: { where: Record<string, unknown> }) =>
+          storedShares.find((value) => matches(value, where)) ?? null,
+      ),
       create: jest.fn((value) => value),
-      save: jest.fn(async (value) => (share = value)),
+      save: jest.fn(async (value) => {
+        const index = storedShares.findIndex((share) => share.id === value.id);
+        if (index < 0) storedShares.push(value);
+        else storedShares[index] = value;
+        return value;
+      }),
+      update: jest.fn(async (where, patch) => {
+        for (const share of storedShares)
+          if (matches(share, where)) Object.assign(share, patch);
+      }),
     };
     const events = { create: jest.fn((value) => value), save: jest.fn() };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === SemesterReportEntity
+          ? reports
+          : entity.name === 'ReportShareEntity'
+            ? shares
+            : events,
+      ),
+    };
+    reports.manager.transaction = jest.fn(async (callback) => {
+      const savedRow = structuredClone(row);
+      const savedShares = structuredClone(storedShares);
+      try {
+        return await callback(manager);
+      } catch (error) {
+        Object.assign(row, savedRow);
+        storedShares = savedShares;
+        throw error;
+      }
+    });
     const dependencies = [
       { findOne: jest.fn().mockResolvedValue({ name: '学期' }) },
       { findOne: jest.fn().mockResolvedValue({ name: '英语' }) },
@@ -98,8 +150,153 @@ describe('report publishing', () => {
     await expect(service.publish('report')).rejects.toThrow('报告不存在');
     expect(reports.findOne).toHaveBeenCalledWith({
       where: { id: 'report', teacherId: 'teacher' },
+      lock: { mode: 'pessimistic_write' },
     });
     expect(shares.save).not.toHaveBeenCalled();
+  });
+  it('returns a revoked publication to an editable draft and never reuses the old parent link', async () => {
+    const { service, row, events } = setup();
+    row.snapshot = {
+      scoreSummary: {
+        positive: 4,
+        negative: -1,
+        net: 3,
+        count: 2,
+        records: [],
+      },
+    };
+    const snapshot = structuredClone(row.snapshot);
+    const first = await service.publish('report');
+    await expect(service.editDraft('report', content)).rejects.toThrow(
+      '只有草稿可以编辑',
+    );
+    const oldToken = new URL(first.url).pathname.split('/').pop()!;
+    expect((await service.publicReport(oldToken)).content.summary).toBe(
+      content.summary,
+    );
+    const result = await service.revokeShare('report', first.shareId);
+    expect(result).toMatchObject({ revoked: true, status: 'draft' });
+    expect(row.status).toBe('draft');
+    expect(row.publishedAt).toBeNull();
+    expect(row.content).toEqual(content);
+    expect(row.snapshot).toEqual(snapshot);
+    await expect(service.publicReport(oldToken)).rejects.toThrow(
+      '报告链接无效或已失效',
+    );
+    await expect(service.createShare('report')).rejects.toThrow('请先发布报告');
+    await service.editDraft('report', {
+      ...content,
+      summary: '老师修改后的评价',
+    });
+    const next = await service.publish('report');
+    expect(next.url).not.toBe(first.url);
+    expect(next.shareId).not.toBe(first.shareId);
+    expect(
+      (await service.publicReport(new URL(next.url).pathname.split('/').pop()!))
+        .content.summary,
+    ).toBe('老师修改后的评价');
+    await expect(service.publicReport(oldToken)).rejects.toThrow(
+      '报告链接无效或已失效',
+    );
+    expect(events.save.mock.calls.map(([event]) => event.action)).toContain(
+      'report-unpublished',
+    );
+  });
+
+  it('allows historical publications without a live link to be reopened and remains idempotent', async () => {
+    const { service, row, events } = setup('published');
+    expect(await service.unpublish('report')).toEqual({ status: 'draft' });
+    expect(row.content).toEqual(content);
+    expect(row.publishedAt).toBeNull();
+    const calls = events.save.mock.calls.length;
+    expect(await service.unpublish('report')).toEqual({ status: 'draft' });
+    expect(events.save.mock.calls).toHaveLength(calls);
+    await service.editDraft('report', {
+      ...content,
+      summary: '重新审核后的评价',
+    });
+    expect((await service.publish('report')).url).toContain('/r/');
+  });
+
+  it.each(['queued', 'generating', 'failed', 'deleted'])(
+    'does not reopen a %s report',
+    async (status) => {
+      const { service, row, shares } = setup(status);
+      await expect(service.unpublish('report')).rejects.toThrow(
+        status === 'deleted' ? '报告不存在' : '仅可重新编辑已发布报告或草稿',
+      );
+      expect(row.status).toBe(status);
+      expect(shares.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('revokes every active link before editing a publication', async () => {
+    const { service, shares } = setup();
+    const first = await service.publish('report');
+    const old = await shares.findOne({ where: { id: first.shareId } });
+    await shares.save({ ...old, id: 'historical-duplicate' });
+    await service.revokeShare('report', first.shareId);
+    expect(
+      (await shares.findOne({ where: { id: 'historical-duplicate' } }))
+        ?.revokedAt,
+    ).toBeInstanceOf(Date);
+    expect(
+      (await shares.findOne({ where: { id: 'historical-duplicate' } }))
+        ?.tokenCiphertext,
+    ).toBe('');
+  });
+
+  it('does not unpublish a new revision when an old revoke request is repeated', async () => {
+    const { service, row, events } = setup();
+    const first = await service.publish('report');
+    await service.revokeShare('report', first.shareId);
+    const next = await service.publish('report');
+    const calls = events.save.mock.calls.length;
+    await service.revokeShare('report', first.shareId);
+    expect(row.status).toBe('published');
+    expect(events.save.mock.calls).toHaveLength(calls);
+    expect(
+      (await service.publicReport(new URL(next.url).pathname.split('/').pop()!))
+        .content.summary,
+    ).toBe(content.summary);
+  });
+
+  it('checks report and share ownership before allowing editing again', async () => {
+    const { service, row, reports, shares } = setup();
+    const first = await service.publish('report');
+    await expect(
+      service.revokeShare('report', 'unknown-share'),
+    ).rejects.toThrow('分享链接不存在');
+    await expect(
+      service.revokeShare('other-report', first.shareId),
+    ).rejects.toThrow('报告不存在');
+    row.teacherId = 'another-teacher';
+    await expect(service.revokeShare('report', first.shareId)).rejects.toThrow(
+      '报告不存在',
+    );
+    expect(row.status).toBe('published');
+    expect(shares.update).not.toHaveBeenCalled();
+    expect(reports.findOne).toHaveBeenCalledWith({
+      where: { id: 'report', teacherId: 'teacher' },
+      lock: { mode: 'pessimistic_write' },
+    });
+  });
+
+  it('rolls back link revocation if reopening the draft fails', async () => {
+    const { service, row, reports } = setup();
+    const first = await service.publish('report');
+    reports.save.mockRejectedValueOnce(new Error('database unavailable'));
+    await expect(service.revokeShare('report', first.shareId)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(row.status).toBe('published');
+    expect(
+      (
+        await service.publicReport(
+          new URL(first.url).pathname.split('/').pop()!,
+        )
+      ).content.summary,
+    ).toBe(content.summary);
   });
   it('saves teacher mastery and classroom feedback and exposes them through the parent link with readable sources', async () => {
     const { service, row, events } = setup();

@@ -82,6 +82,9 @@ compose() {
 
 log "Validating Compose configuration"
 compose config --quiet
+# Read the rendered value so env-file and shell overrides select the same path.
+PARSER_PROVIDER=$(compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["backend"]["environment"].get("SEMESTER_REPORT_PARSER_PROVIDER") or "kimi")')
+case "$PARSER_PROVIDER" in kimi|docling) ;; *) log 'Unsupported PDF parser provider'; exit 1 ;; esac
 
 pull_with_retry() {
   local target=$1
@@ -104,8 +107,13 @@ pull_with_retry() {
 
 log "Pulling backend image $BACKEND_IMAGE_TAG"
 pull_with_retry backend
-log "Pulling Docling parser image $BACKEND_IMAGE_TAG"
-pull_with_retry docling-parser
+if [[ "$PARSER_PROVIDER" == docling ]]; then
+  log "Pulling Docling parser image $BACKEND_IMAGE_TAG"
+  pull_with_retry docling-parser
+else
+  # Explicit stop also releases memory from a parser left by the old deployment.
+  compose --profile docling stop docling-parser
+fi
 
 log "Starting MySQL"
 compose up -d --wait mysql
@@ -113,8 +121,12 @@ compose up -d --wait mysql
 log "Running database migrations"
 compose --profile tools run --rm migrate
 
-log "Starting Docling parser and backend"
-compose up -d --wait --force-recreate --remove-orphans --pull=never docling-parser backend
+log "Starting backend with $PARSER_PROVIDER PDF parsing"
+if [[ "$PARSER_PROVIDER" == docling ]]; then
+  compose --profile docling up -d --wait --force-recreate --remove-orphans --pull=never docling-parser backend
+else
+  compose up -d --wait --force-recreate --remove-orphans --pull=never backend
+fi
 
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"
 backend_container_id=$(compose ps -q backend)
@@ -133,13 +145,15 @@ if [[ "$backend_revision" != "$expected_revision" ]]; then
   exit 1
 fi
 
-parser_image="${IMAGE_NAMESPACE}-docling-parser:${BACKEND_IMAGE_TAG}"
-parser_container_id=$(compose ps -q docling-parser)
-parser_revision=$(docker image inspect "$parser_image" \
-  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
-if [[ -z "$parser_container_id" || "$parser_revision" != "$expected_revision" ]]; then
-  log "Docling parser image verification failed"
-  exit 1
+if [[ "$PARSER_PROVIDER" == docling ]]; then
+  parser_image="${IMAGE_NAMESPACE}-docling-parser:${BACKEND_IMAGE_TAG}"
+  parser_container_id=$(compose ps -q docling-parser)
+  parser_revision=$(docker image inspect "$parser_image" \
+    --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+  if [[ -z "$parser_container_id" || "$parser_revision" != "$expected_revision" ]]; then
+    log "Docling parser image verification failed"
+    exit 1
+  fi
 fi
 
 log "Checking admin teacher password reset route"

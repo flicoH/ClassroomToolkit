@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Clipboard, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronDown, Clipboard, FileText, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { CartoonSemesterReportIcon } from "@/components/icons/CartoonAppIcons";
 import request from "@/lib/request";
 import { copyText } from "@/lib/clipboard";
+import { createUuid } from "@/lib/id";
 import {
   LearningReportView,
   masteryLabels,
@@ -67,7 +68,7 @@ type ScorePreview = {
 
 const base = "/api/semester-reports";
 const mobileReportControls =
-  "max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11 max-sm:[&_select]:h-11 max-sm:[&_select]:min-w-0 max-sm:[&_select]:max-w-full max-sm:[&_select]:text-base max-sm:[&_textarea]:text-base max-sm:[&_input:not([type=checkbox]):not([type=file])]:h-11 [&_input]:min-w-0 [&_input]:max-w-full";
+  "max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11 max-md:[&_select]:h-11 max-md:[&_select]:min-w-0 max-md:[&_select]:max-w-full max-md:[&_select]:text-base max-md:[&_textarea]:text-base max-md:[&_input:not([type=checkbox]):not([type=file])]:h-11 max-md:[&_input]:text-base [&_input]:min-w-0 [&_input]:max-w-full";
 const performanceCategories = [
   "课堂任务",
   "看图表达",
@@ -103,6 +104,13 @@ function errorMessage(error: unknown) {
 }
 
 export function SemesterReports() {
+  const sectionId = useId();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [mobileSection, setMobileSection] = useState<"courses" | "compose" | "reports">("courses");
+  function showSection(section: typeof mobileSection) {
+    setMobileSection(section);
+    if (scrollRef.current && window.matchMedia?.("(max-width: 767px)").matches) scrollRef.current.scrollTop = 0;
+  }
   const [terms, setTerms] = useState<Term[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -168,12 +176,15 @@ export function SemesterReports() {
     };
   }, [editing]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refreshToken?: string) => {
     const [t, s, p, r, d] = await Promise.all([
       request.get<Term[], Term[]>(`${base}/report-terms`),
       request.get<Subject[], Subject[]>(`${base}/report-subjects`),
       request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
-      request.get<Report[], Report[]>(`${base}/reports`),
+      request.get<Report[], Report[]>(
+        `${base}/reports`,
+        refreshToken ? { params: { refresh: refreshToken } } : undefined
+      ),
       request.get<Document[], Document[]>(`${base}/course-documents`)
     ]);
     setTerms(t);
@@ -260,8 +271,8 @@ export function SemesterReports() {
           document => document.status === "ready" && document.termId === termId && document.subjectId === subjectId
         )
         .flatMap(document => [
-          ...(document.units ?? []),
-          ...Array.from({ length: Math.min(document.pageCount ?? 0, 100) }, (_, index) => `第${index + 1}页`)
+          ...(document.units ?? [])
+          // ...Array.from({ length: Math.min(document.pageCount ?? 0, 100) }, (_, index) => `第${index + 1}页`)
         ])
     )
   ];
@@ -438,7 +449,8 @@ export function SemesterReports() {
         })
       });
       setReports(old => [...result.reports, ...old]);
-      setMessage(`已提交 ${result.reports.length} 份报告；可在下方查看状态。`);
+      setMessage(`已提交 ${result.reports.length} 份报告；可在报告列表查看状态。`);
+      showSection("reports");
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -479,8 +491,29 @@ export function SemesterReports() {
         setReports(current => current.filter(row => row.id !== report.id));
         if (editing?.id === report.id) setEditing(null);
       }
-      if (action === "revoke" && report.share)
-        await request.delete(`${base}/reports/${report.id}/shares/${report.share.id}`);
+      if (action === "revoke") {
+        const result = report.share
+          ? await request.delete<{ status: string }, { status: string }>(
+              `${base}/reports/${report.id}/shares/${report.share.id}`
+            )
+          : await request.post<{ status: string }, { status: string }>(`${base}/reports/${report.id}/unpublish`);
+        // Bypass the request layer's brief GET deduplication cache after the mutation.
+        const refreshToken = createUuid();
+        // A repeated request for an old link may refer to an already republished report.
+        if (result.status !== "draft") {
+          await load(refreshToken);
+          setMessage("该链接已撤销，报告状态已更新，请重新查看。");
+          return;
+        }
+        const reopened = { ...report, status: "draft", share: null };
+        setReports(current => current.map(row => (row.id === report.id ? reopened : row)));
+        await load(refreshToken).catch(() => undefined);
+        const opened = await openEdit(reopened, refreshToken);
+        if (opened?.status === "draft")
+          setMessage(report.share ? "分享链接已撤销，报告已转为草稿，可重新编辑。" : "报告已转为草稿，可重新编辑。");
+        else if (opened) setMessage("报告状态已更新，请重新查看。");
+        return;
+      }
       if (action === "retry") await request.post(`${base}/reports/${report.id}/retry`);
       await load();
     } catch (error) {
@@ -507,15 +540,19 @@ export function SemesterReports() {
       }
     }
   }
-  async function openEdit(report: Report) {
-    if (loadingReportId) return;
+  async function openEdit(report: Report, refreshToken?: string) {
+    if (loadingReportId) return null;
     setLoadingReportId(report.id);
     setMessage("");
     try {
       const [full, history] = await Promise.all([
-        request.get<Report, Report>(`${base}/reports/${report.id}`),
+        request.get<Report, Report>(
+          `${base}/reports/${report.id}`,
+          refreshToken ? { params: { refresh: refreshToken } } : undefined
+        ),
         request.get<Array<{ action: string; createdAt: string }>, Array<{ action: string; createdAt: string }>>(
-          `${base}/reports/${report.id}/events`
+          `${base}/reports/${report.id}/events`,
+          refreshToken ? { params: { refresh: refreshToken } } : undefined
         )
       ]);
       if (!full.content) throw new Error("报告正文尚未生成，请稍后重试。");
@@ -523,8 +560,10 @@ export function SemesterReports() {
       setPreviewingDraft(full.status !== "draft");
       setDraft(full.content as ReportContent);
       setEvents(history);
+      return full;
     } catch (error) {
       setMessage(errorMessage(error));
+      return null;
     } finally {
       setLoadingReportId(null);
     }
@@ -566,22 +605,81 @@ export function SemesterReports() {
 
   return (
     <div
-      className={`${mobileReportControls} h-full min-w-0 overflow-x-hidden overflow-y-auto bg-background p-3 text-foreground sm:p-6`}
+      ref={scrollRef}
+      className={`${mobileReportControls} semester-reports h-full min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-slate-50/80 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-foreground md:bg-background md:p-6 dark:bg-background`}
     >
-      <header className="mb-5 flex items-center gap-3">
-        <CartoonSemesterReportIcon className="h-9 w-9 shrink-0" />
-        <div>
+      <header className="mb-4 flex items-center gap-3 md:mb-5">
+        <div className="rounded-2xl border border-indigo-100 bg-white p-2 dark:bg-muted md:border-0 md:bg-transparent md:p-0">
+          <CartoonSemesterReportIcon className="h-8 w-8 shrink-0 md:h-9 md:w-9" />
+        </div>
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">学期报告</h1>
-          <p className="text-sm text-muted-foreground">课程 PDF + 综合积分，教师审核后分享给家长</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground md:text-sm">整理课堂成长，审核后分享给家长</p>
         </div>
       </header>
-      {message && <p className="mb-4 rounded-md border bg-muted p-3 text-sm">{message}</p>}
+      <nav
+        aria-label="学期报告导航"
+        className="sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md md:hidden"
+      >
+        {(
+          [
+            ["courses", "课程资料"],
+            ["compose", "填写报告"],
+            ["reports", "报告列表"]
+          ] as const
+        ).map(([section, label]) => (
+          <button
+            key={section}
+            type="button"
+            aria-pressed={mobileSection === section}
+            aria-controls={`${sectionId}-${section}`}
+            className={`rounded-xl px-1 py-2 text-sm font-medium transition-colors ${mobileSection === section ? "bg-indigo-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted"}`}
+            onClick={() => showSection(section)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      {message && (
+        <p
+          role="status"
+          className="mb-4 break-words rounded-xl border bg-background p-3 text-sm leading-6 [overflow-wrap:anywhere]"
+        >
+          {message}
+        </p>
+      )}
+      <div className="mb-4 flex min-w-0 items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 md:hidden dark:border-border dark:bg-muted">
+        <p className="min-w-0 break-words text-sm leading-6">
+          {term?.name || "未选择学期"}{" "}
+          <span className="text-muted-foreground">
+            · {subjects.find(subject => subject.id === subjectId)?.name || "未选择学科"}
+          </span>
+        </p>
+        {mobileSection !== "courses" && (
+          <button
+            type="button"
+            className="shrink-0 px-2 text-sm font-medium text-indigo-600"
+            onClick={() => showSection("courses")}
+          >
+            更换
+          </button>
+        )}
+      </div>
       <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-        <section className="min-w-0 space-y-4 rounded-xl border p-3 sm:p-4">
-          <h2 className="font-semibold">课程资料</h2>
-          <div className="grid gap-2 sm:grid-cols-2">
+        {/* Keep panels mounted so changing mobile sections never clears inputs or selection. */}
+        <section
+          id={`${sectionId}-courses`}
+          aria-label="课程资料"
+          className={`${mobileSection === "courses" ? "" : "hidden md:block"} min-w-0 space-y-4 rounded-2xl border bg-background p-4 md:rounded-xl`}
+        >
+          <div>
+            <h2 className="font-semibold">课程资料</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">选择学期和学科，上传并核对课程 PDF。</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <select
-              className="h-9 rounded-md border bg-background px-2"
+              aria-label="课程学期"
+              className="h-9 w-full min-w-0 rounded-md border bg-background px-2"
               value={termId}
               onChange={e => {
                 setTermId(e.target.value);
@@ -596,7 +694,8 @@ export function SemesterReports() {
               ))}
             </select>
             <select
-              className="h-9 rounded-md border bg-background px-2"
+              aria-label="课程学科"
+              className="h-9 w-full min-w-0 rounded-md border bg-background px-2"
               value={subjectId}
               onChange={e => setSubjectId(e.target.value)}
             >
@@ -608,50 +707,75 @@ export function SemesterReports() {
               ))}
             </select>
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
-            <Input placeholder="学科名称（必填）" value={newSubject} onChange={e => setNewSubject(e.target.value)} />
-            <Button disabled={busy || !newSubject.trim()} variant="outline" onClick={() => void createSubject()}>
-              <Plus />
-              添加学科
-            </Button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Input placeholder="学期名称（必填）" value={newTermName} onChange={e => setNewTermName(e.target.value)} />
-            <Input
-              type="date"
-              aria-label="学期开始日期（必填）"
-              value={newTermStart}
-              onChange={e => setNewTermStart(e.target.value)}
-            />
-            <Input
-              type="date"
-              aria-label="学期结束日期（必填）"
-              value={newTermEnd}
-              onChange={e => setNewTermEnd(e.target.value)}
-            />
-            <Button
-              disabled={busy || !newTermName.trim() || !newTermStart || !newTermEnd || newTermEnd <= newTermStart}
-              variant="outline"
-              onClick={() => void createTerm()}
-            >
-              <Plus />
-              新建学期
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            学科填写名称后点击“添加学科”；学期需同时填写名称、开始日期和结束日期，且结束日期晚于开始日期。
-          </p>
+          <details
+            key={terms.length && subjects.length ? "ready" : "empty"}
+            data-course-setup
+            open={!terms.length || !subjects.length}
+            className="group rounded-xl border bg-muted/30 p-3"
+          >
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              新建学期 / 学科
+              <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  placeholder="学科名称（必填）"
+                  value={newSubject}
+                  onChange={e => setNewSubject(e.target.value)}
+                />
+                <Button disabled={busy || !newSubject.trim()} variant="outline" onClick={() => void createSubject()}>
+                  <Plus />
+                  添加学科
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  placeholder="学期名称（必填）"
+                  value={newTermName}
+                  onChange={e => setNewTermName(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  aria-label="学期开始日期（必填）"
+                  value={newTermStart}
+                  onChange={e => setNewTermStart(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  aria-label="学期结束日期（必填）"
+                  value={newTermEnd}
+                  onChange={e => setNewTermEnd(e.target.value)}
+                />
+                <Button
+                  disabled={busy || !newTermName.trim() || !newTermStart || !newTermEnd || newTermEnd <= newTermStart}
+                  variant="outline"
+                  onClick={() => void createTerm()}
+                >
+                  <Plus />
+                  新建学期
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                学科填写名称后点击“添加学科”；学期需同时填写名称、开始日期和结束日期，且结束日期晚于开始日期。
+              </p>
+            </div>
+          </details>
           {term && (
             <p className="text-xs text-muted-foreground">
               当前学期：{term.startDate} 至 {term.endDate}
             </p>
           )}
-          <label className="flex cursor-pointer items-center justify-center rounded-lg border border-dashed p-4 text-sm hover:bg-muted">
+          <label
+            className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 text-center text-sm leading-6 focus-within:ring-2 focus-within:ring-ring ${busy || !termId || !subjectId ? "opacity-60" : "hover:bg-indigo-50"}`}
+          >
+            <Upload className="h-6 w-6 text-indigo-500" aria-hidden="true" />
             {!termId
               ? "请先新建并选择学期，再上传课程 PDF"
               : !subjectId
                 ? "请先选择学科，再上传课程 PDF"
                 : "选择课程 PDF（最大 30MB）"}
+            <span className="text-xs text-muted-foreground">上传后自动解析，核对章节后用于报告</span>
             <input
               className="sr-only"
               type="file"
@@ -668,13 +792,20 @@ export function SemesterReports() {
             {documents
               .filter(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId))
               .map(doc => (
-                <div key={doc.id} className="rounded-md bg-muted/60 p-2 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
-                      {doc.fileName} · {labels[doc.status] ?? doc.status}
-                      {doc.errorMessage ? ` · ${doc.errorMessage}` : ""}
-                    </span>
-                    <div className="flex shrink-0 flex-wrap gap-1">
+                <div key={doc.id} className="rounded-xl border bg-muted/20 p-3 text-sm">
+                  <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                    <div className="flex min-w-0 flex-1 items-start gap-2">
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words font-medium leading-6 [overflow-wrap:anywhere]">{doc.fileName}</p>
+                        <span
+                          className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs ${doc.status === "failed" ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700"}`}
+                        >
+                          {labels[doc.status] ?? doc.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 max-md:[&_button]:flex-1 md:shrink-0">
                       {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
                         <Button
                           size="sm"
@@ -712,7 +843,14 @@ export function SemesterReports() {
                         </Button>
                       )}
                       {doc.status === "failed" && (
-                        <Button size="sm" variant="outline" onClick={() => void documentAction(doc.id, "retry")}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            void documentAction(doc.id, "retry").catch(error => setMessage(errorMessage(error)))
+                          }
+                        >
                           重试
                         </Button>
                       )}
@@ -724,9 +862,18 @@ export function SemesterReports() {
                         onClick={() => setDeleteTarget({ kind: "document", document: doc })}
                       >
                         <Trash2 />
+                        <span className="md:hidden">删除</span>
                       </Button>
                     </div>
                   </div>
+                  {doc.errorMessage && (
+                    <p
+                      role="alert"
+                      className="mt-3 break-words rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700 [overflow-wrap:anywhere]"
+                    >
+                      {doc.errorMessage}
+                    </p>
+                  )}
                   {(doc.status === "ready" || doc.status === "needs_review") && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       已提取 {doc.pageCount ?? 0} 页、{doc.units?.length ?? 0} 个单元或课时
@@ -739,6 +886,7 @@ export function SemesterReports() {
                   {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
                     <textarea
                       className="mt-2 min-h-16 w-full rounded border bg-background p-2 text-xs"
+                      aria-label={`${doc.fileName} 课程章节`}
                       value={
                         unitDrafts[doc.id] ??
                         ((doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
@@ -752,10 +900,25 @@ export function SemesterReports() {
                   )}
                 </div>
               ))}
+            {!documents.some(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId)) && (
+              <p className="py-2 text-center text-sm text-muted-foreground">还没有课程 PDF，上传后会显示在这里。</p>
+            )}
           </div>
+          <Button className="w-full md:hidden" variant="outline" onClick={() => showSection("compose")}>
+            下一步：填写报告
+          </Button>
         </section>
-        <section className="min-w-0 space-y-4 rounded-xl border p-3 sm:p-4">
-          <h2 className="font-semibold">生成报告</h2>
+        <section
+          id={`${sectionId}-compose`}
+          aria-label="填写报告"
+          className={`${mobileSection === "compose" ? "" : "hidden md:block"} min-w-0 space-y-4 rounded-2xl border bg-background p-4 md:rounded-xl`}
+        >
+          <div>
+            <h2 className="font-semibold">填写报告</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              选择学生与授课范围，再填写每位学生的课堂反馈。
+            </p>
+          </div>
           <section className="space-y-3 rounded-xl bg-indigo-50/40 p-3">
             <h3 className="text-sm font-semibold">报告基础信息</h3>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -806,7 +969,7 @@ export function SemesterReports() {
               </label>
             </div>
           </section>
-          <label className="block space-y-1 text-sm">
+          {/* <label className="block space-y-1 text-sm">
             <span>生成方式</span>
             <select
               className="h-9 w-full rounded-md border bg-background px-2"
@@ -816,7 +979,7 @@ export function SemesterReports() {
               <option value="template">本地模板（无需 AI）</option>
               <option value="ai">AI 生成（需配置模型服务）</option>
             </select>
-          </label>
+          </label> */}
           {generationMode === "template" && (
             <p className="text-xs text-muted-foreground">
               按下方填写的掌握评价、课堂表现和寄语整理报告，结合综合积分生成可审核草稿。
@@ -831,7 +994,7 @@ export function SemesterReports() {
             >
               <option value="week">每周</option>
               <option value="month">每月</option>
-              <option value="term">每学期</option>
+              {/* <option value="term">每学期</option> */}
             </select>
             <select
               aria-label="报告学科"
@@ -872,9 +1035,9 @@ export function SemesterReports() {
           {period !== "term" && availableUnits.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">从课程 PDF 选择单元、课时或页码，可选择多个：</p>
-              <p className="text-xs text-muted-foreground">
+              {/* <p className="text-xs text-muted-foreground">
                 页码可手动填写范围，例如“第101-120页”；同学科有多份 PDF 时，请核对下方的命中页预览。
-              </p>
+              </p> */}
               <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto sm:flex sm:max-h-32 sm:flex-wrap sm:gap-1">
                 {availableUnits.map(unit => (
                   <Button
@@ -958,7 +1121,7 @@ export function SemesterReports() {
             </p>
           )}
           {scopePreviewError && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <p className="text-xs text-destructive">{scopePreviewError}</p>
               <Button size="sm" variant="outline" onClick={() => setScopePreviewAttempt(current => current + 1)}>
                 重新加载学习内容
@@ -1073,7 +1236,11 @@ export function SemesterReports() {
           </Button>
         </section>
       </div>
-      <section className="mt-6 min-w-0 rounded-xl border p-3 sm:p-4">
+      <section
+        id={`${sectionId}-reports`}
+        aria-label="报告列表"
+        className={`${mobileSection === "reports" ? "" : "hidden md:block"} min-w-0 rounded-2xl border bg-background p-4 md:mt-6 md:rounded-xl`}
+      >
         <h2 className="mb-3 font-semibold">报告与流程</h2>
         <div className="space-y-2">
           {reports.map(report => (
@@ -1097,7 +1264,7 @@ export function SemesterReports() {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!loadingReportId}
+                    disabled={!!loadingReportId || !!actingReportId}
                     onClick={() => void openEdit(report)}
                   >
                     {report.status === "draft" ? "预览 / 编辑" : "查看流程"}
@@ -1129,14 +1296,14 @@ export function SemesterReports() {
                     复制链接
                   </Button>
                 )}
-                {report.status === "published" && report.share && (
+                {report.status === "published" && (
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!actingReportId}
+                    disabled={!!actingReportId || !!loadingReportId}
                     onClick={() => void actOnReport(report, "revoke")}
                   >
-                    撤销链接
+                    {report.share ? "撤销链接并编辑" : "重新编辑"}
                   </Button>
                 )}
                 <Button
@@ -1212,7 +1379,7 @@ export function SemesterReports() {
                     {message}
                   </p>
                 )}
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                   <Button
                     size="sm"
                     variant={previewingDraft ? "default" : "outline"}
@@ -1361,9 +1528,9 @@ export function SemesterReports() {
                               }
                             />
                             <div className="mt-2 flex items-center justify-between gap-2">
-                              <p className="text-xs text-muted-foreground">
+                              {/* <p className="text-xs text-muted-foreground">
                                 依据：{entry.sourceRefs.map(sourceLabel).join("、")}
-                              </p>
+                              </p> */}
                               <Button
                                 size="sm"
                                 variant="ghost"

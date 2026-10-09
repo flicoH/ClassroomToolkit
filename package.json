@@ -11,7 +11,7 @@
     "commit": "pnpm exec git-cz",
     "precommit": "lint-staged",
     "test": "pnpm run test:standards && pnpm run test:backend && pnpm run test:web && pnpm run test:admin",
-    "test:standards": "node --test scripts/check-native-dialogs.test.mjs && node scripts/check-native-dialogs.mjs && python3 -m unittest discover -s deploy/docling-parser -p 'test_*.py'",
+    "test:standards": "node --test scripts/check-native-dialogs.test.mjs && node scripts/check-native-dialogs.mjs && python3 -m unittest discover -s deploy/docling-parser -p 'test_*.py' && python3 -m unittest discover -s deploy/tests -p 'test_*.py'",
     "test:backend": "pnpm --filter ClassRoomToolkitBackend exec jest --runInBand --no-watchman",
     "test:web": "pnpm --filter ClassRoomToolkitWeb test",
     "test:admin": "pnpm --filter ClassRoomToolkitAdmin exec vitest run",

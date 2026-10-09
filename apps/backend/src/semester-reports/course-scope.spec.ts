@@ -30,6 +30,133 @@ const document = {
 };
 
 describe('course scope selection', () => {
+  it('indexes cloud HTML tables alongside Markdown, including merged cells and entities', () => {
+    const course = {
+      ...document,
+      sourcePages: [
+        {
+          page: 8,
+          text: '# 课程目标\n|课时|课程|目标及内容|\n|12|复习|复习已学字母|',
+        },
+        {
+          page: 9,
+          text: '<table><tr><td>13</td><td>拼读</td><td>1.辨认 n &amp; l。<br>2.练习拼读。</td></tr><tr><td>14</td><td colspan="2">阶段测评</td></tr></table>',
+        },
+      ],
+    };
+    expect(
+      detectCourseUnits(course.sourcePages.map((p) => p.text).join('\n')),
+    ).toEqual(['第12课时 · 复习', '第13课时 · 拼读', '第14课时 · 阶段测评']);
+    expect(
+      selectCoursePages([course], '第13课时', 'week')[0].pages.map(
+        (p) => p.page,
+      ),
+    ).toEqual([9]);
+    const items = extractLearningContents([course], '第13课时', 'week');
+    expect(items.map((item) => item.text)).toEqual([
+      '辨认 n & l。',
+      '练习拼读。',
+    ]);
+    expect(
+      items.every((item) => item.sourceRefs.join() === 'course:course:p9'),
+    ).toBe(true);
+    expect(
+      extractLearningContents([course], '第14课时', 'week').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['阶段测评']);
+  });
+
+  it('keeps HTML rowspan unit labels and a merged Unit/lesson cell aligned with goals', () => {
+    const course = {
+      ...document,
+      sourcePages: [
+        {
+          page: 6,
+          text: '<table><tr><th>单元</th><th>课时</th><th>教学内容</th><th>教学目标</th><th>策略</th><th>家庭活动</th></tr><tr><td rowspan="2">Unit2</td><td>3</td><td>内容甲</td><td>目标甲</td><td></td><td></td></tr><tr><td>4</td><td>内容乙</td><td>目标乙</td><td></td><td></td></tr></table>\n|Unit2 5|内容丙|目标丙|策略|活动|',
+        },
+      ],
+    };
+    expect(detectCourseUnits(course.sourcePages[0].text)).toEqual([
+      'Unit2',
+      'Unit2 第3课',
+      'Unit2 第4课',
+      'Unit2 第5课',
+    ]);
+    expect(
+      extractLearningContents([course], 'Unit2 4', 'week').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['目标乙']);
+    expect(
+      extractLearningContents([course], 'Unit2 5', 'week').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['目标丙']);
+    expect(selectCoursePages([course], 'Unit2 2', 'week')[0].pages).toEqual([]);
+  });
+
+  it('preserves volume boundaries and continued goals across cloud HTML and Markdown pages', () => {
+    const course = {
+      ...document,
+      sourcePages: [
+        {
+          page: 3,
+          text: '<table><tr><td colspan="3">阅读教材1册</td></tr><tr><td>课时</td><td>课程</td><td>目标及内容</td></tr><tr><td>11</td><td>第一册课题</td><td>学习第一册</td></tr></table>',
+        },
+        {
+          page: 11,
+          text: '<table><tr><td colspan="3">阅读教材2册</td></tr><tr><td>11</td><td>第二册课题</td><td>1.认识新字。</td></tr></table>',
+        },
+        { page: 13, text: '| | | 2.汉字迁移。 |' },
+      ],
+    };
+    expect(
+      selectCoursePages([course], '第2册 第11课时', 'week')[0].pages.map(
+        (p) => p.page,
+      ),
+    ).toEqual([11, 13]);
+    const contents = extractLearningContents(
+      [course],
+      '第2册 第11课时',
+      'week',
+    );
+    expect(contents.map((item) => item.text)).toEqual([
+      '认识新字。',
+      '2.汉字迁移。',
+    ]);
+    expect(
+      contents.every(
+        (item) =>
+          item.sourceRefs.join() === 'course:course:p11,course:course:p13',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not guess lessons from cloud rows with displaced unit labels', () => {
+    const course = {
+      ...document,
+      sourcePages: [
+        {
+          page: 6,
+          text: '|Unit1 6|复习内容|复习目标|策略|活动|\n|内容甲|目标甲|策略|活动|Unit2 1|内容乙 Unit2 2|',
+        },
+      ],
+    };
+    expect(selectCoursePages([course], 'Unit2 1-2', 'week')[0].pages).toEqual(
+      [],
+    );
+    expect(
+      extractLearningContents([course], 'Unit1 6', 'week').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['复习目标']);
+    // A teacher can inspect the original page instead of trusting guessed rows.
+    expect(
+      selectCoursePages([course], '第6页', 'week')[0].pages.map((p) => p.page),
+    ).toEqual([6]);
+  });
+
   it.each([
     'Unit1 1',
     'Unit 1 Lesson 1',

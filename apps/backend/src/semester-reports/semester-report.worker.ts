@@ -8,9 +8,9 @@ import {
 import { ReportDocumentEntity } from './semester-report.entity';
 import { readFile } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
-import { basename } from 'node:path';
 import { LessThan } from 'typeorm';
 import { chooseCourseUnitCandidates } from './course-scope';
+import { extractPdf } from './pdf-parser';
 import {
   generateTemplateReport,
   addLearningReportSections,
@@ -341,51 +341,4 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     validateGeneratedReportContent(content, snapshot);
     return content;
   }
-}
-
-async function extractPdf(fileName: string, buffer: Buffer) {
-  const url = process.env.SEMESTER_REPORT_PARSER_URL;
-  if (!url)
-    throw new Error('未配置 PDF 解析服务（SEMESTER_REPORT_PARSER_URL）');
-  const form = new FormData();
-  form.append(
-    'file',
-    new Blob([new Uint8Array(buffer)], { type: 'application/pdf' }),
-    basename(fileName),
-  );
-  const apiKey = process.env.SEMESTER_REPORT_PARSER_API_KEY;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-    body: form,
-    signal: AbortSignal.timeout(600000),
-  });
-  if (!response.ok) throw new Error(`PDF 解析服务返回 HTTP ${response.status}`);
-  const result = (await response.json()) as {
-    text?: unknown;
-    pages?: unknown;
-    units?: unknown;
-  };
-  const pages = Array.isArray(result.pages)
-    ? result.pages.filter(
-        (page): page is { page: number; text: string } =>
-          typeof page === 'object' &&
-          page !== null &&
-          Number.isInteger((page as { page?: unknown }).page) &&
-          typeof (page as { text?: unknown }).text === 'string',
-      )
-    : [];
-  if (
-    pages.length === 0 ||
-    pages.length > 300 ||
-    pages.some((page) => page.page < 1 || page.text.length > 50000) ||
-    pages.reduce((sum, page) => sum + page.text.length, 0) > 1000000
-  )
-    throw new Error('PDF 解析结果缺少有效页码文本，或文档内容超限');
-  const units = Array.isArray(result.units)
-    ? result.units
-        .filter((x): x is string => typeof x === 'string')
-        .slice(0, 100)
-    : [];
-  return { pages, units };
 }

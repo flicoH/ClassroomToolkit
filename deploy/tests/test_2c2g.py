@@ -23,9 +23,11 @@ def environment():
         'MYSQL_PASSWORD': 'test-app-password',
         'REPORT_SHARE_ENCRYPTION_KEY': base64.b64encode(b'x' * 32).decode(),
         'REPORT_PUBLIC_BASE_URL': 'https://classroom.school.test',
+        'SEMESTER_REPORT_PARSER_PROVIDER': 'docling',
         'SEMESTER_REPORT_PARSER_URL': 'https://parser.school.test/parse',
         'SEMESTER_REPORT_PARSER_API_KEY': 'test-parser-key',
         'ADMIN_INITIAL_PASSWORD': 'test-admin-password',
+        'ADMIN_INITIAL_USERNAME': 'admin',
         'REPORT_GENERATION_MODE': 'template',
         'BACKEND_IMAGE_TAG': TAG,
         'FRONTEND_IMAGE_TAG': TAG,
@@ -62,6 +64,25 @@ class ValidationTests(unittest.TestCase):
 
     def test_budget_overflow(self):
         self.config['services']['web']['mem_limit'] = 1024 * 1024 * 1024
+        self.rejects()
+
+    def test_kimi_does_not_require_a_docling_host(self):
+        self.env.update(SEMESTER_REPORT_PARSER_PROVIDER='kimi', KIMI_API_KEY='test-kimi-key', KIMI_BASE_URL='https://api.moonshot.cn/v1')
+        self.env.pop('SEMESTER_REPORT_PARSER_URL')
+        self.env.pop('SEMESTER_REPORT_PARSER_API_KEY')
+        self.assertEqual(validator.validate(self.config), 1344 * 1024 * 1024)
+        for key, value in [('KIMI_API_KEY', ''), ('KIMI_BASE_URL', 'http://api.moonshot.cn/v1'), ('KIMI_BASE_URL', 'https://user:secret@api.moonshot.cn/v1'), ('SEMESTER_REPORT_PARSER_PROVIDER', 'typo')]:
+            old = self.env[key]
+            self.env[key] = value
+            self.rejects()
+            self.env[key] = old
+
+    def test_administrator_bootstrap_requires_both_fields_or_neither(self):
+        self.env['ADMIN_INITIAL_PASSWORD'] = ''
+        self.rejects()
+        self.env['ADMIN_INITIAL_USERNAME'] = ''
+        validator.validate(self.config)
+        self.env.update(ADMIN_INITIAL_USERNAME='admin', ADMIN_INITIAL_PASSWORD='short')
         self.rejects()
 
     def test_cpu_overflow(self):
@@ -141,6 +162,9 @@ class ComposeTests(unittest.TestCase):
         self.assertIn('migration:run', services['migrate']['command'])
         self.assertEqual(services['backend']['environment']['TYPEORM_MIGRATIONS_RUN'], 'false')
         self.assertEqual(services['web']['environment']['BACKEND_URL'], 'http://backend:3000')
+        self.assertEqual(len(services['admin']['volumes']), 1)
+        self.assertEqual(services['admin']['volumes'][0]['target'], '/etc/nginx/conf.d/default.conf')
+        self.assertTrue(services['admin']['volumes'][0]['read_only'])
 
     def test_remote_parser_auth_and_loopback_default(self):
         services = self.render('deploy/compose.docling.remote.yml')['services']
@@ -148,6 +172,13 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(parser['ports'][0]['host_ip'], '127.0.0.1')
         self.assertEqual(parser['environment']['SEMESTER_REPORT_PARSER_API_KEY'], 'test-parser-key')
         self.assertNotIn('build', parser)
+
+    def test_actual_kimi_compose_has_no_local_docling(self):
+        config = self.render('deploy/compose.2c2g.yml', {'SEMESTER_REPORT_PARSER_PROVIDER': 'kimi', 'KIMI_API_KEY': 'test-kimi-key', 'SEMESTER_REPORT_PARSER_URL': '', 'SEMESTER_REPORT_PARSER_API_KEY': ''})
+        validator.validate(config)
+        self.assertNotIn('docling-parser', config['services'])
+        self.assertEqual(config['services']['backend']['environment']['KIMI_API_KEY'], 'test-kimi-key')
+        self.assertEqual(config['services']['migrate']['environment']['SEMESTER_REPORT_PARSER_PROVIDER'], 'kimi')
 
 
 if __name__ == '__main__':

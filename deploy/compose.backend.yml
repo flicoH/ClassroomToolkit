@@ -23,6 +23,9 @@ x-backend-environment: &backend-environment
   TEACHER_DATA_UTC_OFFSET: ${TEACHER_DATA_UTC_OFFSET:-}
   ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
   LEGACY_DATA_OWNER_USERNAME: ${LEGACY_DATA_OWNER_USERNAME:-}
+  SEMESTER_REPORT_PARSER_PROVIDER: ${SEMESTER_REPORT_PARSER_PROVIDER:-kimi}
+  KIMI_API_KEY: ${KIMI_API_KEY:-}
+  KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
   SEMESTER_REPORT_PARSER_URL: ${SEMESTER_REPORT_PARSER_URL:-http://docling-parser:8000/parse}
   SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:-}
   REPORT_AI_BASE_URL: ${REPORT_AI_BASE_URL:-}
@@ -35,6 +38,7 @@ x-backend-environment: &backend-environment
 
 services:
   docling-parser:
+    profiles: [docling]
     image: ${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}-docling-parser:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG is required}
     restart: unless-stopped
     init: true

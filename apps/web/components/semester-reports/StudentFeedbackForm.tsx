@@ -58,14 +58,14 @@ export function StudentFeedbackForm({
       <section className="space-y-3">
         <h4 className="font-semibold">本期学习内容与掌握</h4>
         <p className="text-xs text-muted-foreground">选择单元或课时后列出对应内容，请按实际表现逐项评价。</p>
-        <div className="max-h-96 space-y-2 overflow-y-auto">
+        <div className="space-y-2 md:max-h-96 md:overflow-y-auto">
           {learningContents.map((item, index) => (
             <div key={item.id} className="rounded-xl border bg-slate-50/50 p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-indigo-600">{item.section}</span>
+              <div className="mb-2 flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                <span className="min-w-0 break-words text-xs font-semibold text-indigo-600">{item.section}</span>
                 <select
                   aria-label={`${student.name} 学习内容 ${index + 1} 掌握情况`}
-                  className="h-9 rounded-md border bg-background px-2 text-sm"
+                  className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm md:w-auto"
                   value={value.learningMastery[item.id] ?? "unassessed"}
                   onChange={event =>
                     onChange({
@@ -83,7 +83,7 @@ export function StudentFeedbackForm({
                   ))}
                 </select>
               </div>
-              <p className="whitespace-pre-wrap text-sm leading-6">{item.text}</p>
+              <p className="whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">{item.text}</p>
             </div>
           ))}
         </div>

@@ -30,7 +30,7 @@ def validate(config):
     if services['mysql'].get('ports'):
         raise ValueError('MySQL must not publish a host port')
     env = services['backend']['environment']
-    for field in ['MYSQL_PASSWORD', 'REPORT_SHARE_ENCRYPTION_KEY', 'SEMESTER_REPORT_PARSER_API_KEY']:
+    for field in ['MYSQL_PASSWORD', 'REPORT_SHARE_ENCRYPTION_KEY']:
         value = env.get(field, '')
         if not value or 'CHANGE_ME' in value:
             raise ValueError(f'Fill {field} in the environment file')
@@ -46,31 +46,45 @@ def validate(config):
     public = urlparse(env.get('REPORT_PUBLIC_BASE_URL', ''))
     if public.scheme != 'https' or not public.hostname or public.hostname == 'example.com' or public.hostname.endswith('.example.com') or public.path not in ['', '/'] or public.query or public.fragment or public.username:
         raise ValueError('REPORT_PUBLIC_BASE_URL must be your real HTTPS website root URL')
-    parser = urlparse(env.get('SEMESTER_REPORT_PARSER_URL', ''))
-    if not parser.hostname or parser.hostname == 'example.com' or parser.hostname.endswith('.example.com') or parser.path != '/parse' or parser.username or parser.query or parser.fragment:
-        raise ValueError('Configure the independent Docling adapter /parse endpoint')
-    if parser.scheme != 'https':
+    provider = env.get('SEMESTER_REPORT_PARSER_PROVIDER') or 'kimi'
+    if provider == 'kimi':
+        key = env.get('KIMI_API_KEY', '').strip()
+        if not key or 'CHANGE_ME' in key or any(c.isspace() for c in key):
+            raise ValueError('Fill KIMI_API_KEY in the environment file')
+        base = urlparse(env.get('KIMI_BASE_URL') or 'https://api.moonshot.cn/v1')
+        if base.scheme != 'https' or not base.hostname or base.username or base.password or base.query or base.fragment or base.path.rstrip('/') != '/v1':
+            raise ValueError('KIMI_BASE_URL must be an HTTPS /v1 endpoint without embedded credentials')
+    elif provider == 'docling':
+        if not env.get('SEMESTER_REPORT_PARSER_API_KEY') or 'CHANGE_ME' in env['SEMESTER_REPORT_PARSER_API_KEY']:
+            raise ValueError('Fill SEMESTER_REPORT_PARSER_API_KEY for Docling')
+        parser = urlparse(env.get('SEMESTER_REPORT_PARSER_URL', ''))
+        if not parser.hostname or parser.hostname == 'example.com' or parser.hostname.endswith('.example.com') or parser.path != '/parse' or parser.username or parser.query or parser.fragment:
+            raise ValueError('Configure the independent Docling adapter /parse endpoint')
+        if parser.scheme != 'https':
+            try:
+                address = ipaddress.ip_address(parser.hostname)
+                private = address.is_private and not (address.is_loopback or address.is_unspecified or address.is_link_local)
+            except ValueError:
+                private = False
+            if parser.scheme != 'http' or not private:
+                raise ValueError('Docling needs HTTPS, or HTTP over a private IP network')
         try:
-            address = ipaddress.ip_address(parser.hostname)
-            private = address.is_private and not (address.is_loopback or address.is_unspecified or address.is_link_local)
+            local_parser = ipaddress.ip_address(parser.hostname).is_loopback
         except ValueError:
-            private = False
-        if parser.scheme != 'http' or not private:
-            raise ValueError('Docling needs HTTPS, or HTTP over a private IP network')
-    try:
-        local_parser = ipaddress.ip_address(parser.hostname).is_loopback
-    except ValueError:
-        local_parser = parser.hostname == 'localhost'
-    if local_parser:
-        raise ValueError('Parser localhost inside the backend container is not a separate Docling host')
+            local_parser = parser.hostname == 'localhost'
+        if local_parser:
+            raise ValueError('Parser localhost inside the backend container is not a separate Docling host')
+    else:
+        raise ValueError('SEMESTER_REPORT_PARSER_PROVIDER must be docling or kimi')
     for name in ['backend', 'web', 'admin']:
         if not re.search(r':sha-[a-f0-9]{40}$', services[name]['image']):
             raise ValueError('Use immutable sha-<40-character commit> image tags')
     if env.get('REPORT_GENERATION_MODE') != 'template':
         raise ValueError('The 2GB profile must use template reports')
     admin_password = env.get('ADMIN_INITIAL_PASSWORD', '')
-    if 'CHANGE_ME' in admin_password:
-        raise ValueError('Replace ADMIN_INITIAL_PASSWORD, or clear it for an existing administrator')
+    admin_username = env.get('ADMIN_INITIAL_USERNAME', '')
+    if bool(admin_username) != bool(admin_password) or (admin_password and (not admin_username.strip() or len(admin_username) > 64 or not 12 <= len(admin_password) <= 256 or 'CHANGE_ME' in admin_password)):
+        raise ValueError('Set both ADMIN_INITIAL_USERNAME and a 12+ character password, or clear both for an existing administrator')
     return total
 
 
@@ -102,7 +116,7 @@ def main():
         if not args.template:
             parser.error('--template is required with --init')
         initialize(args.template, args.init)
-        print('Created environment file with mode 0600; fill the website and Docling URLs.')
+        print('Created environment file with mode 0600; fill the website URL and KIMI_API_KEY (or independent Docling settings).')
     else:
         if not args.config:
             parser.error('Compose JSON file is required')

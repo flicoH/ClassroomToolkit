@@ -27,8 +27,12 @@ x-backend-env: &backend-env
   REPORT_AI_BASE_URL: ""
   REPORT_AI_API_KEY: ""
   REPORT_AI_MODEL: ""
-  SEMESTER_REPORT_PARSER_URL: ${SEMESTER_REPORT_PARSER_URL:?Configure an independent Docling service}
-  SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:?Parser authentication key is required}
+  # PDF uploads use the cloud file API; no OCR/rendering binaries run locally.
+  SEMESTER_REPORT_PARSER_PROVIDER: ${SEMESTER_REPORT_PARSER_PROVIDER:-kimi}
+  KIMI_API_KEY: ${KIMI_API_KEY:-}
+  KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+  SEMESTER_REPORT_PARSER_URL: ${SEMESTER_REPORT_PARSER_URL:-}
+  SEMESTER_REPORT_PARSER_API_KEY: ${SEMESTER_REPORT_PARSER_API_KEY:-}
   REPORT_SHARE_ENCRYPTION_KEY: ${REPORT_SHARE_ENCRYPTION_KEY:?Report encryption key is required}
   REPORT_PUBLIC_BASE_URL: ${REPORT_PUBLIC_BASE_URL:?Public HTTPS URL is required}
   SEMESTER_REPORT_STORAGE_DIR: /app/data/semester-reports
@@ -137,7 +141,7 @@ services:
     memswap_limit: 64m
     cpus: 0.1
     ports: ["127.0.0.1:${ADMIN_PORT:-8080}:80"]
-    volumes: [./docker/admin.2c2g.nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z]
+    volumes: ["./docker/admin.2c2g.nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z"]
     depends_on:
       backend: {condition: service_healthy}
     healthcheck:

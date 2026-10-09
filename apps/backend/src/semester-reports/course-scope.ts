@@ -1,4 +1,5 @@
 import type { ReportDocumentEntity } from './semester-report.entity';
+import { courseTableText } from './course-table-text';
 
 type Page = { page: number; text: string };
 // unit 0 denotes a course whose PDF numbers lessons without naming units.
@@ -169,6 +170,7 @@ function lessonTableLayout(cells: string[]): LessonTableLayout | undefined {
 function readSections(pages: Page[]) {
   const byPage = new Map<number, Section[]>();
   const units = new Set<string>();
+  const structuredUnits = new Set<string>();
   const contentLines: CourseLine[] = [];
   let active: Section | undefined;
   let headingSection = false;
@@ -176,14 +178,14 @@ function readSections(pages: Page[]) {
   let activeVolume: number | undefined;
   for (const page of pages) {
     const sections: Section[] = [];
-    for (const rawLine of page.text.split(/\r?\n/)) {
+    for (const rawLine of courseTableText(page.text).split(/\r?\n/)) {
       const line = rawLine.trim().replace(/｜/gu, '|');
       const table = line.startsWith('|');
-      const cells = table
+      let cells = table
         ? line
             .replace(/^\||\|$/g, '')
             .split('|')
-            .map((cell) => cell.trim())
+            .map((cell) => cell.trim().replace(/&#124;/gu, '|'))
         : [];
       if (table && cells.every((cell) => /^[-:\s]*$/.test(cell))) continue;
       const label = (table ? (cells[0] ?? '') : line)
@@ -212,6 +214,12 @@ function readSections(pages: Page[]) {
         }
       }
       const unit = /^unit\s*(\d+)(?=$|[\s:：.、-])/u.exec(canonicalize(label));
+      // Cloud OCR can combine the first two columns; inserting the explicit
+      // lesson restores goal alignment without guessing displaced table cells.
+      const combinedUnit =
+        table && /^unit\s*\d+\s+(\d+)$/u.exec(canonicalize(label));
+      if (combinedUnit)
+        cells = [cells[0]!, combinedUnit[1]!, ...cells.slice(1)];
       const lessonCell = (
         cells[standaloneLayout?.lessonIndex ?? 0] ?? ''
       ).trim();
@@ -264,8 +272,9 @@ function readSections(pages: Page[]) {
         }
         sections.push({ ...active });
         units.add(`Unit${active.unit}`);
+        structuredUnits.add(`Unit${active.unit}`);
         if (active.lesson !== undefined)
-          units.add(`Unit${active.unit} 第${active.lesson}课`);
+          structuredUnits.add(`Unit${active.unit} 第${active.lesson}课`);
       } else if (standaloneLesson) {
         const title = (
           courseTitle.match(/《[^》]{1,60}》/u)?.[0] ?? courseTitle
@@ -273,7 +282,7 @@ function readSections(pages: Page[]) {
         active = { unit: 0, lesson: lessonNumber, title, volume: activeVolume };
         headingSection = false;
         sections.push({ ...active });
-        units.add(
+        structuredUnits.add(
           `${activeVolume ? `第${activeVolume}册 ` : ''}第${lessonNumber}课时 · ${title}`,
         );
       } else if (table) {
@@ -288,7 +297,7 @@ function readSections(pages: Page[]) {
           if (lesson) active.lesson = Number(lesson[1]);
           sections.push({ ...active });
           if (active.unit !== 0 && active.lesson !== undefined)
-            units.add(`Unit${active.unit} 第${active.lesson}课`);
+            structuredUnits.add(`Unit${active.unit} 第${active.lesson}课`);
         }
       } else {
         const lesson = /^lesson\s*(\d+)(?=$|[\s:：.、-])/u.exec(
@@ -298,6 +307,7 @@ function readSections(pages: Page[]) {
           active.lesson = Number(lesson[1]);
           sections.push({ ...active });
           units.add(`Unit${active.unit} 第${active.lesson}课`);
+          structuredUnits.add(`Unit${active.unit} 第${active.lesson}课`);
         } else if (markdownHeading) {
           active = { unit: -1, title: markdownHeading[1]?.trim() ?? '' };
           headingSection = true;
@@ -359,7 +369,13 @@ function readSections(pages: Page[]) {
     }
     byPage.set(page.page, sections);
   }
-  return { byPage, units: [...units].slice(0, 300), contentLines };
+  // General goals, cover titles and page headers are not extra lessons when
+  // an actual numbered syllabus is available; heading-only PDFs still use them.
+  return {
+    byPage,
+    units: [...(structuredUnits.size ? structuredUnits : units)].slice(0, 300),
+    contentLines,
+  };
 }
 
 export function detectCourseUnits(text: string) {

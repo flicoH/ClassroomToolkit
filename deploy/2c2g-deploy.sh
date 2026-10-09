@@ -83,7 +83,8 @@ IMAGE_NAMESPACE=${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}
 export IMAGE_NAMESPACE BACKEND_IMAGE_TAG FRONTEND_IMAGE_TAG
 CANDIDATE=$(mktemp deploy/.2c2g-candidate.XXXXXX)
 printf 'IMAGE_NAMESPACE=%s\nBACKEND_IMAGE_TAG=%s\nFRONTEND_IMAGE_TAG=%s\n' "$IMAGE_NAMESPACE" "$BACKEND_IMAGE_TAG" "$FRONTEND_IMAGE_TAG" > "$CANDIDATE"
-compose() { docker compose --project-name "$PROJECT" --parallel 1 --env-file "$ENV_FILE" --env-file "$CANDIDATE" -f "$COMPOSE_FILE" "$@"; }
+ACTIVE_RELEASE_FILE=$CANDIDATE
+compose() { docker compose --project-name "$PROJECT" --parallel 1 --env-file "$ENV_FILE" --env-file "$ACTIVE_RELEASE_FILE" -f "$COMPOSE_FILE" "$@"; }
 RENDERED=$(mktemp deploy/.2c2g-candidate.XXXXXX)
 compose config --format json > "$RENDERED"
 python3 deploy/validate-2c2g.py "$RENDERED"
@@ -168,11 +169,8 @@ smoke() {
 (async()=>{
  const r=await fetch("http://127.0.0.1:3000/semester-reports/reports");
  if(r.status!==401)throw Error("report route failed");
- const health=new URL(process.env.SEMESTER_REPORT_PARSER_URL);health.pathname="/health";
- const parser=await fetch(health,{signal:AbortSignal.timeout(15000)});
- if(!parser.ok || (await parser.json()).parser!=="docling")throw Error("Docling health failed");
- console.log("Backend report route and independent Docling health passed");
-})().catch(()=>{console.error("Backend/Docling smoke failed; check parser connectivity and configuration");process.exit(1)})'
+ console.log("Backend report route passed");
+})().catch(()=>{console.error("Backend smoke failed; check service logs");process.exit(1)})'
   compose exec -T web node -e '
 (async()=>{
  const r=await fetch("http://127.0.0.1:3001/api/semester-reports/reports",{headers:{cookie:"auth_token=invalid-deploy-probe"},signal:AbortSignal.timeout(10000)});
@@ -223,6 +221,18 @@ if [[ "$COMMAND" == rollback ]]; then
 fi
 STAGE=pull
 pull_images
+STAGE=parser-check
+# Probe credentials and runtime tools before stopping traffic. No paid OCR call.
+compose run --rm --no-deps backend node -e '
+(async()=>{
+ if((process.env.SEMESTER_REPORT_PARSER_PROVIDER||"kimi")==="docling"){
+  // Legacy images predate pdf-parser.js; retain Docling rollback compatibility.
+  const health=new URL(process.env.SEMESTER_REPORT_PARSER_URL);health.pathname="/health";
+  const r=await fetch(health,{redirect:"error",signal:AbortSignal.timeout(15000)});
+  if(!r.ok || (await r.json()).parser!=="docling")throw Error("Docling health failed");
+ }else{await require("./dist/semester-reports/pdf-parser").checkPdfParser()}
+ console.log("PDF parser configuration passed");
+})().catch(()=>{console.error("PDF parser check failed; check provider, Kimi key and cloud file API connectivity");process.exit(1)})'
 STAGE=maintenance
 compose stop web admin backend
 STAGE=mysql
@@ -243,6 +253,7 @@ STAGE=smoke
 smoke
 if [[ -f "$RELEASE_FILE" ]]; then cp "$RELEASE_FILE" "$PREVIOUS_FILE"; fi
 mv "$CANDIDATE" "$RELEASE_FILE"
+ACTIVE_RELEASE_FILE=$RELEASE_FILE
 CANDIDATE=''
 STAGE=complete
 log 'Deployment complete. Verify the HTTPS website, upload a course PDF, review and publish a test report.'

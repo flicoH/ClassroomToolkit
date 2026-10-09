@@ -46,6 +46,9 @@ if args[0] == 'run':
 if args[:2] == ['compose', 'version']:
     print('2.29.0'); sys.exit(0)
 if args[0] == 'compose':
+    for i, value in enumerate(args):
+        if value == '--env-file' and (not args[i+1] or not pathlib.Path(args[i+1]).is_file()):
+            sys.exit('Missing or empty --env-file')
     command = next(value for value in args if value in ['config', 'pull', 'exec', 'stop', 'start', 'up', 'run', 'ps', 'logs'])
     tail = args[args.index(command)+1:]
     if command == 'config':
@@ -55,6 +58,8 @@ if args[0] == 'compose':
     if command == 'pull' and os.environ.get('MOCK_FAIL') == 'pull':
         sys.exit(1)
     if command == 'run' and 'migrate' in tail and os.environ.get('MOCK_FAIL') == 'migrate':
+        sys.exit(1)
+    if command == 'run' and any('checkPdfParser' in value for value in tail) and os.environ.get('MOCK_FAIL') == 'parser':
         sys.exit(1)
     if command == 'exec' and any('mysqldump' in value for value in tail):
         if os.environ.get('MOCK_FAIL') == 'backup':
@@ -116,6 +121,9 @@ class DeploymentScriptTests(unittest.TestCase):
         pulls = [i for i, event in enumerate(events) if event[0] == 'pull']
         self.assertEqual(len(pulls), 4)
         self.assertLess(max(pulls), stop)
+        probe = next(i for i, event in enumerate(events) if any('checkPdfParser' in word for word in event))
+        self.assertLess(max(pulls), probe)
+        self.assertLess(probe, stop)
         dump = next(i for i, event in enumerate(events) if any('mysqldump' in word for word in event))
         migration = next(i for i, event in enumerate(events) if event[0] == 'run' and 'migrate' in event)
         backend = next(i for i, event in enumerate(events) if event[0] == 'up' and event[-1] == 'backend')
@@ -130,6 +138,12 @@ class DeploymentScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(event[0] == 'stop' for event in self.events()))
         self.assertFalse((self.deploy / '.2c2g-release.env').exists())
+
+    def test_invalid_cloud_configuration_preserves_running_apps(self):
+        result = self.run_script('deploy', 'parser')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('stage: parser-check', result.stdout)
+        self.assertFalse(any(event[0] == 'stop' for event in self.events()))
 
     def test_old_frontend_port_conflict_fails_before_pulling(self):
         result = self.run_script('deploy', port_owner='classroom-frontend')
