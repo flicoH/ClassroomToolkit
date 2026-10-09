@@ -73,6 +73,9 @@ jobs:
       - name: Test image build selection
         run: node --test scripts/check-deployment-workflows.test.mjs
 
+      - name: Test backend deployment script
+        run: python3 -m unittest discover -s deploy/tests -p 'test_backend_deploy_script.py' -v
+
       - name: Initialize CI database
         run: pnpm --filter ClassRoomToolkitBackend db:init
 

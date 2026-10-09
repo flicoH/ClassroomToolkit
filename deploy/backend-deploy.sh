@@ -86,6 +86,18 @@ compose config --quiet
 PARSER_PROVIDER=$(compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["backend"]["environment"].get("SEMESTER_REPORT_PARSER_PROVIDER") or "kimi")')
 case "$PARSER_PROVIDER" in kimi|docling) ;; *) log 'Unsupported PDF parser provider'; exit 1 ;; esac
 
+# Include the optional profile when checking definitions, but do not start it.
+# Cloud-only Compose files may omit the parser entirely.
+COMPOSE_SERVICES=$(compose --profile docling config --services)
+DOCLING_SERVICE_DEFINED=false
+case $'\n'"$COMPOSE_SERVICES"$'\n' in
+  *$'\n'docling-parser$'\n'*) DOCLING_SERVICE_DEFINED=true ;;
+esac
+if [[ "$PARSER_PROVIDER" == docling && "$DOCLING_SERVICE_DEFINED" != true ]]; then
+  log 'Docling provider requires a docling-parser service in the backend Compose file'
+  exit 1
+fi
+
 pull_with_retry() {
   local target=$1
   local max_attempts=5
@@ -110,9 +122,11 @@ pull_with_retry backend
 if [[ "$PARSER_PROVIDER" == docling ]]; then
   log "Pulling Docling parser image $BACKEND_IMAGE_TAG"
   pull_with_retry docling-parser
-else
+elif [[ "$DOCLING_SERVICE_DEFINED" == true ]]; then
   # Explicit stop also releases memory from a parser left by the old deployment.
   compose --profile docling stop docling-parser
+else
+  log 'Cloud parsing selected; Compose has no Docling service to stop'
 fi
 
 log "Starting MySQL"
