@@ -56,7 +56,11 @@ describe("ScoreDetailsView", () => {
       ]
     };
     act(() => root.render(<ScoreDetailsView details={details} />));
-    const [positive, negative, all] = [...container.querySelectorAll("button")];
+    const [positive, negative, all] = [...container.querySelectorAll("button")] as [
+      HTMLButtonElement,
+      HTMLButtonElement,
+      HTMLButtonElement
+    ];
     expect(all.getAttribute("aria-pressed")).toBe("true");
     act(() => positive.click());
     expect(positive.getAttribute("aria-pressed")).toBe("true");

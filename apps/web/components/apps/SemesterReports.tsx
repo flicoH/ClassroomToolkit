@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Clipboard, FileText, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Clipboard,
+  FileText,
+  ImageIcon,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Upload,
+  X
+} from "lucide-react";
 import { CartoonSemesterReportIcon } from "@/components/icons/CartoonAppIcons";
 import request from "@/lib/request";
 import { copyText } from "@/lib/clipboard";
@@ -14,6 +26,7 @@ import {
   type LearningReportContent
 } from "@/components/semester-reports/LearningReportView";
 import { ReportStudentPicker } from "@/components/semester-reports/ReportStudentPicker";
+import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
 import { ScoreDetailsView, type ScoreDetails } from "@/components/semester-reports/ScoreDetailsView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,6 +105,14 @@ const labels: Record<string, string> = {
   needs_review: "待确认",
   ready: "可用"
 };
+const documentStatusHints: Record<string, { title: string; description: string }> = {
+  queued: { title: "等待后台解析", description: "PDF 已上传，正在排队。处理状态会自动刷新，可以继续填写报告。" },
+  parsing: {
+    title: "正在解析 PDF",
+    description: "正在提取课程文字与章节，较大的文件需要更长时间。无需重复上传，完成后请核对章节。"
+  },
+  needs_review: { title: "解析完成，请确认章节", description: "请核对下方章节，点击“确认章节”后即可用于生成报告。" }
+};
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -157,6 +178,12 @@ export function SemesterReports() {
   const [busy, setBusy] = useState(false);
   const [actingReportId, setActingReportId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const uploadInFlight = useRef(false);
+  const [uploadState, setUploadState] = useState<{ fileName: string; progress: number | null; error?: string } | null>(
+    null
+  );
+  const [documentRefreshFailed, setDocumentRefreshFailed] = useState(false);
+  const [imageReport, setImageReport] = useState<{ studentName: string; url: string } | null>(null);
   const [events, setEvents] = useState<Array<{ action: string; createdAt: string }>>([]);
 
   useEffect(() => {
@@ -192,6 +219,7 @@ export function SemesterReports() {
     setStudents(p.students);
     setReports(r);
     setDocuments(d);
+    setDocumentRefreshFailed(false);
     setTermId(current => current || t[0]?.id || "");
     setSubjectId(current => current || s[0]?.id || "");
   }, []);
@@ -205,10 +233,14 @@ export function SemesterReports() {
         reports.some(r => r.status === "queued" || r.status === "generating") ||
         documents.some(d => d.status === "queued" || d.status === "parsing")
       )
-        void load().catch(() => undefined);
+        void load().catch(() => {
+          if (documents.some(d => d.status === "queued" || d.status === "parsing")) setDocumentRefreshFailed(true);
+        });
     }, 2500);
     return () => clearInterval(timer);
   }, [reports, documents, load]);
+  const processingDocuments = documents.filter(doc => doc.status === "queued" || doc.status === "parsing");
+  const reviewDocuments = documents.filter(doc => doc.status === "needs_review");
 
   useEffect(() => {
     setScopePreview(null);
@@ -352,40 +384,56 @@ export function SemesterReports() {
     }
   }
   async function upload(file?: File) {
-    if (!file) return;
+    if (!file || uploadInFlight.current) return;
+    function rejectUpload(reason: string) {
+      setMessage(reason);
+      setUploadState({ fileName: file!.name, progress: null, error: reason });
+    }
     if (!termId) {
-      setMessage("请先新建并选择学期，再上传课程 PDF。");
+      rejectUpload("请先新建并选择学期，再上传课程 PDF。");
       return;
     }
     if (!subjectId) {
-      setMessage("请先选择学科，再上传课程 PDF。");
+      rejectUpload("请先选择学科，再上传课程 PDF。");
       return;
     }
     if (file.size > 30 * 1024 * 1024) {
-      setMessage("PDF 文件不能超过 30MB。");
+      rejectUpload("PDF 文件不能超过 30MB。");
       return;
     }
     const form = new FormData();
     form.append("file", file);
     form.append("termId", termId);
     form.append("subjectId", subjectId);
+    uploadInFlight.current = true;
+    setUploadState({ fileName: file.name, progress: null });
     setBusy(true);
-    setMessage("正在上传 PDF…");
+    setMessage("");
     try {
-      const response = await fetch(`${base}/course-documents`, { method: "POST", body: form });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "上传失败");
+      // Let the browser set the multipart boundary; JSON defaults would break PDF uploads.
+      const data = await request.post<Document, Document>(`${base}/course-documents`, form, {
+        headers: { "Content-Type": undefined },
+        timeout: 120000,
+        onUploadProgress: event =>
+          setUploadState({
+            fileName: file.name,
+            progress: event.total ? Math.min(100, Math.round((event.loaded / event.total) * 100)) : null
+          })
+      });
+      setDocuments(current => [data, ...current.filter(doc => doc.id !== data.id)]);
+      setUploadState(null);
       setMessage(
         data.status === "failed"
-          ? data.errorMessage
+          ? data.errorMessage || "PDF 解析失败，请在下方重试。"
           : data.status === "ready"
             ? "这份 PDF 已存在且解析完成，可在下方选择单元、课时或页码。"
             : "PDF 已上传，正在后台解析；完成后请核对章节，无法识别章节时可按页选择。"
       );
-      await load();
+      await load().catch(() => setDocumentRefreshFailed(true));
     } catch (error) {
-      setMessage(errorMessage(error));
+      rejectUpload(errorMessage(error));
     } finally {
+      uploadInFlight.current = false;
       setBusy(false);
     }
   }
@@ -648,6 +696,39 @@ export function SemesterReports() {
           {message}
         </p>
       )}
+      {((uploadState && !uploadState.error) ||
+        processingDocuments.length > 0 ||
+        reviewDocuments.length > 0 ||
+        documentRefreshFailed) && (
+        <div
+          aria-label="PDF 处理状态"
+          role="status"
+          className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900"
+        >
+          {(uploadState && !uploadState.error) || processingDocuments.length > 0 ? (
+            <LoaderCircle className="h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+          )}
+          <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+            {uploadState &&
+              !uploadState.error &&
+              `正在上传 PDF：${uploadState.fileName}${uploadState.progress === null ? "。" : uploadState.progress === 100 ? "，等待服务器确认。" : ` · ${uploadState.progress}%。`}`}
+            {processingDocuments.length > 0 && `${processingDocuments.length} 份 PDF 正在处理，完成后请核对章节。`}
+            {reviewDocuments.length > 0 && ` ${reviewDocuments.length} 份 PDF 已解析，等待确认章节。`}
+            {documentRefreshFailed && " 状态刷新失败，已保留当前状态，将自动重试。"}
+          </p>
+          {documentRefreshFailed ? (
+            <Button size="sm" variant="outline" onClick={() => void load().catch(() => setDocumentRefreshFailed(true))}>
+              刷新处理状态
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => showSection("courses")}>
+              查看课程资料
+            </Button>
+          )}
+        </div>
+      )}
       <div className="mb-4 flex min-w-0 items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 md:hidden dark:border-border dark:bg-muted">
         <p className="min-w-0 break-words text-sm leading-6">
           {term?.name || "未选择学期"}{" "}
@@ -769,12 +850,18 @@ export function SemesterReports() {
           <label
             className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 text-center text-sm leading-6 focus-within:ring-2 focus-within:ring-ring ${busy || !termId || !subjectId ? "opacity-60" : "hover:bg-indigo-50"}`}
           >
-            <Upload className="h-6 w-6 text-indigo-500" aria-hidden="true" />
-            {!termId
-              ? "请先新建并选择学期，再上传课程 PDF"
-              : !subjectId
-                ? "请先选择学科，再上传课程 PDF"
-                : "选择课程 PDF（最大 30MB）"}
+            {uploadState && !uploadState.error ? (
+              <LoaderCircle className="h-7 w-7 animate-spin text-indigo-600" aria-hidden="true" />
+            ) : (
+              <Upload className="h-6 w-6 text-indigo-500" aria-hidden="true" />
+            )}
+            {uploadState && !uploadState.error
+              ? "正在上传 PDF…"
+              : !termId
+                ? "请先新建并选择学期，再上传课程 PDF"
+                : !subjectId
+                  ? "请先选择学科，再上传课程 PDF"
+                  : "选择课程 PDF（最大 30MB）"}
             <span className="text-xs text-muted-foreground">上传后自动解析，核对章节后用于报告</span>
             <input
               className="sr-only"
@@ -788,11 +875,48 @@ export function SemesterReports() {
               }}
             />
           </label>
+          {uploadState && (
+            <div
+              role={uploadState.error ? "alert" : "status"}
+              className={`space-y-2 rounded-xl border p-4 text-sm ${uploadState.error ? "border-red-200 bg-red-50 text-red-800" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
+            >
+              <p className="break-words font-semibold [overflow-wrap:anywhere]">{uploadState.fileName}</p>
+              {uploadState.error ? (
+                <p>{uploadState.error} 请重新选择文件上传。</p>
+              ) : (
+                <>
+                  <p>
+                    {uploadState.progress === 100
+                      ? "文件已传输，正在等待服务器确认…"
+                      : `正在上传 PDF${uploadState.progress === null ? "…" : ` · ${uploadState.progress}%`}`}
+                  </p>
+                  <div
+                    role="progressbar"
+                    aria-label="PDF 上传进度"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={uploadState.progress ?? undefined}
+                    className="h-2 overflow-hidden rounded-full bg-indigo-100"
+                  >
+                    <div
+                      className={`h-full rounded-full bg-indigo-600 transition-[width] ${uploadState.progress === null ? "w-1/3 animate-pulse" : ""}`}
+                      style={uploadState.progress === null ? undefined : { width: `${uploadState.progress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs">上传期间请保持此页面打开，上传完成后会在后台自动解析。</p>
+                </>
+              )}
+            </div>
+          )}
           <div className="space-y-2">
             {documents
               .filter(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId))
               .map(doc => (
-                <div key={doc.id} className="rounded-xl border bg-muted/20 p-3 text-sm">
+                <div
+                  key={doc.id}
+                  className={`rounded-xl border p-3 text-sm ${doc.status === "queued" || doc.status === "parsing" ? "border-indigo-200 bg-indigo-50/50" : doc.status === "needs_review" ? "border-emerald-200 bg-emerald-50/40" : "bg-muted/20"}`}
+                  aria-busy={doc.status === "queued" || doc.status === "parsing"}
+                >
                   <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
                     <div className="flex min-w-0 flex-1 items-start gap-2">
                       <FileText className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" aria-hidden="true" />
@@ -866,6 +990,22 @@ export function SemesterReports() {
                       </Button>
                     </div>
                   </div>
+                  {documentStatusHints[doc.status] && (
+                    <div
+                      role="status"
+                      className={`mt-3 flex items-start gap-3 rounded-lg p-3 ${doc.status === "needs_review" ? "bg-emerald-100/60 text-emerald-900" : "bg-indigo-100/60 text-indigo-900"}`}
+                    >
+                      {doc.status === "needs_review" ? (
+                        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
+                      )}
+                      <div>
+                        <p className="font-semibold">{documentStatusHints[doc.status]?.title}</p>
+                        <p className="mt-1 text-xs leading-6">{documentStatusHints[doc.status]?.description}</p>
+                      </div>
+                    </div>
+                  )}
                   {doc.errorMessage && (
                     <p
                       role="alert"
@@ -1296,6 +1436,17 @@ export function SemesterReports() {
                     复制链接
                   </Button>
                 )}
+                {report.status === "published" && report.share && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!!actingReportId || !!loadingReportId}
+                    onClick={() => setImageReport({ studentName: report.studentName, url: report.share!.url })}
+                  >
+                    <ImageIcon />
+                    生成报告图片
+                  </Button>
+                )}
                 {report.status === "published" && (
                   <Button
                     size="sm"
@@ -1333,6 +1484,13 @@ export function SemesterReports() {
           {reports.length === 0 && <p className="text-sm text-muted-foreground">还没有报告。</p>}
         </div>
       </section>
+      {imageReport && (
+        <ReportImageDialog
+          studentName={imageReport.studentName}
+          shareUrl={imageReport.url}
+          onClose={() => setImageReport(null)}
+        />
+      )}
       {editing &&
         draft &&
         createPortal(

@@ -49,6 +49,7 @@ const masteryColors = {
   needs_support: "bg-violet-100 text-violet-700"
 };
 const periodNames: Record<string, string> = { week: "每周学习报告", month: "每月学习报告", term: "学期学习报告" };
+const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
 function dateText(value?: string, exclusive = false) {
   if (!value) return "";
   const date = new Date(new Date(value).getTime() - (exclusive ? 1 : 0));
@@ -69,8 +70,8 @@ function Entries({ entries, empty }: { entries: ReportEntry[]; empty: string }) 
   );
 }
 
-/** Shared by the teacher preview and the public parent page. */
-export function LearningReportView({ report }: { report: LearningReportData }) {
+/** Shared by preview, the parent page and full-content image export. */
+export function LearningReportView({ report, forImage = false }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
   const details = content.reportDetails;
   const sections = new Map<string, LearningContent[]>();
@@ -101,7 +102,7 @@ export function LearningReportView({ report }: { report: LearningReportData }) {
         <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
             <BookOpenText className="h-5 w-5 text-indigo-600" />
-            本期学习内容与掌握
+            {periodTitles[report.period]}学习内容与掌握
           </h2>
           <div className="space-y-4">
             {[...sections].map(([section, items]) => (
@@ -127,7 +128,7 @@ export function LearningReportView({ report }: { report: LearningReportData }) {
           </div>
         </section>
         <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-          <h2 className="mb-4 text-lg font-bold">本期的课堂表现</h2>
+          <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
           {content.classroomPerformance?.length ? (
             <div className="flex flex-wrap gap-2">
               {content.classroomPerformance.map((item, index) => (
@@ -142,8 +143,8 @@ export function LearningReportView({ report }: { report: LearningReportData }) {
         </section>
         {content.scoreDetails && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-            <h2 className="mb-4 text-lg font-bold">本期积分加减情况</h2>
-            <ScoreDetailsView details={content.scoreDetails} />
+            <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}积分加减情况</h2>
+            <ScoreDetailsView details={content.scoreDetails} forImage={forImage} />
           </section>
         )}
         <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
@@ -154,7 +155,7 @@ export function LearningReportView({ report }: { report: LearningReportData }) {
           <section className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-5">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-800">
               <Sparkles className="h-4 w-4" />
-              本期最值得肯定
+              {periodTitles[report.period]}最值得肯定
             </h2>
             <Entries entries={content.strengths} empty="等待老师补充值得肯定的具体表现。" />
           </section>

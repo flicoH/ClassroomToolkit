@@ -43,6 +43,7 @@ describe("SemesterReports mobile workflow", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
   async function render() {
     await act(async () => root.render(<SemesterReports />));
@@ -86,6 +87,136 @@ describe("SemesterReports mobile workflow", () => {
     expect(api.post).toHaveBeenCalledWith("/api/semester-reports/course-documents/doc/retry");
     expect(container.querySelector('[role="status"]')?.textContent).toContain("额度不足");
     expect(button("课程资料").getAttribute("aria-pressed")).toBe("true");
+  });
+  function choosePdf(file = new File(["%PDF-1.7"], "本期课程.pdf", { type: "application/pdf" })) {
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    return input;
+  }
+
+  it("shows upload progress next to the file picker and prevents duplicate uploads", async () => {
+    let finish!: (value: unknown) => void;
+    let progress!: (value: { loaded: number; total?: number }) => void;
+    api.post.mockImplementation((_url, _body, config) => {
+      progress = config.onUploadProgress;
+      return new Promise(resolve => (finish = resolve));
+    });
+    await render();
+    const input = choosePdf();
+    const courses = container.querySelector('section[aria-label="课程资料"]')!;
+    expect(courses.textContent).toContain("正在上传 PDF");
+    expect(courses.textContent).toContain("本期课程.pdf");
+    expect(input.disabled).toBe(true);
+    choosePdf();
+    expect(api.post).toHaveBeenCalledTimes(1);
+    act(() => progress({ loaded: 15 }));
+    expect(courses.querySelector('[role="progressbar"]')?.hasAttribute("aria-valuenow")).toBe(false);
+    act(() => button("填写报告").click());
+    expect(container.querySelector('[aria-label="PDF 处理状态"]')?.textContent).toContain("正在上传 PDF：本期课程.pdf");
+    act(() => button("课程资料").click());
+    act(() => progress({ loaded: 45, total: 100 }));
+    expect(courses.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("45");
+    act(() => progress({ loaded: 100, total: 100 }));
+    expect(courses.textContent).toContain("文件已传输，正在等待服务器确认");
+    await act(async () =>
+      finish({ id: "uploaded", fileName: "本期课程.pdf", termId: "term", subjectId: "subject", status: "queued" })
+    );
+    expect(input.disabled).toBe(false);
+    expect(api.post.mock.calls[0]![1]).toBeInstanceOf(FormData);
+    expect(api.post.mock.calls[0]![2].headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("keeps upload failure beside the picker and allows selecting the same file again", async () => {
+    api.post.mockRejectedValue(new Error("没有上传权限"));
+    await render();
+    await act(async () => choosePdf());
+    const courses = container.querySelector('section[aria-label="课程资料"]')!;
+    expect(courses.querySelector('[role="alert"]')?.textContent).toContain("没有上传权限");
+    expect(container.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(false);
+    await act(async () => choosePdf());
+    expect(api.post).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects oversized files before starting an upload", async () => {
+    await render();
+    const file = new File(["%PDF"], "过大.pdf", { type: "application/pdf" });
+    Object.defineProperty(file, "size", { value: 30 * 1024 * 1024 + 1 });
+    choosePdf(file);
+    expect(container.querySelector('section[aria-label="课程资料"] [role="alert"]')?.textContent).toContain("30MB");
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("preserves an accepted upload when refreshing the document list fails", async () => {
+    await render();
+    api.post.mockResolvedValueOnce({
+      id: "uploaded",
+      fileName: "本期课程.pdf",
+      termId: "term",
+      subjectId: "subject",
+      status: "queued"
+    });
+    api.get.mockRejectedValueOnce(new Error("网络中断"));
+    await act(async () => choosePdf());
+    expect(container.querySelector('section[aria-label="课程资料"]')?.textContent).toContain("本期课程.pdf");
+    expect(container.querySelector('[aria-label="PDF 处理状态"]')?.textContent).toContain("状态刷新失败");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("PDF 已上传");
+    expect(container.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(false);
+  });
+
+  it("makes parsing visible across mobile sections and refreshes into chapter review", async () => {
+    vi.useFakeTimers();
+    try {
+      let status = "parsing";
+      const originalGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) =>
+        url.endsWith("course-documents")
+          ? [
+              {
+                id: "doc",
+                termId: "term",
+                subjectId: "subject",
+                fileName: "课程.pdf",
+                status,
+                pageCount: 3,
+                units: ["第一课"]
+              }
+            ]
+          : originalGet(url)
+      );
+      await render();
+      expect(container.querySelector('section[aria-label="课程资料"]')?.textContent).toContain("正在解析 PDF");
+      act(() => button("填写报告").click());
+      expect(container.querySelector('[aria-label="PDF 处理状态"]')?.textContent).toContain("1 份 PDF 正在处理");
+      status = "needs_review";
+      await act(async () => vi.advanceTimersByTimeAsync(2500));
+      act(() => button("课程资料").click());
+      expect(container.querySelector('section[aria-label="课程资料"]')?.textContent).toContain("解析完成，请确认章节");
+      expect(button("确认章节")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a failed status refresh without claiming the parser failed", async () => {
+    vi.useFakeTimers();
+    try {
+      const originalGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) =>
+        url.endsWith("course-documents")
+          ? [{ id: "doc", termId: "term", subjectId: "subject", fileName: "课程.pdf", status: "queued" }]
+          : originalGet(url)
+      );
+      await render();
+      api.get.mockRejectedValueOnce(new Error("网络中断"));
+      await act(async () => vi.advanceTimersByTimeAsync(2500));
+      expect(container.querySelector('[aria-label="PDF 处理状态"]')?.textContent).toContain("状态刷新失败");
+      await act(async () => button("刷新处理状态").click());
+      expect(container.querySelector('[aria-label="PDF 处理状态"]')?.textContent).not.toContain("状态刷新失败");
+      expect(container.textContent).toContain("等待后台解析");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("keeps the selected student and feedback, then opens the report list after generation", async () => {
     vi.useFakeTimers();
@@ -213,6 +344,27 @@ describe("SemesterReports mobile workflow", () => {
       content: expect.objectContaining({ summary: "修改后的老师寄语" })
     });
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("opens image generation beside the copy-link action for a published report", async () => {
+    const report = publishedReport();
+    report.share!.url = `https://example.test/r/${"A".repeat(43)}`;
+    const publicFetch = vi.fn(() => new Promise(() => undefined));
+    vi.stubGlobal("fetch", publicFetch);
+    await render();
+    act(() => button("报告列表").click());
+    expect(button("复制链接")).toBeTruthy();
+    button("生成报告图片").focus();
+    await act(async () => button("生成报告图片").click());
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("示例学生 · 报告图片");
+    expect(publicFetch).toHaveBeenCalledWith(
+      `/api/public-reports/${"A".repeat(43)}`,
+      expect.objectContaining({ cache: "no-store" })
+    );
+    expect(api.post).not.toHaveBeenCalled();
+    act(() => button("关闭").click());
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(button("生成报告图片"));
   });
 
   it("reopens an older published report whose link was already revoked", async () => {

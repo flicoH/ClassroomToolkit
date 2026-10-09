@@ -53,7 +53,7 @@ describe("ConfirmDialog", () => {
 
   it("calls the corresponding action and keeps keyboard focus inside the dialog", () => {
     const { onConfirm, onCancel } = render(true);
-    const [cancel, confirm] = [...container.querySelectorAll("button")];
+    const [cancel, confirm] = [...container.querySelectorAll("button")] as [HTMLButtonElement, HTMLButtonElement];
     expect(document.activeElement).toBe(cancel);
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));

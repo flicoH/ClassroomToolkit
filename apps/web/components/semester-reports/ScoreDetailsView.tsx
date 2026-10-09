@@ -21,43 +21,44 @@ function scoreDate(value: string | null) {
 type ScoreFilter = "all" | "positive" | "negative";
 
 /** The shared view filters visible rows only; the frozen period totals never change. */
-export function ScoreDetailsView({ details }: { details: ScoreDetails }) {
+export function ScoreDetailsView({ details, forImage = false }: { details: ScoreDetails; forImage?: boolean }) {
   const [filter, setFilter] = useState<ScoreFilter>("all");
   useEffect(() => setFilter("all"), [details]);
   const visibleRecords = details.records.filter(record =>
-    filter === "positive" ? record.delta > 0 : filter === "negative" ? record.delta < 0 : true
+    forImage ? true : filter === "positive" ? record.delta > 0 : filter === "negative" ? record.delta < 0 : true
   );
   const filterLabel = filter === "positive" ? "加分" : "扣分";
   const buttonClass = (selected: boolean) =>
     `min-h-11 rounded-lg p-2 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${selected ? "ring-2 ring-indigo-500 ring-offset-1" : "hover:ring-1 hover:ring-indigo-300"}`;
+  const SummaryTag = forImage ? "div" : "button";
   return (
     <div className="space-y-3 text-sm text-slate-700">
       <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选积分明细">
-        <button
+        <SummaryTag
           type="button"
           className={`${buttonClass(filter === "positive")} bg-emerald-50 text-emerald-800`}
-          aria-pressed={filter === "positive"}
-          onClick={() => setFilter("positive")}
+          aria-pressed={forImage ? undefined : filter === "positive"}
+          onClick={forImage ? undefined : () => setFilter("positive")}
         >
           加分 {details.positive}
-        </button>
-        <button
+        </SummaryTag>
+        <SummaryTag
           type="button"
           className={`${buttonClass(filter === "negative")} bg-rose-50 text-rose-800`}
-          aria-pressed={filter === "negative"}
-          onClick={() => setFilter("negative")}
+          aria-pressed={forImage ? undefined : filter === "negative"}
+          onClick={forImage ? undefined : () => setFilter("negative")}
         >
           扣分 {Math.abs(details.negative)}
-        </button>
-        <button
+        </SummaryTag>
+        <SummaryTag
           type="button"
-          className={`${buttonClass(filter === "all")} bg-indigo-50 text-indigo-800`}
-          aria-pressed={filter === "all"}
-          onClick={() => setFilter("all")}
+          className={`${buttonClass(!forImage && filter === "all")} bg-indigo-50 text-indigo-800`}
+          aria-pressed={forImage ? undefined : filter === "all"}
+          onClick={forImage ? undefined : () => setFilter("all")}
         >
           净积分 {details.net > 0 ? "+" : ""}
           {details.net}
-        </button>
+        </SummaryTag>
       </div>
       {details.count === 0 ? (
         <p className="text-slate-500">本周期暂无积分加减记录。</p>
@@ -67,13 +68,13 @@ export function ScoreDetailsView({ details }: { details: ScoreDetails }) {
             共 {details.count} 条{details.count > details.records.length ? `，展示前 ${details.records.length} 条` : ""}
             ；为综合课堂积分，不代表本学科知识掌握程度。
           </p>
-          {filter !== "all" && (
+          {!forImage && filter !== "all" && (
             <p className="text-xs text-slate-500">
               当前显示{filterLabel}明细 · {visibleRecords.length} 条
             </p>
           )}
           {visibleRecords.length ? (
-            <ul className="max-h-72 space-y-1 overflow-y-auto" aria-label="积分加减明细">
+            <ul className={forImage ? "space-y-1" : "max-h-72 space-y-1 overflow-y-auto"} aria-label="积分加减明细">
               {visibleRecords.map((record, index) => (
                 <li
                   key={index}

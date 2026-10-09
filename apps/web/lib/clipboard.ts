@@ -26,3 +26,14 @@ export async function copyText(text: string): Promise<boolean> {
     if (focused instanceof HTMLElement) focused.focus();
   }
 }
+
+/** Write a ready PNG during the click gesture; image copying has no execCommand fallback. */
+export async function copyImage(image: Blob): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return false;
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": image })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
