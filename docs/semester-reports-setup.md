@@ -142,6 +142,8 @@ pnpm --filter ClassRoomToolkitWeb build
 
 生产环境通过后端 Compose 服务执行 TypeORM migration；PDF 原件写入持久化卷 `classroom_reports_data`，不要删除该卷来清理容器。默认 Kimi 模式仅需后端镜像；旧版 `backend-deploy.sh` 也按渲染后的提供方配置启动服务，Kimi 模式停止残留 Docling、跳过其拉取与启动，显式 Docling 模式保留原流程。此脚本现在需要 Python 3 读取渲染配置。Docling 模型仍包含在可选解析镜像内，仅显式选择 Docling 时启动。前端通过同源 BFF 上传，家长端页面为 `/r/<随机令牌>`，公开接口为 `GET /semester-reports/public/reports/:token`。上线前设定 HTTPS，验证反向代理允许至少 30MB 的 multipart 请求，并依部署要求完成新增数据表迁移和报告卷备份。
 
+CI 中 `Deploy Backend` 默认不构建可选 Docling 镜像；仅仓库 Actions Variable `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时执行解析镜像构建，其依赖安装或模型下载失败仍会阻断发布。使用 Kimi 时此变量留空或设为 `kimi`，服务器 `.env` 仍需设置 Kimi 密钥；仓库变量不会将密钥传入镜像，也不会替代服务器环境文件。选择规则回归位于 `scripts/check-deployment-workflows.test.mjs`，加入 `pnpm verify` 与后端部署验证 job。此次仅调整 CI 镜像选择，无 API、报告数据、解析内容或数据库结构变化，无新增迁移。
+
 ## 教师流程
 
 1. 在桌面打开「学期报告」，建立学期和学科，选择一份 PDF 上传。

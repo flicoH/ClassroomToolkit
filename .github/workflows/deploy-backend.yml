@@ -16,6 +16,7 @@ on:
       - tsconfig.json
       - .dockerignore
       - .github/workflows/deploy-backend.yml
+      - scripts/check-deployment-workflows.test.mjs
   workflow_dispatch:
 
 permissions:
@@ -68,6 +69,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test image build selection
+        run: node --test scripts/check-deployment-workflows.test.mjs
 
       - name: Initialize CI database
         run: pnpm --filter ClassRoomToolkitBackend db:init
@@ -131,6 +135,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
 
       - name: Build and push Docling parser image
+        # Kimi needs only the Node image; optional OCR must be explicitly enabled.
+        if: ${{ vars.SEMESTER_REPORT_PARSER_PROVIDER == 'docling' }}
         uses: docker/build-push-action@v6
         with:
           context: .

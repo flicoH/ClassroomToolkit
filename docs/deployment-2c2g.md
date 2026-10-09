@@ -31,7 +31,9 @@
 
 默认镜像命名空间是 `ghcr.io/flicoh/classroomtoolkit`，如果仓库不同，部署时设置 `IMAGE_NAMESPACE=ghcr.io/你的组织/仓库`（小写）。三个镜像使用 `sha-完整40位commit` 标签，并带 revision 标签，脚本会验证一致性。私有 GHCR 镜像需先在服务器执行 `docker login ghcr.io`，密码通过交互输入。
 
-**切换原部署前**，在仓库 Actions Variables 设置 `DEPLOY_PROFILE=2c2g`，原 backend/frontend 工作流的 SSH 部署 job 将跳过，防止重新启动原来的高内存 Compose；它们仍可测试和发布镜像。独立 Docling 镜像由现有 backend 工作流的 publish job 构建，也可在开发电脑从 Dockerfile 的 `docling-parser` stage 构建并发布。
+**切换原部署前**，在仓库 Actions Variables 设置 `DEPLOY_PROFILE=2c2g`，原 backend/frontend 工作流的 SSH 部署 job 将跳过，防止重新启动原来的高内存 Compose；它们仍可测试和发布镜像。后端工作流默认只构建 Node 后端镜像，Kimi 模式不会安装 PyTorch、OCR 依赖或下载 Docling 模型。仅使用独立 Docling 时，将仓库 Actions Variable `SEMESTER_REPORT_PARSER_PROVIDER` 显式设为 `docling`，后端工作流才额外发布同版本的解析镜像；也可在开发电脑从 Dockerfile 的 `docling-parser` stage 构建并发布。仓库变量控制 CI 构建，服务器环境文件控制运行提供方，两处需保持一致。
+
+若原 CI 报错包含 `pip install ... torch ... && ... docling-tools models download`，失败位置属于可选 Docling 镜像。使用 Kimi 时，确认仓库变量未设置为 `docling`（可留空或填 `kimi`），提交含上述条件的新版工作流后运行新提交的 Actions。重跑旧提交仍会使用旧工作流。显式 Docling 构建的失败仍会阻断该发布 job，需根据构建日志中最早的 pip/模型下载错误继续处理。
 
 ## 2. 配置环境
 
