@@ -99,6 +99,12 @@ function selectFeature(key: string) {
       同期活跃教师 {{ data.activeTeachers }} 位。使用率 = 功能使用教师数 ÷
       同期活跃教师数；变化对比上一等长周期的使用教师数。
     </p>
+    <p
+      v-if="data.items.some((feature) => feature.key === 'semester-reports')"
+      class="muted footnote"
+    >
+      学期报告按教师成功提交的操作次数统计，批量生成一次只计一次；后台解析、状态刷新和家长查看不计入。
+    </p>
     <div class="table-scroll">
       <table>
         <thead>

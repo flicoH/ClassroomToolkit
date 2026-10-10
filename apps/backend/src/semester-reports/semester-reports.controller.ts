@@ -13,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Public } from '../auth/public.decorator';
 import { SemesterReportsService } from './semester-reports.service';
+import { TrackFeature } from '../analytics/track-feature';
 
 @Controller('semester-reports')
 export class SemesterReportsController {
@@ -41,6 +42,7 @@ export class SemesterReportsController {
   }
 
   @Post('course-documents')
+  @TrackFeature('semester-reports', 'upload-document')
   @UseInterceptors(
     FileInterceptor('file', {
       limits: {
@@ -61,13 +63,14 @@ export class SemesterReportsController {
     return this.reports.uploadDocument(file, body);
   }
 
-  @Post('course-documents/:id/retry') retryDocument(@Param('id') id: string) {
+  @Post('course-documents/:id/retry')
+  @TrackFeature('semester-reports', 'retry-document')
+  retryDocument(@Param('id') id: string) {
     return this.reports.retryDocument(id);
   }
-  @Patch('course-documents/:id/confirm') confirmDocument(
-    @Param('id') id: string,
-    @Body() body: { units?: string[] },
-  ) {
+  @Patch('course-documents/:id/confirm')
+  @TrackFeature('semester-reports', 'confirm-document')
+  confirmDocument(@Param('id') id: string, @Body() body: { units?: string[] }) {
     return this.reports.confirmDocument(id, body.units);
   }
   @Delete('course-documents/:id') deleteDocument(@Param('id') id: string) {
@@ -79,7 +82,10 @@ export class SemesterReportsController {
   ) {
     return this.reports.preview(body);
   }
-  @Post('reports/generate') generate(@Body() body: Record<string, unknown>) {
+  // A batch accepted into the queue is one teacher operation, not one use per report or worker attempt.
+  @Post('reports/generate')
+  @TrackFeature('semester-reports', 'generate')
+  generate(@Body() body: Record<string, unknown>) {
     return this.reports.generate(body);
   }
   @Get('reports') listReports() {
@@ -91,31 +97,42 @@ export class SemesterReportsController {
   @Get('reports/:id/events') getEvents(@Param('id') id: string) {
     return this.reports.getEvents(id);
   }
-  @Patch('reports/:id/draft') editDraft(
+  @Patch('reports/:id/draft')
+  @TrackFeature('semester-reports', 'save-draft')
+  editDraft(
     @Param('id') id: string,
     @Body() body: { content: Record<string, unknown> },
   ) {
     return this.reports.editDraft(id, body.content);
   }
-  @Post('reports/:id/publish') publish(@Param('id') id: string) {
+  @Post('reports/:id/publish')
+  @TrackFeature('semester-reports', 'publish')
+  publish(@Param('id') id: string) {
     return this.reports.publish(id);
   }
-  @Post('reports/:id/regenerate') regenerate(@Param('id') id: string) {
+  @Post('reports/:id/regenerate')
+  @TrackFeature('semester-reports', 'regenerate')
+  regenerate(@Param('id') id: string) {
     return this.reports.regenerate(id);
   }
-  @Post('reports/:id/retry') retryReport(@Param('id') id: string) {
+  @Post('reports/:id/retry')
+  @TrackFeature('semester-reports', 'retry-report')
+  retryReport(@Param('id') id: string) {
     return this.reports.retryReport(id);
   }
-  @Post('reports/:id/shares') createShare(@Param('id') id: string) {
+  @Post('reports/:id/shares')
+  @TrackFeature('semester-reports', 'create-share')
+  createShare(@Param('id') id: string) {
     return this.reports.createShare(id);
   }
-  @Post('reports/:id/unpublish') unpublish(@Param('id') id: string) {
+  @Post('reports/:id/unpublish')
+  @TrackFeature('semester-reports', 'unpublish')
+  unpublish(@Param('id') id: string) {
     return this.reports.unpublish(id);
   }
-  @Delete('reports/:id/shares/:shareId') revokeShare(
-    @Param('id') id: string,
-    @Param('shareId') shareId: string,
-  ) {
+  @Delete('reports/:id/shares/:shareId')
+  @TrackFeature('semester-reports', 'revoke-share')
+  revokeShare(@Param('id') id: string, @Param('shareId') shareId: string) {
     return this.reports.revokeShare(id, shareId);
   }
   @Delete('reports/:id') deleteReport(@Param('id') id: string) {

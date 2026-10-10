@@ -9,6 +9,7 @@ const features: Record<string, string> = {
   seatingChart: "seating-chart",
   petPoints: "pet-points",
   gachaMachine: "gacha-machine",
+  semesterReports: "semester-reports",
   stickyNotes: "sticky-notes",
   stickyNotesList: "sticky-notes"
 };
