@@ -183,7 +183,7 @@ describe("ScoreDetailsView", () => {
       )
     );
     expect(container.textContent).toContain("学生一");
-    expect(container.textContent).toContain("本期积分加减情况");
+    expect(container.textContent).toContain("本周积分加减情况");
     expect(container.textContent).toContain("完成任务");
   });
 });
