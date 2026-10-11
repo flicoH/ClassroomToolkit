@@ -36,7 +36,7 @@ function cellText(value: string) {
 
 /** Normalize cloud table markup for indexing only; stored source text and PDF page numbers stay intact. */
 export function courseTableText(text: string) {
-  return text.replace(
+  const tables = text.replace(
     /<table\b[^>]*>([\s\S]*?)<\/table>/giu,
     (_, table: string) => {
       const pending = new Map<number, { text: string; rows: number }>();
@@ -77,4 +77,69 @@ export function courseTableText(text: string) {
       return `\n${lines.join('\n')}\n`;
     },
   );
+  return flattenedLessonTables(tables);
+}
+
+/** Cloud extraction sometimes flattens a whole grid into interleaved columns.
+ * Only recover unambiguous number/title pairs; guessing goal boundaries here
+ * would mix the next lesson's goals and homework into the report. */
+function flattenedLessonTables(text: string) {
+  const lines = text.split(/\r?\n/);
+  const result: string[] = [];
+  const headings = [
+    /^(?:课时|课次|节次)$/u,
+    /^(?:课程|课题|教学内容)$/u,
+    /^(?:(?:教学|学习)?目标(?:及内容)?)$/u,
+    /^(?:重难点(?:及技巧策略)?|教学策略)$/u,
+    /^(?:家庭活动建议|家庭活动|家庭作业)$/u,
+  ];
+  for (let index = 0; index < lines.length; index++) {
+    let cursor = index;
+    const header = headings.every((heading) => {
+      while (cursor < lines.length && !lines[cursor]!.trim()) cursor++;
+      return heading.test(lines[cursor++]?.trim() ?? '');
+    });
+    if (!header) {
+      result.push(lines[index]!);
+      continue;
+    }
+    const start = cursor;
+    while (
+      cursor < lines.length &&
+      !/^\s*(?:\||【PDF第\d+页】|#{1,3}\s|[一二三四五六七八九十]+[、．.])/u.test(
+        lines[cursor]!,
+      )
+    )
+      cursor++;
+    const rows: Array<{ number: number; title: string }> = [];
+    for (let row = start; row < cursor - 1; row++) {
+      if (!/^0*\d{1,3}$/u.test(lines[row]!.trim())) continue;
+      const number = Number(lines[row]!.trim());
+      let next = row + 1;
+      while (next < cursor && !lines[next]!.trim()) next++;
+      const title = lines[next]?.trim() ?? '';
+      if (
+        number > 0 &&
+        number <= 300 &&
+        title.length > 1 &&
+        title.length <= 80 &&
+        !/^(?:\d|目标|掌握|学会|技巧|重难点|家庭)/u.test(title)
+      )
+        rows.push({ number, title });
+    }
+    // Multiple increasing rows plus all five headings distinguish a syllabus
+    // from isolated page numbers and numbered prose.
+    if (
+      rows.length < 2 ||
+      rows.some((row, i) => i > 0 && row.number !== rows[i - 1]!.number + 1)
+    ) {
+      result.push(lines[index]!);
+      continue;
+    }
+    result.push('|课时|课程|目标及内容|重难点及技巧策略|家庭活动建议|');
+    for (const row of rows)
+      result.push(`|${row.number}|${row.title.replace(/\|/gu, '&#124;')}|||`);
+    index = cursor - 1;
+  }
+  return result.join('\n');
 }

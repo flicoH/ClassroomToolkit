@@ -14,25 +14,27 @@ import tseslint from "typescript-eslint";
 import eslintPluginVue from "eslint-plugin-vue";
 import globals from "globals";
 
+// Global ignores exclude generated output, not source tests or verification scripts.
 const ignores = [
   "**/dist/**",
+  "**/.dev-dist/**",
   "**/node_modules/**",
-  "/.*",
-  "scripts/**",
-  "**/*.d.ts",
+  "**/.git/**",
   "**/.next/**",
   "**/out/**",
-  "**/test/**"
+  "**/build/**",
+  "**/coverage/**",
+  "**/next-env.d.ts"
 ];
 
 export default defineConfig([
+  { ignores },
   // ESLint 推荐配置
   eslint.configs.recommended,
   // TypeScript 推荐配置
   ...tseslint.configs.recommended,
   // 通用配置
   {
-    ignores,
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -48,7 +50,6 @@ export default defineConfig([
   },
   // Next.js (web) 配置
   {
-    ignores,
     files: ["apps/web/**/*.{ts,tsx,js,jsx}"],
     languageOptions: {
       ecmaVersion: "latest",
@@ -65,8 +66,7 @@ export default defineConfig([
   },
   // NestJS (backend) 配置
   {
-    ignores,
-    files: ["apps/backend/**/*.{ts}"],
+    files: ["apps/backend/**/*.ts"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -76,22 +76,28 @@ export default defineConfig([
       }
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }]
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }]
     }
   },
   // Vue 配置 (admin)
   ...eslintPluginVue.configs["flat/recommended"].map(config => ({
     ...config,
-    ignores,
-    files: ["apps/admin/**/*.{vue}"],
+    files: ["apps/admin/**/*.vue"],
     languageOptions: {
       ...config.languageOptions,
+      parserOptions: { ...config.languageOptions?.parserOptions, parser: tseslint.parser },
       globals: {
         ...globals.browser,
         ...globals.node
       }
     }
   })),
+  // PM2 and other .cjs configs are deliberately CommonJS; keep other rules active.
+  {
+    files: ["**/*.cjs"],
+    languageOptions: { sourceType: "commonjs" },
+    rules: { "@typescript-eslint/no-require-imports": "off" }
+  },
   // 根目录配置文件
   {
     files: ["*.config.js"],

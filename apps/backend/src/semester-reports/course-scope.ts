@@ -410,6 +410,9 @@ export function selectCoursePages(
   period: 'week' | 'month' | 'term',
 ) {
   const selectors = scopeSelectors(scope);
+  // A term describes the reporting dates, not an instruction to discard the
+  // teacher's explicit lesson choices. Only a blank term scope means all.
+  const wholeTerm = period === 'term' && !scope.trim();
   return documents.map((document) => {
     const pages = [...(document.sourcePages ?? [])].sort(
       (a, b) => a.page - b.page,
@@ -426,43 +429,39 @@ export function selectCoursePages(
           ),
       ),
     );
-    const selected =
-      period === 'term'
-        ? pages
-        : pages.filter((page) => {
-            if (selectors.pageNumbers.includes(page.page)) return true;
-            if (
-              selectors.sections.length ||
-              selectors.standaloneLessons.length
-            ) {
-              return indexed.byPage
-                .get(page.page)
-                ?.some(
-                  (section) =>
-                    selectors.sections.some(
-                      (wanted) =>
-                        section.unit === wanted.unit &&
-                        (wanted.lesson === undefined ||
-                          section.lesson === wanted.lesson),
-                    ) ||
-                    selectors.standaloneLessons.some((wanted) =>
-                      matchesStandaloneLesson(wanted, section),
-                    ),
-                );
-            }
-            if (headingTerms.length)
-              return indexed.byPage
-                .get(page.page)
-                ?.some(
-                  (section) =>
-                    section.unit === -1 &&
-                    headingTerms.some((term) =>
-                      normalizeText(section.title ?? '').includes(term),
-                    ),
-                );
-            const text = normalizeText(page.text);
-            return selectors.terms.some((term) => text.includes(term));
-          });
+    const selected = wholeTerm
+      ? pages
+      : pages.filter((page) => {
+          if (selectors.pageNumbers.includes(page.page)) return true;
+          if (selectors.sections.length || selectors.standaloneLessons.length) {
+            return indexed.byPage
+              .get(page.page)
+              ?.some(
+                (section) =>
+                  selectors.sections.some(
+                    (wanted) =>
+                      section.unit === wanted.unit &&
+                      (wanted.lesson === undefined ||
+                        section.lesson === wanted.lesson),
+                  ) ||
+                  selectors.standaloneLessons.some((wanted) =>
+                    matchesStandaloneLesson(wanted, section),
+                  ),
+              );
+          }
+          if (headingTerms.length)
+            return indexed.byPage
+              .get(page.page)
+              ?.some(
+                (section) =>
+                  section.unit === -1 &&
+                  headingTerms.some((term) =>
+                    normalizeText(section.title ?? '').includes(term),
+                  ),
+              );
+          const text = normalizeText(page.text);
+          return selectors.terms.some((term) => text.includes(term));
+        });
     const sourceUnits = document.confirmedUnits?.length
       ? document.confirmedUnits
       : indexed.units.length
@@ -470,7 +469,7 @@ export function selectCoursePages(
         : pages.map((page) => `第${page.page}页`);
     const selectedSectionLabels = new Set(readSections(selected).units);
     const units = sourceUnits.filter((unit) => {
-      if (period === 'term') return true;
+      if (wholeTerm) return true;
       if (
         scopeSelectors(unit).pageNumbers.some((page) =>
           selectors.pageNumbers.includes(page),
@@ -520,6 +519,7 @@ export function extractLearningContents(
   period: 'week' | 'month' | 'term',
 ): LearningContent[] {
   const selectors = scopeSelectors(scope);
+  const wholeTerm = period === 'term' && !scope.trim();
   const result: LearningContent[] = [];
   for (const document of documents) {
     const pages = [...(document.sourcePages ?? [])].sort(
@@ -543,7 +543,7 @@ export function extractLearningContents(
     for (const line of indexed.contentLines) {
       if (!selectedPages.has(line.page)) continue;
       if (
-        period !== 'term' &&
+        !wholeTerm &&
         (selectors.sections.length || selectors.standaloneLessons.length) &&
         !selectors.sections.some(
           (wanted) =>

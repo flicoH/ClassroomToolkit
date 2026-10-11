@@ -27,7 +27,10 @@ import {
 } from "@/components/semester-reports/LearningReportView";
 import { ReportStudentPicker } from "@/components/semester-reports/ReportStudentPicker";
 import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
-import { ScoreDetailsView, type ScoreDetails } from "@/components/semester-reports/ScoreDetailsView";
+import { SubjectCoursePicker } from "@/components/semester-reports/SubjectCoursePicker";
+import { ReportHistory } from "@/components/semester-reports/ReportHistory";
+import { ReportPetView, type ReportPet } from "@/components/semester-reports/ReportPetView";
+import type { ScoreDetails } from "@/components/semester-reports/ScoreDetailsView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -39,8 +42,11 @@ import {
 
 type Term = { id: string; name: string; startDate: string; endDate: string };
 type Subject = { id: string; name: string };
-type Student = { id: string; name: string; classId: string; className: string; score: number };
+type Student = ReportPet & { id: string; name: string; classId: string; className: string; score: number };
 type Report = {
+  courseSelections?: Array<{ subjectId: string; courseScope: string }>;
+  reportVersion?: "v1" | "v2";
+  subjectName?: string;
   id: string;
   studentName: string;
   className: string;
@@ -48,6 +54,7 @@ type Report = {
   status: string;
   content: Record<string, unknown> | null;
   errorMessage?: string;
+  updatedAt?: string | null;
   generationMode?: "template" | "ai" | null;
   share?: { id: string; url: string } | null;
   start?: string;
@@ -76,6 +83,12 @@ type ScopePreview = {
   totalLearningContents: number;
 };
 type ScorePreview = {
+  petPreviews?: Array<{
+    studentId: string;
+    pet: ReportPet | null;
+    petAsOf: string;
+    petHistoryStatus: "recorded" | "unavailable";
+  }>;
   scoreSummaries: Array<ScoreDetails & { studentId: string; studentName: string }>;
 };
 
@@ -116,6 +129,25 @@ const documentStatusHints: Record<string, { title: string; description: string }
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
+/** Server save time is shown in Shanghai time regardless of browser timezone. */
+function ReportEditTime({ value }: { value?: string | null }) {
+  const date = value ? new Date(value) : null;
+  if (!date || !Number.isFinite(date.getTime())) return <>暂无记录</>;
+  return (
+    <time dateTime={value!}>
+      {date.toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+      })}
+    </time>
+  );
+}
 function errorMessage(error: unknown) {
   if (typeof error === "object" && error !== null && "response" in error) {
     const response = (error as { response?: { data?: { message?: unknown } } }).response;
@@ -124,7 +156,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "请求失败，请稍后重试。";
 }
 
-export function SemesterReports() {
+export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
+  const isV2 = version === "v2";
+  const initializedTerm = useRef(false);
+  const reportTitle = isV2 ? "学期报告v2" : "学期报告";
   const sectionId = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [mobileSection, setMobileSection] = useState<"courses" | "compose" | "reports">("courses");
@@ -139,9 +174,10 @@ export function SemesterReports() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [unitDrafts, setUnitDrafts] = useState<Record<string, string>>({});
   const [reviewingDocumentId, setReviewingDocumentId] = useState<string | null>(null);
+  const [draftSubjectScopes, setDraftSubjectScopes] = useState<Record<string, string>>({});
   const [termId, setTermId] = useState("");
   const [subjectId, setSubjectId] = useState("");
-  const [period, setPeriod] = useState("month");
+  const [period, setPeriod] = useState(isV2 ? "term" : "month");
   const [generationMode, setGenerationMode] = useState("template");
   const [start, setStart] = useState(localDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
   const [end, setEnd] = useState(localDateString(new Date()));
@@ -157,7 +193,31 @@ export function SemesterReports() {
   const [studentFeedback, setStudentFeedback] = useState<Record<string, StudentReportFeedback>>({});
   const [feedbackStudentId, setFeedbackStudentId] = useState("");
   const [courseScope, setCourseScope] = useState("");
-  const [scopePreview, setScopePreview] = useState<ScopePreview | null>(null);
+  const [subjectScopes, setSubjectScopes] = useState<Record<string, string>>({});
+  const courseSelections = useMemo(
+    () => Object.entries(subjectScopes).map(([subjectId, courseScope]) => ({ subjectId, courseScope })),
+    [subjectScopes]
+  );
+  const courseSelectionKey = isV2 ? JSON.stringify(courseSelections) : subjectId;
+  const feedbackContext = isV2 ? "v2" : subjectId;
+  const invalidCourseSelection =
+    isV2 &&
+    (!courseSelections.length ||
+      courseSelections.some(selection => period !== "term" && selection.courseScope.trim().length < 2));
+  useEffect(() => {
+    setSubjectScopes({});
+  }, [termId]);
+  const scopePreviewKey = JSON.stringify([
+    version,
+    period,
+    termId,
+    courseSelectionKey,
+    isV2 ? null : courseScope.trim()
+  ]);
+  const [scopePreviewResult, setScopePreviewResult] = useState<{ key: string; data: ScopePreview } | null>(null);
+  // V2 returns a combined subject description, so matching display strings
+  // cannot prove that a preview belongs to the current course selection.
+  const scopePreview = scopePreviewResult?.key === scopePreviewKey ? scopePreviewResult.data : null;
   const [scopePreviewError, setScopePreviewError] = useState("");
   const [scopePreviewAttempt, setScopePreviewAttempt] = useState(0);
   const [scorePreview, setScorePreview] = useState<{ key: string; data: ScorePreview } | null>(null);
@@ -172,6 +232,13 @@ export function SemesterReports() {
   >(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState<Report | null>(null);
+  const activeEditingId = useRef<string | null>(null);
+  useEffect(() => {
+    activeEditingId.current = editing?.id ?? null;
+  }, [editing?.id]);
+  const availableDraftSubjects = subjects.filter(
+    subject => !(editing?.courseSelections ?? []).some(selection => selection.subjectId === subject.id)
+  );
   const [draft, setDraft] = useState<ReportContent | null>(null);
   const [previewingDraft, setPreviewingDraft] = useState(false);
   const [loadingReportId, setLoadingReportId] = useState<string | null>(null);
@@ -179,19 +246,19 @@ export function SemesterReports() {
   const [actingReportId, setActingReportId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const uploadInFlight = useRef(false);
+  const classroomPhotoInputRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<{ fileName: string; progress: number | null; error?: string } | null>(
     null
   );
   const [documentRefreshFailed, setDocumentRefreshFailed] = useState(false);
   const [imageReport, setImageReport] = useState<{ studentName: string; url: string } | null>(null);
-  const [events, setEvents] = useState<Array<{ action: string; createdAt: string }>>([]);
   const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
   useEffect(() => {
-    if (!editing) return;
+    if (!editing?.id) return;
     const previous = document.activeElement as HTMLElement | null;
-    closeButtonRef.current?.focus();
+    closeButtonRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !document.querySelector("[data-report-history-confirm]")) {
         event.preventDefault();
         setEditing(null);
       }
@@ -199,30 +266,43 @@ export function SemesterReports() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      previous?.focus();
+      previous?.focus({ preventScroll: true });
     };
-  }, [editing]);
+    // Updating the same draft must not refocus the header or scroll its reader.
+  }, [editing?.id]);
 
-  const load = useCallback(async (refreshToken?: string) => {
-    const [t, s, p, r, d] = await Promise.all([
-      request.get<Term[], Term[]>(`${base}/report-terms`),
-      request.get<Subject[], Subject[]>(`${base}/report-subjects`),
-      request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
-      request.get<Report[], Report[]>(
-        `${base}/reports`,
-        refreshToken ? { params: { refresh: refreshToken } } : undefined
-      ),
-      request.get<Document[], Document[]>(`${base}/course-documents`)
-    ]);
-    setTerms(t);
-    setSubjects(s);
-    setStudents(p.students);
-    setReports(r);
-    setDocuments(d);
-    setDocumentRefreshFailed(false);
-    setTermId(current => current || t[0]?.id || "");
-    setSubjectId(current => current || s[0]?.id || "");
-  }, []);
+  const load = useCallback(
+    async (refreshToken?: string) => {
+      const [t, s, p, r, d] = await Promise.all([
+        request.get<Term[], Term[]>(`${base}/report-terms`),
+        request.get<Subject[], Subject[]>(`${base}/report-subjects`),
+        request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
+        request.get<Report[], Report[]>(
+          `${base}/reports`,
+          refreshToken ? { params: { refresh: refreshToken } } : undefined
+        ),
+        request.get<Document[], Document[]>(`${base}/course-documents`)
+      ]);
+      setTerms(t);
+      setSubjects(s);
+      setStudents(p.students);
+      setReports(r.filter(report => (report.reportVersion ?? "v1") === version));
+      setDocuments(d);
+      setDocumentRefreshFailed(false);
+      setTermId(current => current || t[0]?.id || "");
+      if (isV2 && !initializedTerm.current && t[0]) {
+        initializedTerm.current = true;
+        setStart(t[0].startDate.slice(0, 10));
+        setEnd(
+          t[0].endDate.slice(0, 10) < localDateString(new Date())
+            ? t[0].endDate.slice(0, 10)
+            : localDateString(new Date())
+        );
+      }
+      setSubjectId(current => current || s[0]?.id || "");
+    },
+    [version, isV2]
+  );
 
   useEffect(() => {
     void load().catch((error: Error) => setMessage(error.message));
@@ -243,9 +323,14 @@ export function SemesterReports() {
   const reviewDocuments = documents.filter(doc => doc.status === "needs_review");
 
   useEffect(() => {
-    setScopePreview(null);
+    setScopePreviewResult(null);
     setScopePreviewError("");
-    if (!termId || !subjectId || (period !== "term" && courseScope.trim().length < 2)) return;
+    if (
+      !termId ||
+      invalidCourseSelection ||
+      (!isV2 && (!subjectId || (period !== "term" && courseScope.trim().length < 2)))
+    )
+      return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void request
@@ -253,10 +338,12 @@ export function SemesterReports() {
           period,
           termId,
           subjectId,
+          reportVersion: version,
+          courseSelections: isV2 ? courseSelections : undefined,
           courseScope
         })
         .then(result => {
-          if (!cancelled) setScopePreview(result);
+          if (!cancelled) setScopePreviewResult({ key: scopePreviewKey, data: result });
         })
         .catch(error => {
           if (!cancelled) setScopePreviewError(errorMessage(error));
@@ -266,12 +353,25 @@ export function SemesterReports() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [period, termId, subjectId, courseScope, documents, scopePreviewAttempt]);
+  }, [
+    period,
+    termId,
+    subjectId,
+    courseScope,
+    documents,
+    scopePreviewAttempt,
+    scopePreviewKey,
+    version,
+    isV2,
+    courseSelections,
+    invalidCourseSelection
+  ]);
 
-  const scorePreviewKey = [period, termId, subjectId, start, end, ...selected].join(":");
+  const scorePreviewKey = [period, termId, courseSelectionKey, start, end, ...selected].join(":");
   useEffect(() => {
     setScorePreviewError("");
-    if (!termId || !subjectId || !selected.length || !start || !end || end < start) return;
+    if (!termId || invalidCourseSelection || (!isV2 && !subjectId) || !selected.length || !start || !end || end < start)
+      return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void request
@@ -279,6 +379,8 @@ export function SemesterReports() {
           period,
           termId,
           subjectId,
+          reportVersion: version,
+          courseSelections: isV2 ? courseSelections : undefined,
           start,
           end,
           studentIds: selected
@@ -294,13 +396,27 @@ export function SemesterReports() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [period, termId, subjectId, start, end, selected, scorePreviewKey, scorePreviewAttempt]);
+  }, [
+    period,
+    termId,
+    subjectId,
+    start,
+    end,
+    selected,
+    scorePreviewKey,
+    scorePreviewAttempt,
+    version,
+    isV2,
+    courseSelections,
+    invalidCourseSelection
+  ]);
 
   const availableUnits = [
     ...new Set(
       documents
         .filter(
-          document => document.status === "ready" && document.termId === termId && document.subjectId === subjectId
+          document =>
+            document.status === "ready" && document.termId === termId && (isV2 || document.subjectId === subjectId)
         )
         .flatMap(document => [
           ...(document.units ?? [])
@@ -312,10 +428,12 @@ export function SemesterReports() {
   const term = terms.find(t => t.id === termId);
   const selectedStudents = useMemo(() => students.filter(s => selected.includes(s.id)), [students, selected]);
   const feedbackStudent = selectedStudents.find(student => student.id === feedbackStudentId) ?? selectedStudents[0];
-  const feedbackKey = feedbackStudent ? `${termId}:${subjectId}:${period}:${start}:${end}:${feedbackStudent.id}` : "";
-  const selectedScore =
+  const feedbackKey = feedbackStudent
+    ? `${termId}:${feedbackContext}:${period}:${start}:${end}:${feedbackStudent.id}`
+    : "";
+  const selectedPet =
     scorePreview?.key === scorePreviewKey
-      ? scorePreview.data.scoreSummaries.find(summary => summary.studentId === feedbackStudent?.id)
+      ? scorePreview.data.petPreviews?.find(preview => preview.studentId === feedbackStudent?.id)
       : undefined;
 
   function changePeriod(nextPeriod: string, nextTermId = termId) {
@@ -477,6 +595,8 @@ export function SemesterReports() {
         end,
         termId,
         subjectId,
+        reportVersion: version,
+        courseSelections: isV2 ? courseSelections : undefined,
         studentIds: selected,
         keywords,
         teacherObservation: observation,
@@ -484,7 +604,8 @@ export function SemesterReports() {
         reportDetails: { ...reportDetails, lessonDate: reportDetails.lessonDate || end },
         studentFeedback: selected.map(studentId => {
           const value =
-            studentFeedback[`${termId}:${subjectId}:${period}:${start}:${end}:${studentId}`] ?? emptyStudentFeedback();
+            studentFeedback[`${termId}:${feedbackContext}:${period}:${start}:${end}:${studentId}`] ??
+            emptyStudentFeedback();
           const allowed = new Set(scopePreview?.learningContents.map(item => item.id) ?? []);
           return {
             ...value,
@@ -593,21 +714,15 @@ export function SemesterReports() {
     setLoadingReportId(report.id);
     setMessage("");
     try {
-      const [full, history] = await Promise.all([
-        request.get<Report, Report>(
-          `${base}/reports/${report.id}`,
-          refreshToken ? { params: { refresh: refreshToken } } : undefined
-        ),
-        request.get<Array<{ action: string; createdAt: string }>, Array<{ action: string; createdAt: string }>>(
-          `${base}/reports/${report.id}/events`,
-          refreshToken ? { params: { refresh: refreshToken } } : undefined
-        )
-      ]);
+      const full = await request.get<Report, Report>(
+        `${base}/reports/${report.id}`,
+        refreshToken ? { params: { refresh: refreshToken } } : undefined
+      );
       if (!full.content) throw new Error("报告正文尚未生成，请稍后重试。");
       setEditing(full);
+      setDraftSubjectScopes({});
       setPreviewingDraft(full.status !== "draft");
       setDraft(full.content as ReportContent);
-      setEvents(history);
       return full;
     } catch (error) {
       setMessage(errorMessage(error));
@@ -636,12 +751,125 @@ export function SemesterReports() {
     if (reference.startsWith("score:")) return "综合课堂评价记录";
     return reference;
   }
+  async function changeClassroomPhoto(file?: File) {
+    if (!editing || busy) return;
+    if (file && (!["image/jpeg", "image/png"].includes(file.type) || file.size > 5 * 1024 * 1024)) {
+      setMessage("请上传 JPG 或 PNG 课堂照片（最大 5MB）");
+      return;
+    }
+    setBusy(true);
+    try {
+      const url = `${base}/reports/${editing.id}/classroom-photo`;
+      const form = new FormData();
+      if (file) form.append("file", file);
+      // JSON defaults serialize FormData without a file; the browser must set
+      // the multipart boundary for the BFF and Multer to receive the photo.
+      const updated = file
+        ? await request.post<Report, Report>(url, form, {
+            headers: { "Content-Type": undefined },
+            timeout: 120000
+          })
+        : await request.delete<Report, Report>(url);
+      const visuals = updated.content as ReportContent;
+      setDraft(current => (current ? { ...current, classroomPhoto: visuals.classroomPhoto } : current));
+      setEditing(current => (current?.id === updated.id ? updated : current));
+      setMessage(file ? "课堂照片已保存" : "课堂照片已移除");
+      await load();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addDraftSubjects() {
+    if (!editing || busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const updated = await request.post<Report, Report>(`${base}/reports/${editing.id}/course-subjects`, {
+        courseSelections: Object.entries(draftSubjectScopes).map(([subjectId, courseScope]) => ({
+          subjectId,
+          courseScope
+        }))
+      });
+      // A late response must not append content into another report opened meanwhile.
+      if (activeEditingId.current !== updated.id) {
+        await load();
+        return;
+      }
+      const incoming = (updated.content as ReportContent).learningContents ?? [];
+      setDraft(current =>
+        current
+          ? {
+              ...current,
+              learningContents: [
+                ...(current.learningContents ?? []),
+                ...incoming.filter(item => !(current.learningContents ?? []).some(old => old.id === item.id))
+              ]
+            }
+          : current
+      );
+      setEditing(updated);
+      setDraftSubjectScopes({});
+      setMessage("学科已添加，已有评价和未保存的寄语已保留。新增内容可继续填写评价。");
+      await load();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeDraftSubject(subjectId: string) {
+    if (!editing || busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await request.delete<
+        { report: Report; removedReferences: string[] },
+        { report: Report; removedReferences: string[] }
+      >(`${base}/reports/${editing.id}/course-subjects/${encodeURIComponent(subjectId)}`);
+      const updated = result.report;
+      if (activeEditingId.current !== updated.id) {
+        await load();
+        return;
+      }
+      const remainingIds = new Set(((updated.content as ReportContent).learningContents ?? []).map(item => item.id));
+      const removed = new Set(result.removedReferences);
+      // Keep unsaved teacher edits, but remove entries whose course evidence was deleted.
+      const keepEntry = (item: { sourceRefs: string[] }) => !item.sourceRefs.some(ref => removed.has(ref));
+      setDraft(current =>
+        current
+          ? {
+              ...current,
+              learningContents: current.learningContents?.filter(item => remainingIds.has(item.id)),
+              strengths: current.strengths.filter(keepEntry),
+              areasToImprove: current.areasToImprove.filter(keepEntry),
+              homeSuggestions: current.homeSuggestions.filter(keepEntry),
+              classroomPerformance: current.classroomPerformance?.filter(keepEntry)
+            }
+          : current
+      );
+      setEditing(updated);
+      setMessage("学科及对应学习内容、评价和课程引用条目已删除，其他评价和未保存的寄语已保留。");
+      await load();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveDraft() {
     if (!editing || !draft) return;
     setBusy(true);
     setMessage("");
     try {
-      await request.patch(`${base}/reports/${editing.id}/draft`, { content: draft });
+      // Photos have their own multipart endpoint; avoid resending base64 in the JSON draft.
+      const content = { ...draft };
+      delete content.classroomPhoto;
+      await request.patch(`${base}/reports/${editing.id}/draft`, { content });
       setEditing(null);
       await load();
     } catch (error) {
@@ -661,12 +889,12 @@ export function SemesterReports() {
           <CartoonSemesterReportIcon className="h-8 w-8 shrink-0 md:h-9 md:w-9" />
         </div>
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold">学期报告</h1>
+          <h1 className="text-xl font-semibold">{reportTitle}</h1>
           <p className="mt-1 text-xs leading-5 text-muted-foreground md:text-sm">整理课堂成长，审核后分享给家长</p>
         </div>
       </header>
       <nav
-        aria-label="学期报告导航"
+        aria-label={`${reportTitle}导航`}
         className="sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md md:hidden"
       >
         {(
@@ -1134,20 +1362,24 @@ export function SemesterReports() {
             >
               <option value="week">每周</option>
               <option value="month">每月</option>
-              {/* <option value="term">每学期</option> */}
+              {isV2 && <option value="term">每学期</option>}
             </select>
-            <select
-              aria-label="报告学科"
-              className="h-9 rounded-md border bg-background px-2"
-              value={subjectId}
-              onChange={e => setSubjectId(e.target.value)}
-            >
-              {subjects.map(x => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
+            {isV2 ? (
+              <p className="flex items-center rounded-md border px-3 text-sm">已选 {courseSelections.length} 门学科</p>
+            ) : (
+              <select
+                aria-label="报告学科"
+                className="h-9 rounded-md border bg-background px-2"
+                value={subjectId}
+                onChange={e => setSubjectId(e.target.value)}
+              >
+                {subjects.map(x => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <label className="space-y-1 text-sm">
               周期开始日期
               <Input type="date" value={start} onChange={e => setStart(e.target.value)} />
@@ -1158,61 +1390,77 @@ export function SemesterReports() {
             </label>
           </div>
           <ReportStudentPicker students={students} selected={selected} onChange={setSelected} />
-          <textarea
-            className="min-h-16 w-full rounded-md border bg-background p-2 text-sm"
-            placeholder={
-              period === "term"
-                ? "学期报告默认覆盖整份已确认课程资料"
-                : "本周期已授课范围（可选单元、课时，也可填第3页或第3-5页）"
-            }
-            value={courseScope}
-            maxLength={1000}
-            onChange={e => {
-              setCourseScope(e.target.value);
-              setMessage("");
-            }}
-          />
-          {period !== "term" && availableUnits.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">从课程 PDF 选择单元、课时或页码，可选择多个：</p>
-              {/* <p className="text-xs text-muted-foreground">
+          {isV2 ? (
+            <SubjectCoursePicker
+              subjects={subjects}
+              documents={documents}
+              termId={termId}
+              period={period}
+              value={subjectScopes}
+              onChange={value => {
+                setSubjectScopes(value);
+                setMessage("");
+              }}
+            />
+          ) : (
+            <>
+              <textarea
+                className="min-h-16 w-full rounded-md border bg-background p-2 text-sm"
+                placeholder={
+                  period === "term"
+                    ? "学期报告默认覆盖整份已确认课程资料"
+                    : "本周期已授课范围（可选单元、课时，也可填第3页或第3-5页）"
+                }
+                value={courseScope}
+                maxLength={1000}
+                onChange={e => {
+                  setCourseScope(e.target.value);
+                  setMessage("");
+                }}
+              />
+              {period !== "term" && availableUnits.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">从课程 PDF 选择单元、课时或页码，可选择多个：</p>
+                  {/* <p className="text-xs text-muted-foreground">
                 页码可手动填写范围，例如“第101-120页”；同学科有多份 PDF 时，请核对下方的命中页预览。
               </p> */}
-              <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto sm:flex sm:max-h-32 sm:flex-wrap sm:gap-1">
-                {availableUnits.map(unit => (
-                  <Button
-                    key={unit}
-                    size="sm"
-                    variant={
-                      courseScope
-                        .split(/[，、;；\n]+/)
-                        .map(value => value.trim())
-                        .includes(unit)
-                        ? "default"
-                        : "outline"
-                    }
-                    onClick={() => {
-                      setMessage("");
-                      setCourseScope(current => {
-                        const scopes = current
-                          .split(/[，、;；\n]+/)
-                          .map(value => value.trim())
-                          .filter(Boolean);
-                        if (scopes.includes(unit)) return scopes.filter(scope => scope !== unit).join("、");
-                        // Choosing a lesson narrows an already selected whole unit.
-                        const parent = /^(Unit\d+) 第\d+课$/.exec(unit)?.[1];
-                        const next = parent
-                          ? scopes.filter(scope => scope !== parent)
-                          : scopes.filter(scope => !scope.startsWith(`${unit} 第`));
-                        return [...next, unit].join("、");
-                      });
-                    }}
-                  >
-                    {unit}
-                  </Button>
-                ))}
-              </div>
-            </div>
+                  <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto sm:flex sm:max-h-32 sm:flex-wrap sm:gap-1">
+                    {availableUnits.map(unit => (
+                      <Button
+                        key={unit}
+                        size="sm"
+                        variant={
+                          courseScope
+                            .split(/[，、;；\n]+/)
+                            .map(value => value.trim())
+                            .includes(unit)
+                            ? "default"
+                            : "outline"
+                        }
+                        onClick={() => {
+                          setMessage("");
+                          setCourseScope(current => {
+                            const scopes = current
+                              .split(/[，、;；\n]+/)
+                              .map(value => value.trim())
+                              .filter(Boolean);
+                            if (scopes.includes(unit)) return scopes.filter(scope => scope !== unit).join("、");
+                            // Choosing a lesson narrows an already selected whole unit.
+                            const parent = /^(Unit\d+) 第\d+课$/.exec(unit)?.[1];
+                            const next = parent
+                              ? scopes.filter(scope => scope !== parent)
+                              : scopes.filter(scope => !scope.startsWith(`${unit} 第`));
+                            return [...next, unit].join("、");
+                          });
+                        }}
+                      >
+                        {unit}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
           {scopePreview && (
             <div className="rounded-md border p-2 text-xs" aria-live="polite">
@@ -1290,29 +1538,47 @@ export function SemesterReports() {
                   </Button>
                 ))}
               </div>
-              <div className="rounded-xl border bg-slate-50 p-3" aria-live="polite">
-                <h4 className="mb-2 text-sm font-semibold">
-                  {feedbackStudent.name} · {periodTitles[period]}积分加减情况
-                </h4>
-                {selectedScore ? (
-                  <ScoreDetailsView key={feedbackStudent.id} details={selectedScore} />
+              <section className="rounded-xl border bg-slate-50 p-3" aria-live="polite">
+                <h4 className="mb-2 font-semibold">{feedbackStudent.name}的宠物伙伴</h4>
+                {selectedPet ? (
+                  selectedPet.petHistoryStatus === "unavailable" ? (
+                    <p className="text-sm text-muted-foreground">所选周期结束时的宠物形态尚无历史记录。</p>
+                  ) : (
+                    <ReportPetView pet={selectedPet.pet} />
+                  )
                 ) : scorePreviewError ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm text-destructive">积分预览失败：{scorePreviewError}</p>
+                    <p className="text-sm text-destructive">宠物形态预览失败：{scorePreviewError}</p>
                     <Button size="sm" variant="outline" onClick={() => setScorePreviewAttempt(value => value + 1)}>
                       重试
                     </Button>
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">正在读取所选日期内的加减分记录…</p>
+                  <p className="text-sm text-muted-foreground">正在读取所选周期的宠物形态…</p>
                 )}
-                <p className="mt-2 text-xs text-muted-foreground">生成时会重新读取积分并固定在报告中。</p>
-              </div>
+                {selectedPet && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    形态记录截至{" "}
+                    {new Date(selectedPet.petAsOf).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}
+                  </p>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  报告使用所选周期结束时的历史形态；今天尚未结束时以生成时间为准。 课堂照片可在生成后的草稿中上传。
+                </p>
+              </section>
               <StudentFeedbackForm
                 key={feedbackKey}
                 student={feedbackStudent}
-                subject={subjects.find(subject => subject.id === subjectId)?.name ?? ""}
+                subject={
+                  isV2
+                    ? subjects
+                        .filter(subject => Object.hasOwn(subjectScopes, subject.id))
+                        .map(subject => subject.name)
+                        .join("、")
+                    : (subjects.find(subject => subject.id === subjectId)?.name ?? "")
+                }
                 learningContents={scopePreview?.learningContents ?? []}
+                reserveNextFocus={isV2}
                 value={studentFeedback[feedbackKey] ?? emptyStudentFeedback()}
                 onChange={patch =>
                   setStudentFeedback(current => ({
@@ -1351,9 +1617,8 @@ export function SemesterReports() {
             disabled={
               busy ||
               !scopePreview ||
-              scopePreview.courseScope !== courseScope.trim() ||
               !termId ||
-              !subjectId ||
+              (!isV2 && !subjectId) ||
               selected.length === 0 ||
               !start ||
               !end ||
@@ -1364,10 +1629,10 @@ export function SemesterReports() {
                 (!Number.isInteger(reportDetails.lessonNumber) ||
                   reportDetails.lessonNumber < 1 ||
                   reportDetails.lessonNumber > 999)) ||
-              (period !== "term" && courseScope.trim().length < 2) ||
-              (period !== "term" &&
-                scopePreview?.courseScope === courseScope.trim() &&
-                scopePreview.totalPages === 0) ||
+              (isV2
+                ? invalidCourseSelection || !scopePreview || Boolean(scopePreviewError)
+                : period !== "term" && courseScope.trim().length < 2) ||
+              scopePreview.totalPages === 0 ||
               (scopePreview?.totalLearningContents ?? 0) > 500
             }
             className="w-full sm:w-auto"
@@ -1393,6 +1658,8 @@ export function SemesterReports() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {labels[report.status] ?? report.status}
+                  {" · 编辑时间："}
+                  <ReportEditTime value={report.updatedAt} />
                   {/* {report.generationMode === "template"
                     ? " · 本地模板"
                     : report.generationMode === "ai"
@@ -1498,6 +1765,9 @@ export function SemesterReports() {
         createPortal(
           <div
             className={`${mobileReportControls} fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 sm:p-4`}
+            // Portal events still bubble through AppWindow in the React tree.
+            // Keep clicks/scrollbar presses from restacking its blurred desktop layer.
+            onMouseDown={event => event.stopPropagation()}
             onClick={event => {
               if (event.target === event.currentTarget) setEditing(null);
             }}
@@ -1523,17 +1793,23 @@ export function SemesterReports() {
                 </Button>
               </div>
               <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-5">
-                <details className="rounded-lg border p-3 text-sm" open={editing.status !== "draft"}>
-                  <summary className="cursor-pointer font-medium">流程记录</summary>
-                  <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                    {events.map((event, index) => (
-                      <li key={index}>
-                        {event.action} · {new Date(event.createdAt).toLocaleString()}
-                      </li>
-                    ))}
-                  </ul>
-                  {!events.length && <p className="mt-2 text-xs text-muted-foreground">暂无流程记录。</p>}
-                </details>
+                <ReportHistory<Report>
+                  key={editing.id}
+                  reportId={editing.id}
+                  status={editing.status}
+                  refreshKey={editing}
+                  disabled={busy}
+                  onWorkingChange={setBusy}
+                  onRestored={updated => {
+                    if (activeEditingId.current !== updated.id) return;
+                    setEditing(updated);
+                    setDraft(updated.content as ReportContent);
+                    setDraftSubjectScopes({});
+                    setPreviewingDraft(false);
+                    setMessage("历史版本已恢复为草稿，可继续编辑；分享链接已失效。");
+                    void load().catch(() => setMessage("历史版本已恢复，报告列表刷新失败，请重新加载。"));
+                  }}
+                />
                 {message && (
                   <p className="rounded-md border p-3 text-sm" role="status">
                     {message}
@@ -1557,12 +1833,114 @@ export function SemesterReports() {
                     </Button>
                   )}
                 </div>
+                {isV2 && editing.status === "draft" && (
+                  <section className="space-y-3 rounded-xl border p-4">
+                    <h3 className="font-semibold">调整报告学科</h3>
+                    <p className="text-xs text-muted-foreground">
+                      删除会立即保存，并移除该学科的学习内容、评价及引用该课程的条目。报告至少保留一门学科。
+                    </p>
+                    <div className="space-y-2">
+                      {(editing.courseSelections ?? []).map(selection => {
+                        const name =
+                          subjects.find(subject => subject.id === selection.subjectId)?.name ?? selection.subjectId;
+                        return (
+                          <div
+                            key={selection.subjectId}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2"
+                          >
+                            <span className="min-w-0 break-words text-sm">{name}</span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              aria-label={`删除${name}学科`}
+                              disabled={busy || (editing.courseSelections ?? []).length <= 1}
+                              onClick={() => void removeDraftSubject(selection.subjectId)}
+                            >
+                              <Trash2 /> 删除学科
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <h4 className="text-sm font-semibold">添加未选学科</h4>
+                    <p className="text-xs text-muted-foreground">
+                      补充当前报告未包含的学科，保留已有评价；新增学习内容默认为待评价。
+                    </p>
+                    {availableDraftSubjects.length ? (
+                      <SubjectCoursePicker
+                        subjects={availableDraftSubjects}
+                        documents={documents}
+                        termId={editing.termId ?? ""}
+                        period={editing.period}
+                        value={draftSubjectScopes}
+                        onChange={setDraftSubjectScopes}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">所有学科均已添加到当前报告。</p>
+                    )}
+                    <Button
+                      disabled={
+                        busy ||
+                        !Object.keys(draftSubjectScopes).length ||
+                        (editing.period !== "term" &&
+                          Object.values(draftSubjectScopes).some(scope => scope.trim().length < 2))
+                      }
+                      onClick={() => void addDraftSubjects()}
+                    >
+                      <Plus /> 添加到当前报告
+                    </Button>
+                  </section>
+                )}
+                {editing.status === "draft" && (
+                  <section className="space-y-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-4">
+                    <h3 className="font-semibold">课堂照片（每位学生一张）</h3>
+                    <p className="text-xs text-muted-foreground">
+                      照片显示在报告顶部、班级名称下方。支持 JPG / PNG，最大 5MB；每位学生一张。
+                    </p>
+                    {draft.classroomPhoto && (
+                      <img
+                        src={draft.classroomPhoto}
+                        alt={`${editing.studentName}的课堂照片`}
+                        className="max-h-48 w-full rounded-lg object-contain"
+                      />
+                    )}
+                    <input
+                      ref={classroomPhotoInputRef}
+                      className="hidden"
+                      aria-label="上传课堂照片"
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      disabled={busy}
+                      onChange={event => {
+                        const file = event.target.files?.[0];
+                        if (file) void changeClassroomPhoto(file);
+                        event.target.value = "";
+                      }}
+                    />
+                    <Button
+                      size="lg"
+                      className="min-h-12 w-full bg-indigo-600 text-white hover:bg-indigo-700 sm:w-auto"
+                      disabled={busy}
+                      onClick={() => classroomPhotoInputRef.current?.click()}
+                    >
+                      <Upload className="h-5 w-5" />
+                      {busy ? "处理中…" : draft.classroomPhoto ? "更换课堂照片" : "上传课堂照片"}
+                    </Button>
+                    {draft.classroomPhoto && (
+                      <Button disabled={busy} variant="outline" onClick={() => void changeClassroomPhoto()}>
+                        移除课堂照片
+                      </Button>
+                    )}
+                  </section>
+                )}
                 {previewingDraft ? (
                   <LearningReportView
                     report={{
                       studentName: editing.studentName,
                       className: editing.className,
-                      subject: subjects.find(subject => subject.id === editing.subjectId)?.name ?? "",
+                      subject: isV2
+                        ? (editing.subjectName ?? "已选课程")
+                        : (subjects.find(subject => subject.id === editing.subjectId)?.name ?? ""),
                       term: terms.find(term => term.id === editing.termId)?.name ?? "",
                       period: editing.period,
                       start: editing.start,
@@ -1665,7 +2043,7 @@ export function SemesterReports() {
                     </label>
                     {(
                       [
-                        [`{periodTitles[period]}最值得肯定`, "strengths"],
+                        [`本期最值得肯定`, "strengths"],
                         ["下一步重点", "areasToImprove"],
                         ["回家可以这样练", "homeSuggestions"]
                       ] as const

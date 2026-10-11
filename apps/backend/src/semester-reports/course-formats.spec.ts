@@ -37,6 +37,67 @@ function course(kind: FormatFixture['kind']) {
 }
 
 describe('uploaded course PDF format contract', () => {
+  it('recovers flattened headers and all headerless lesson pages from the October pinyin upload', () => {
+    const pages = JSON.parse(
+      readFileSync(
+        join(__dirname, 'fixtures/pinyin-flattened-header.json'),
+        'utf8',
+      ),
+    ) as FormatFixture['pages'];
+    const document = {
+      id: 'pinyin-flat',
+      fileName: 'course.pdf',
+      confirmedUnits: [],
+      sourcePages: pages,
+    };
+    const units = detectCourseUnits(
+      pages.map((p) => `【PDF第${p.page}页】\n${p.text}`).join('\n'),
+    );
+    expect(
+      units.map((label) => Number(/^第(\d+)课时/u.exec(label)?.[1])),
+    ).toEqual(Array.from({ length: 81 }, (_, i) => i + 1));
+    for (const [lesson, expected] of [
+      [1, [6]],
+      [3, [6]],
+      [7, [7, 8]],
+      [33, [12, 13]],
+      [40, [13, 14]],
+      [81, [21]],
+    ] as const) {
+      expect(
+        selectCoursePages([document], `第${lesson}课时`, 'week')[0].pages.map(
+          (p) => p.page,
+        ),
+      ).toEqual(expected);
+    }
+    expect(
+      extractLearningContents([document], '第1课时', 'week').map((p) => p.text),
+    ).toEqual(['单韵母a o e 认读写']);
+    expect(
+      extractLearningContents([document], '第81课时', 'week').map(
+        (p) => p.text,
+      ),
+    ).toEqual(['阶段测评四']);
+    expect(
+      extractLearningContents([document], '第81课时 · 阶段测评四', 'term').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['阶段测评四']);
+    expect(
+      selectCoursePages(
+        [document],
+        '第81课时 · 阶段测评四',
+        'term',
+      )[0].pages.map((page) => page.page),
+    ).toEqual([21]);
+    const seventh = extractLearningContents([document], '第7课时', 'week');
+    expect(seventh.map((p) => p.text).join('')).toContain('当中的运用');
+    expect(seventh.flatMap((p) => p.sourceRefs)).toContain(
+      'course:pinyin-flat:p8',
+    );
+    expect(seventh.map((p) => p.text).join('')).not.toContain('家庭练习');
+  });
+
   it.each([
     ['pinyin', 21, 81],
     ['reading', 18, 80],

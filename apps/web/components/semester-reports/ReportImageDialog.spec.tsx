@@ -19,6 +19,9 @@ const report = {
     areasToImprove: [],
     homeSuggestions: [],
     limitations: [],
+    pet: { petId: "sprout-puff", petName: "团团", level: 4, stage: "第4形态", petHatched: true },
+    petAsOf: "2026-10-09T15:59:59.999Z",
+    petHistoryStatus: "recorded",
     learningContents: [{ id: "lesson", section: "第一课", text: "完整学习内容", mastery: "mastered", sourceRefs: [] }],
     scoreDetails: {
       positive: 12,
@@ -77,7 +80,7 @@ describe("published report image", () => {
     expect(element).toBeTruthy();
     return element!;
   }
-  it("uses the public link content, exports all score rows and copies a PNG", async () => {
+  it("uses the public link's frozen historical pet and copies a PNG", async () => {
     let finish!: (blob: Blob) => void;
     raster.toBlob.mockImplementation(
       () =>
@@ -93,8 +96,12 @@ describe("published report image", () => {
     const node = raster.toBlob.mock.calls[0]![0] as HTMLElement;
     expect(node.textContent).toContain("已发布的老师寄语");
     expect(node.textContent).toContain("完整学习内容");
-    expect(node.querySelectorAll("li")).toHaveLength(12);
-    expect(node.querySelector("ul")?.className).not.toContain("max-h-72");
+    expect(node.textContent).toContain("我的宠物伙伴");
+    expect(node.textContent).toContain("团团");
+    expect(node.textContent).toContain("形态记录截至 2026/10/9");
+    expect(node.querySelector('img[src="/pets/starling/sprout-puff-2.png"]')).not.toBeNull();
+    expect(node.textContent).not.toContain("积分加减情况");
+    expect(node.textContent).not.toContain("评价 1");
     expect(node.querySelector("button")).toBeNull();
     expect(button("复制图片").disabled).toBe(true);
     await act(async () => finish(png));

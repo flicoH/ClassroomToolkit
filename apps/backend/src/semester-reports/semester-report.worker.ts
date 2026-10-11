@@ -1,3 +1,4 @@
+import { captureReportVersion } from './report-history';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
@@ -105,36 +106,44 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         candidate.snapshot?.generationMode,
       );
       const content = await this.generate(candidate, mode);
-      const current = await repo.findOne({
-        where: {
-          id: candidate.id,
-          teacherId: candidate.teacherId,
-          status: 'generating',
-        },
-      });
-      if (!current) return;
-      current.content = content;
-      current.snapshot = {
-        ...current.snapshot,
-        generationMode: mode,
-        ...(mode === 'template' ? { templateVersion: 2 } : {}),
-      };
-      current.status = 'draft';
-      current.errorMessage = null;
-      await repo.save(current);
-      await events.save(
-        events.create({
-          id: randomUUID(),
-          teacherId: current.teacherId,
-          reportId: current.id,
-          documentId: null,
-          action: 'generation-succeeded',
-          details: {
-            mode,
-            ...(mode === 'template' ? { templateVersion: 2 } : {}),
+      // Generation and its first recoverable version commit together. The lock
+      // also prevents completing a task after the teacher deletes the report.
+      await this.dataSource.transaction(async (manager) => {
+        const reports = manager.getRepository(SemesterReportEntity);
+        const history = manager.getRepository(ReportEventEntity);
+        const current = await reports.findOne({
+          where: {
+            id: candidate.id,
+            teacherId: candidate.teacherId,
+            status: 'generating',
           },
-        }),
-      );
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!current) return;
+        current.content = content;
+        current.snapshot = {
+          ...current.snapshot,
+          generationMode: mode,
+          ...(mode === 'template' ? { templateVersion: 2 } : {}),
+        };
+        current.status = 'draft';
+        current.errorMessage = null;
+        await reports.save(current);
+        await history.save(
+          history.create({
+            id: randomUUID(),
+            teacherId: current.teacherId,
+            reportId: current.id,
+            documentId: null,
+            action: 'generation-succeeded',
+            details: {
+              mode,
+              ...(mode === 'template' ? { templateVersion: 2 } : {}),
+              revision: { schema: 1, after: captureReportVersion(current) },
+            },
+          }),
+        );
+      });
     } catch (error) {
       const message = (
         error instanceof Error ? error.message : '生成失败'
@@ -299,6 +308,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       start: report.periodStart.toISOString(),
       end: report.periodEnd.toISOString(),
       teacherCourseScope: snapshot.courseScope,
+      courseSelections: snapshot.courseSelections,
       course: snapshot.courseDocuments,
       overallPoints: snapshot.scoreSummary,
       teacherObservation: report.teacherObservation,

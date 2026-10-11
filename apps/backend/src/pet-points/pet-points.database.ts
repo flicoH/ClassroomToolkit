@@ -15,6 +15,7 @@ import {
   StudentPet,
 } from './pet-points.types';
 import { TeacherContext } from '../auth/teacher-context';
+import { petAppearance, recordPetAppearance } from './pet-state-history';
 
 @Injectable()
 export class PetPointsDatabase {
@@ -65,18 +66,22 @@ export class PetPointsDatabase {
   /** 保存或更新宠物积分学生，兼容旧主键和教师隔离主键。 */
   async saveStudent(student: StudentPet) {
     const teacherId = this.teacherContext.teacherId;
-    const current = await this.students.findOne({
-      where: this.studentWhere(student.id),
-    });
-    return this.toStudent(
-      await this.students.save(
-        this.students.create({
+    return this.students.manager.transaction(async (manager) => {
+      const students = manager.getRepository(PetStudentEntity);
+      const current = await students.findOne({
+        where: this.studentWhere(student.id),
+        lock: { mode: 'pessimistic_write' },
+      });
+      const saved = await students.save(
+        students.create({
           ...student,
           id: current?.id ?? this.studentStorageId(student.id),
           teacherId,
         }),
-      ),
-    );
+      );
+      await recordPetAppearance(manager, saved, petAppearance(saved));
+      return this.toStudent(saved);
+    });
   }
 
   /** 按逻辑学生 ID 查询宠物积分学生。 */
@@ -108,47 +113,71 @@ export class PetPointsDatabase {
 
   /** 删除某班级中已不在最新名单里的宠物积分学生。 */
   async deleteClassStudentsExcept(classId: string, studentIds: string[]) {
-    if (studentIds.length) {
-      await this.students.delete({
-        teacherId: this.teacherContext.teacherId,
-        classId,
-        id: Not(
-          In(studentIds.flatMap((id) => [id, this.studentStorageId(id)])),
-        ),
-      });
-    } else {
-      await this.students.delete({
-        teacherId: this.teacherContext.teacherId,
-        classId,
-      });
-    }
+    const where = studentIds.length
+      ? {
+          teacherId: this.teacherContext.teacherId,
+          classId,
+          id: Not(
+            In(studentIds.flatMap((id) => [id, this.studentStorageId(id)])),
+          ),
+        }
+      : {
+          teacherId: this.teacherContext.teacherId,
+          classId,
+        };
+    await this.students.manager.transaction(async (manager) => {
+      const students = manager.getRepository(PetStudentEntity);
+      const removed = await students.find({ where });
+      for (const candidate of removed) {
+        const current = await students.findOne({
+          where: {
+            id: candidate.id,
+            teacherId: this.teacherContext.teacherId,
+            classId,
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!current) continue;
+        await recordPetAppearance(manager, current, null);
+        await students.delete({
+          id: current.id,
+          teacherId: this.teacherContext.teacherId,
+        });
+      }
+    });
   }
 
   /** 局部更新学生积分、宠物或班级信息。 */
   async updateStudent(studentId: string, patch: Partial<StudentPet>) {
-    const current = await this.students.findOne({
-      where: this.studentWhere(studentId),
+    return this.students.manager.transaction(async (manager) => {
+      const students = manager.getRepository(PetStudentEntity);
+      const current = await students.findOne({
+        where: this.studentWhere(studentId),
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!current) return undefined;
+      const next = students.merge(current, {
+        name: patch.name,
+        studentNo: patch.studentNo,
+        classId: patch.classId,
+        className: patch.className,
+        group: patch.group,
+        score: patch.score,
+        maxScore: patch.maxScore,
+        trophies: patch.trophies,
+        level: patch.level,
+        stage: patch.stage,
+        petId: patch.petId ?? current.petId,
+        petName: patch.petName ?? current.petName,
+        petProgress: patch.petProgress,
+        petHatched: patch.petHatched,
+        absent: patch.absent,
+        completedPets: patch.completedPets,
+      });
+      const saved = await students.save(next);
+      await recordPetAppearance(manager, saved, petAppearance(saved));
+      return this.toStudent(saved);
     });
-    if (!current) return undefined;
-    const next = this.students.merge(current, {
-      name: patch.name,
-      studentNo: patch.studentNo,
-      classId: patch.classId,
-      className: patch.className,
-      group: patch.group,
-      score: patch.score,
-      maxScore: patch.maxScore,
-      trophies: patch.trophies,
-      level: patch.level,
-      stage: patch.stage,
-      petId: patch.petId ?? current.petId,
-      petName: patch.petName ?? current.petName,
-      petProgress: patch.petProgress,
-      petHatched: patch.petHatched,
-      absent: patch.absent,
-      completedPets: patch.completedPets,
-    });
-    return this.toStudent(await this.students.save(next));
   }
 
   /** 查询评价指标列表。 */

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -22,21 +23,27 @@ import {
   detectCourseUnits as detectUnits,
   selectCoursePages,
   extractLearningContents,
+  type LearningContent,
 } from './course-scope';
 import {
   resolveReportGenerationMode,
   learningContentsForReport,
   scoreDetailsForSnapshot,
   validateGeneratedReportContent,
+  reportVisualsForSnapshot,
 } from './report-generation';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import {
+  parseCourseSelections,
+  type CourseSelection,
   parseReportDetails,
   parseStudentFeedback,
   type ReportDetails,
   type StudentFeedback,
 } from './report-input';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
+import { PetStateHistoryEntity } from '../pet-points/entities/pet-state-history.entity';
+import { petAppearanceAtReportEnd } from '../pet-points/pet-state-history';
 import {
   ReportDocumentEntity,
   ReportEventEntity,
@@ -45,6 +52,13 @@ import {
   ReportTermEntity,
   SemesterReportEntity,
 } from './semester-report.entity';
+
+import {
+  captureReportVersion,
+  historyEventDto,
+  readReportRevision,
+  reportVersionToken,
+} from './report-history';
 
 const periods = ['week', 'month', 'term'] as const;
 
@@ -244,26 +258,34 @@ export class SemesterReportsService {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
     const term = await this.requireTerm(termId);
-    await this.requireSubject(subjectId);
+    if (subjectId !== '*') await this.requireSubject(subjectId);
     if (
       start < shanghaiMidnight(term.startDate) ||
       end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
     )
       throw new BadRequestException('报告周期必须在学期日期范围内');
-    const docs = await this.findUsableDocuments(
+    const { documents: docs } = await this.selectedCourses(
+      input,
       termId,
       subjectId,
-      String(input.classId ?? '*'),
+      period,
     );
     const students = await this.findStudents(studentIds);
     const summaries = await Promise.all(
       students.map((student) => this.scoreSummary(student, start, end)),
+    );
+    const petPreviews = await Promise.all(
+      students.map(async (student, index) => ({
+        ...(await this.petForPeriod(student, end)),
+        studentId: studentIds[index],
+      })),
     );
     return {
       period,
       start,
       end,
       scoreScope: 'overall',
+      petPreviews,
       scoreSummaries: summaries.map((summary, index) => ({
         ...summary,
         // Return the submitted ID because pet student storage IDs may carry a teacher prefix.
@@ -284,19 +306,17 @@ export class SemesterReportsService {
     if (!periods.includes(period))
       throw new BadRequestException('请选择报告周期');
     const termId = String(input.termId ?? '');
-    const subjectId = String(input.subjectId ?? '');
+    const subjectId =
+      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
     await this.requireTerm(termId);
-    await this.requireSubject(subjectId);
-    const documents = await this.findUsableDocuments(
+    if (input.reportVersion !== 'v2') await this.requireSubject(subjectId);
+    const courses = await this.selectedCourses(
+      input,
       termId,
       subjectId,
-      String(input.classId ?? '*'),
+      period,
     );
-    const scope = String(input.courseScope ?? '')
-      .trim()
-      .slice(0, 1000);
-    const selected = selectCoursePages(documents, scope, period);
-    const learningContents = extractLearningContents(documents, scope, period);
+    const { selected, learningContents, courseScope: scope } = courses;
     return {
       courseScope: scope,
       learningContents: learningContents.slice(0, 500),
@@ -315,62 +335,53 @@ export class SemesterReportsService {
     };
   }
 
-  async generate(input: Record<string, unknown>) {
+  async generate(
+    input: Record<string, unknown>,
+    classroomPhoto?: string | null,
+  ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
     const teacherId = this.teacher.teacherId;
     const term = await this.requireTerm(termId);
-    const subject = await this.requireSubject(subjectId);
+    const subject =
+      subjectId === '*'
+        ? { name: '全部课程' }
+        : await this.requireSubject(subjectId);
     if (
       start < shanghaiMidnight(term.startDate) ||
       end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
     )
       throw new BadRequestException('报告周期必须在学期日期范围内');
-    const documents = await this.findUsableDocuments(
-      termId,
-      subjectId,
-      String(input.classId ?? '*'),
-    );
-    const courseScope = String(input.courseScope ?? '')
-      .trim()
-      .slice(0, 1000);
-    if (!documents.length)
-      throw new BadRequestException('请先上传并确认该学期该学科的课程 PDF');
-    if (documents.length > 20)
-      throw new BadRequestException('单次最多使用 20 份课程 PDF');
-    if (period !== 'term' && courseScope.length < 2)
+    const {
+      documents,
+      selected: selectedCourseDocuments,
+      learningContents,
+      courseScope,
+      selections,
+      subjectName,
+    } = await this.selectedCourses(input, termId, subjectId, period);
+    subject.name = subjectName || subject.name;
+    if (
+      input.reportVersion !== 'v2' &&
+      period !== 'term' &&
+      courseScope.length < 2
+    )
       throw new BadRequestException(
         '周报和月报请填写本周期已授课章节或教学范围',
       );
-    const selectedCourseDocuments = selectCoursePages(
-      documents,
-      courseScope,
-      period,
-    );
-    if (!selectedCourseDocuments.some((document) => document.pages.length)) {
-      const suggestions = [
-        ...new Set(
-          documents.flatMap((document) =>
-            document.confirmedUnits?.length
-              ? document.confirmedUnits
-              : detectUnits(document.contentText ?? ''),
-          ),
-        ),
-      ].slice(0, 5);
+    if (!documents.length)
+      throw new BadRequestException('请先上传并确认所选学科的课程 PDF');
+    if (documents.length > 20)
+      throw new BadRequestException('单次最多使用 20 份课程 PDF');
+    if (!selectedCourseDocuments.some((document) => document.pages.length))
       throw new BadRequestException(
-        `所填授课范围未匹配到课程 PDF 页面，请检查章节名称${suggestions.length ? `。可填写：${suggestions.join('、')}` : ''}`,
+        '所填授课范围未匹配到课程 PDF 页面，请检查章节名称',
       );
-    }
     const totalCourseChars = selectedCourseDocuments.reduce(
       (sum, d) =>
         sum +
         d.pages.reduce((pageTotal, page) => pageTotal + page.text.length, 0),
       0,
-    );
-    const learningContents = extractLearningContents(
-      documents,
-      courseScope,
-      period,
     );
     if (learningContents.length > 500)
       throw new BadRequestException(
@@ -409,6 +420,34 @@ export class SemesterReportsService {
     const observation = String(input.teacherObservation ?? '')
       .trim()
       .slice(0, 3000);
+    const isV2 = input.reportVersion === 'v2';
+    const studentCourses = students.map((student) =>
+      selectedCourseDocuments.filter((selected) => {
+        const original = documents.find(
+          (document) => document.id === selected.id,
+        )!;
+        return (
+          !isV2 ||
+          original.classId === '*' ||
+          original.classId === student.classId
+        );
+      }),
+    );
+    if (
+      isV2 &&
+      studentCourses.some((courses) =>
+        selections!.some(
+          (selection) =>
+            !courses.some(
+              (course) =>
+                course.pages.length &&
+                documents.find((document) => document.id === course.id)
+                  ?.subjectId === selection.subjectId,
+            ),
+        ),
+      )
+    )
+      throw new BadRequestException('部分学生所在班级没有可用的已确认课程资料');
     const created: SemesterReportEntity[] = [];
     for (const [index, student] of students.entries()) {
       // Feedback is keyed by the client ID; resolved students use stored IDs.
@@ -418,8 +457,20 @@ export class SemesterReportsService {
         : undefined;
       const scores = await this.scoreSummary(student, start, end);
       const snapshot = {
+        reportVersion: isV2 ? 'v2' : 'v1',
+        courseSelections: selections,
+        classroomPhoto: classroomPhoto ?? null,
+        ...(await this.petForPeriod(student, end)),
         generationMode,
-        learningContents,
+        learningContents: isV2
+          ? learningContents.filter((item) =>
+              item.sourceRefs.every((ref) =>
+                studentCourses[index]!.some((course) =>
+                  ref.startsWith(`course:${course.id}:`),
+                ),
+              ),
+            )
+          : learningContents,
         reportDetails,
         teacherInput,
         student: {
@@ -430,9 +481,11 @@ export class SemesterReportsService {
         subjectName: subject.name,
         scoreScope: 'overall',
         scoreSummary: scores,
-        courseDocuments: selectedCourseDocuments.map((d) => ({
+        courseDocuments: studentCourses[index]!.map((d) => ({
           id: d.id,
           fileName: d.fileName,
+          subjectId: documents.find((document) => document.id === d.id)
+            ?.subjectId,
           units: d.units,
           pages: d.pages.map((page) => ({
             page: page.page,
@@ -440,7 +493,7 @@ export class SemesterReportsService {
           })),
         })),
         allowedReferences: [
-          ...selectedCourseDocuments.flatMap((d) =>
+          ...studentCourses[index]!.flatMap((d) =>
             d.pages.map((page) => `course:${d.id}:p${page.page}`),
           ),
           ...scores.records.map((record) => `score:${record.id}`),
@@ -493,21 +546,80 @@ export class SemesterReportsService {
   }
 
   async listReports() {
-    const rows = await this.reports.find({
-      where: { teacherId: this.teacher.teacherId },
-      order: { createdAt: 'DESC' },
-      take: 200,
-    });
-    return Promise.all(
-      rows
-        .filter((r) => r.status !== 'deleted')
-        .map(async (r) => {
-          const summary = this.reportDto({
-            ...r,
-            content: null,
-          });
-          return { ...summary, share: await this.activeShare(r.id) };
-        }),
+    // Sort IDs separately: MySQL can defer JSON projections until after filesort,
+    // carrying the original 5MB photo snapshot and exhausting sort_buffer_size.
+    const ordered = await this.reports
+      .createQueryBuilder('report')
+      .select(['report.id'])
+      .where('report.teacherId = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere('report.status != :deleted', { deleted: 'deleted' })
+      .orderBy('report.createdAt', 'DESC')
+      .take(200)
+      .getMany();
+    if (!ordered.length) return [];
+    const ids = ordered.map((row) => row.id);
+    const { entities, raw } = await this.reports
+      .createQueryBuilder('report')
+      .select([
+        'report.id',
+        'report.termId',
+        'report.subjectId',
+        'report.studentId',
+        'report.studentName',
+        'report.className',
+        'report.periodType',
+        'report.periodStart',
+        'report.periodEnd',
+        'report.scoreScope',
+        'report.status',
+        'report.keywords',
+        'report.teacherObservation',
+        'report.courseScope',
+        'report.errorMessage',
+        'report.createdAt',
+        'report.updatedAt',
+        'report.publishedAt',
+      ])
+      .addSelect(
+        `JSON_OBJECT(
+          'reportVersion', JSON_EXTRACT(report.snapshot, '$.reportVersion'),
+          'subjectName', JSON_EXTRACT(report.snapshot, '$.subjectName'),
+          'courseSelections', JSON_EXTRACT(report.snapshot, '$.courseSelections'),
+          'generationMode', JSON_EXTRACT(report.snapshot, '$.generationMode'),
+          'courseSubjectIds', JSON_EXTRACT(report.snapshot, '$.courseDocuments[*].subjectId')
+        )`,
+        'summary_snapshot',
+      )
+      .where('report.teacherId = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere('report.status != :deleted', { deleted: 'deleted' })
+      .andWhere('report.id IN (:...ids)', { ids })
+      .getRawAndEntities();
+    const summaries = await Promise.all(
+      entities.map(async (r, index) => {
+        // MySQL driver versions return JSON projections as either text or objects.
+        const value = raw[index].summary_snapshot;
+        const metadata =
+          (typeof value === 'string' ? JSON.parse(value) : value) ?? {};
+        const summary = this.reportDto({
+          ...r,
+          snapshot: {
+            ...metadata,
+            courseDocuments: (metadata.courseSubjectIds ?? []).map(
+              (subjectId: string) => ({ subjectId }),
+            ),
+          },
+          content: null,
+        });
+        return { ...summary, share: await this.activeShare(r.id) };
+      }),
+    );
+    const positions = new Map(ids.map((id, index) => [id, index]));
+    return summaries.sort(
+      (a, b) => positions.get(a.id)! - positions.get(b.id)!,
     );
   }
 
@@ -517,14 +629,91 @@ export class SemesterReportsService {
 
   async getEvents(id: string) {
     await this.findReport(id);
-    return this.events.find({
+    // Listing must not load every version's PDFs and photo bytes into memory.
+    const events = await this.events.find({
+      select: ['id', 'action', 'createdAt'],
       where: { teacherId: this.teacher.teacherId, reportId: id },
-      order: { createdAt: 'ASC' },
+      order: { createdAt: 'ASC', id: 'ASC' },
+    });
+    return events.map((event) => {
+      const { id, action, label, createdAt } = historyEventDto(event, false);
+      return { id, action, label, createdAt };
+    });
+  }
+
+  async getEvent(id: string, eventId: string) {
+    const row = await this.findReport(id);
+    const event = await this.events.findOne({
+      where: { id: eventId, reportId: id, teacherId: this.teacher.teacherId },
+    });
+    if (!event) throw new NotFoundException('流程记录不存在');
+    return {
+      ...historyEventDto(event),
+      currentVersion: reportVersionToken(row),
+    };
+  }
+
+  /** Restore only saved report state under the same lock as publishing. Sharing
+   * state is never replayed; the restore itself keeps a version for undo. */
+  async restoreEvent(
+    id: string,
+    eventId: string,
+    input: { side?: unknown; expectedVersion?: unknown },
+  ) {
+    return this.withReportLock(id, async (row, manager) => {
+      if (row.status !== 'draft' && row.status !== 'published')
+        throw new BadRequestException('只有草稿或已发布报告可以恢复为草稿');
+      if (input?.side !== 'before' && input?.side !== 'after')
+        throw new BadRequestException('恢复目标无效');
+      const event = await manager.getRepository(ReportEventEntity).findOne({
+        where: {
+          id: eventId,
+          reportId: id,
+          teacherId: this.teacher.teacherId,
+        },
+      });
+      if (!event) throw new NotFoundException('流程记录不存在');
+      const revision = readReportRevision(event.details);
+      const target = revision?.[input.side];
+      if (!target?.content)
+        throw new BadRequestException('该记录未保存可恢复的历史版本');
+      if (input.expectedVersion !== reportVersionToken(row))
+        throw new ConflictException('报告已发生变化，请重新查看记录后恢复');
+      const before = captureReportVersion(row);
+      const snapshot = structuredClone(target.snapshot);
+      const content = {
+        ...structuredClone(target.content),
+        ...reportVisualsForSnapshot(snapshot),
+      };
+      this.validateContent(content, snapshot);
+      // Withdraw links in the same transaction so no public token exposes the
+      // historical draft; any restore/audit failure also rolls back withdrawal.
+      await this.reopenDraft(row, manager);
+      row.status = 'draft';
+      row.publishedAt = null;
+      row.snapshot = snapshot;
+      row.content = content;
+      row.courseScope = target.courseScope;
+      await manager.getRepository(SemesterReportEntity).save(row);
+      await this.log(
+        'report-restored',
+        {
+          reportId: id,
+          details: {
+            restoredEventId: eventId,
+            restoredSide: input.side,
+            revision: { schema: 1, before, after: captureReportVersion(row) },
+          },
+        },
+        manager,
+      );
+      return this.reportDto(row);
     });
   }
 
   async editDraft(id: string, content: Record<string, unknown>) {
     return this.withReportLock(id, async (row, manager) => {
+      const before = captureReportVersion(row);
       if (row.status !== 'draft')
         throw new BadRequestException('只有草稿可以编辑');
       const reviewedSnapshot = {
@@ -537,11 +726,343 @@ export class SemesterReportsService {
         ],
         teacherReviewedAt: new Date().toISOString(),
       };
+      content = { ...content, ...reportVisualsForSnapshot(reviewedSnapshot) };
       this.validateContent(content, reviewedSnapshot);
       row.snapshot = reviewedSnapshot;
       row.content = content;
       await manager.getRepository(SemesterReportEntity).save(row);
-      await this.log('draft-edited', { reportId: id }, manager);
+      await this.log(
+        'draft-edited',
+        {
+          reportId: id,
+          details: {
+            revision: { schema: 1, before, after: captureReportVersion(row) },
+          },
+        },
+        manager,
+      );
+      return this.reportDto(row);
+    });
+  }
+
+  /** Append confirmed courses under the report lock without regenerating teacher edits. */
+  async addDraftSubjects(id: string, input: unknown) {
+    return this.withReportLock(id, async (row, manager) => {
+      const before = captureReportVersion(row);
+      if (
+        row.status !== 'draft' ||
+        row.snapshot?.reportVersion !== 'v2' ||
+        !row.content
+      )
+        throw new BadRequestException('只有 v2 草稿可以添加学科');
+      await this.requireTerm(row.termId);
+      let additions: CourseSelection[];
+      try {
+        additions = parseCourseSelections(input, row.periodType);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : '课程选择无效',
+        );
+      }
+      const existing = this.reportCourseSelections(row);
+      if (
+        additions.some((item) =>
+          existing.some((old) => old.subjectId === item.subjectId),
+        )
+      )
+        throw new BadRequestException('该学科已添加到报告');
+      if (existing.length + additions.length > 20)
+        throw new BadRequestException('最多选择 20 门学科');
+      const [student] = await this.findStudents([row.studentId]);
+      const courses = await this.selectedCourses(
+        { reportVersion: 'v2', courseSelections: additions },
+        row.termId,
+        '*',
+        row.periodType,
+        student!.classId ?? '*',
+      );
+      const oldDocuments = (row.snapshot.courseDocuments ?? []) as Array<{
+        id: string;
+        fileName: string;
+        subjectId?: string;
+        pages: Array<{ page: number; text: string }>;
+      }>;
+      const documents = [
+        ...oldDocuments,
+        ...courses.selected.map((doc) => ({
+          ...doc,
+          subjectId: courses.documents.find((source) => source.id === doc.id)!
+            .subjectId,
+        })),
+      ];
+      if (documents.length > 20)
+        throw new BadRequestException('单次最多使用 20 份课程 PDF');
+      if (
+        documents.reduce(
+          (total, doc) =>
+            total +
+            doc.pages.reduce((chars, page) => chars + page.text.length, 0),
+          0,
+        ) > 120000
+      )
+        throw new BadRequestException('课程资料内容较多，请缩小授课范围');
+      const learningContents = [
+        ...((row.content.learningContents as ReturnType<
+          typeof learningContentsForReport
+        >) ?? learningContentsForReport(row)),
+        ...courses.learningContents.map((item) => ({
+          ...item,
+          mastery: 'unassessed' as const,
+        })),
+      ];
+      if (learningContents.length > 500)
+        throw new BadRequestException('学习内容超过 500 项，请缩小授课范围');
+      const snapshot = {
+        ...row.snapshot,
+        courseSelections: [...existing, ...additions],
+        subjectName: [
+          String(row.snapshot.subjectName ?? ''),
+          courses.subjectName,
+        ]
+          .filter(Boolean)
+          .join('、'),
+        courseDocuments: documents,
+        learningContents: learningContents.map((item) => {
+          const snapshotItem: LearningContent & { mastery?: string } = {
+            ...item,
+          };
+          delete snapshotItem.mastery;
+          return snapshotItem;
+        }),
+        allowedReferences: [
+          ...new Set([
+            ...((row.snapshot.allowedReferences ?? []) as string[]),
+            ...courses.selected.flatMap((doc) =>
+              doc.pages.map((page) => `course:${doc.id}:p${page.page}`),
+            ),
+            'teacher-review',
+          ]),
+        ],
+      };
+      const content = {
+        ...row.content,
+        learningContents,
+        ...reportVisualsForSnapshot(snapshot),
+      };
+      this.validateContent(content, snapshot);
+      row.snapshot = snapshot;
+      row.content = content;
+      row.courseScope = [row.courseScope, courses.courseScope]
+        .filter(Boolean)
+        .join('；');
+      await manager.getRepository(SemesterReportEntity).save(row);
+      await this.log(
+        'draft-subjects-added',
+        {
+          reportId: id,
+          details: {
+            subjectIds: additions.map((item) => item.subjectId),
+            revision: { schema: 1, before, after: captureReportVersion(row) },
+          },
+        },
+        manager,
+      );
+      return this.reportDto(row);
+    });
+  }
+
+  /** Remove sources by document identity, not display names, so similarly named
+   * subjects cannot lose each other's evaluations. The report lock serializes publishing. */
+  async removeDraftSubject(id: string, subjectId: string) {
+    return this.withReportLock(id, async (row, manager) => {
+      const before = captureReportVersion(row);
+      if (
+        row.status !== 'draft' ||
+        row.snapshot?.reportVersion !== 'v2' ||
+        !row.content
+      )
+        throw new BadRequestException('只有 v2 草稿可以删除学科');
+      const existing = this.reportCourseSelections(row);
+      if (!existing.some((item) => item.subjectId === subjectId))
+        throw new BadRequestException('报告未包含该学科');
+      const selections = existing.filter(
+        (item) => item.subjectId !== subjectId,
+      );
+      if (!selections.length)
+        throw new BadRequestException('报告至少保留一门学科');
+      const documents = (row.snapshot.courseDocuments ?? []) as Array<{
+        id: string;
+        fileName: string;
+        subjectId?: string;
+        pages: Array<{ page: number; text: string }>;
+      }>;
+      const removedDocuments = new Set(
+        documents
+          .filter((doc) => doc.subjectId === subjectId)
+          .map((doc) => doc.id),
+      );
+      const isRemovedReference = (ref: string) => {
+        const match = /^course:(.+):p\d+$/.exec(ref);
+        return Boolean(match && removedDocuments.has(match[1]!));
+      };
+      const removedReferences = (
+        (row.snapshot.allowedReferences ?? []) as string[]
+      ).filter(isRemovedReference);
+      // A mixed-source suggestion still refers to the removed course; discard the
+      // whole entry instead of preserving a claim with incomplete evidence.
+      const keepEntry = (entry: { sourceRefs: string[] }) =>
+        !entry.sourceRefs.some(isRemovedReference);
+      const learningContents = (
+        (row.content.learningContents as ReturnType<
+          typeof learningContentsForReport
+        >) ?? learningContentsForReport(row)
+      ).filter(keepEntry);
+      const names = await Promise.all(
+        selections.map(
+          async (item) => (await this.requireSubject(item.subjectId)).name,
+        ),
+      );
+      const courseScope = selections
+        .map(
+          (item, index) =>
+            `${names[index]}：${item.courseScope || '本学期全部内容'}`,
+        )
+        .join('；');
+      const originalGoals = (row.snapshot.learningContents ??
+        row.content.learningContents ??
+        learningContentsForReport(row)) as LearningContent[];
+      const teacherInput = row.snapshot.teacherInput as
+        | StudentFeedback
+        | undefined;
+      const removedGoalIds = new Set(
+        originalGoals.filter((item) => !keepEntry(item)).map((item) => item.id),
+      );
+      const snapshot = {
+        ...row.snapshot,
+        courseSelections: selections,
+        subjectName: names.join('、'),
+        courseScope,
+        courseDocuments: documents.filter(
+          (doc) => !removedDocuments.has(doc.id),
+        ),
+        learningContents: originalGoals.filter(keepEntry),
+        allowedReferences: (
+          (row.snapshot.allowedReferences ?? []) as string[]
+        ).filter((ref) => !isRemovedReference(ref)),
+        ...(teacherInput
+          ? {
+              teacherInput: {
+                ...teacherInput,
+                learningMastery: Object.fromEntries(
+                  Object.entries(teacherInput.learningMastery ?? {}).filter(
+                    ([goalId]) => !removedGoalIds.has(goalId),
+                  ),
+                ),
+              },
+            }
+          : {}),
+      };
+      const content: Record<string, unknown> = {
+        ...row.content,
+        learningContents,
+        ...reportVisualsForSnapshot(snapshot),
+      };
+      for (const key of [
+        'strengths',
+        'areasToImprove',
+        'homeSuggestions',
+        'classroomPerformance',
+      ]) {
+        if (Array.isArray(content[key]))
+          content[key] = (
+            content[key] as Array<{ sourceRefs: string[] }>
+          ).filter(keepEntry);
+      }
+      this.validateContent(content, snapshot);
+      row.snapshot = snapshot;
+      row.content = content;
+      row.courseScope = courseScope;
+      await manager.getRepository(SemesterReportEntity).save(row);
+      await this.log(
+        'draft-subject-removed',
+        {
+          reportId: id,
+          details: {
+            subjectId,
+            revision: { schema: 1, before, after: captureReportVersion(row) },
+          },
+        },
+        manager,
+      );
+      // The browser uses these references to clean unsaved edits without replacing other prose.
+      return { report: this.reportDto(row), removedReferences };
+    });
+  }
+
+  private reportCourseSelections(row: SemesterReportEntity): CourseSelection[] {
+    return (
+      (row.snapshot?.courseSelections as CourseSelection[] | undefined) ??
+      [
+        ...new Set(
+          (
+            (row.snapshot?.courseDocuments ?? []) as Array<{
+              subjectId?: string;
+            }>
+          )
+            .map((doc) => doc.subjectId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ].map((subjectId) => ({ subjectId, courseScope: '' }))
+    );
+  }
+
+  async setClassroomPhoto(
+    id: string,
+    file?: { buffer: Buffer; size: number; mimetype: string },
+  ) {
+    return this.withReportLock(id, async (row, manager) => {
+      const before = captureReportVersion(row);
+      if (row.status !== 'draft')
+        throw new BadRequestException('只有草稿可以修改课堂照片');
+      let classroomPhoto: string | null = null;
+      if (file) {
+        const png = file.buffer
+          .subarray(0, 8)
+          .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+        const jpeg =
+          file.buffer[0] === 255 &&
+          file.buffer[1] === 216 &&
+          file.buffer[2] === 255;
+        if (
+          file.size < 12 ||
+          file.size > 5 * 1024 * 1024 ||
+          file.size !== file.buffer.length ||
+          !(
+            (png && file.mimetype === 'image/png') ||
+            (jpeg && file.mimetype === 'image/jpeg')
+          )
+        )
+          throw new BadRequestException(
+            '请上传 JPG 或 PNG 课堂照片（最大 5MB）',
+          );
+        classroomPhoto = `data:${png ? 'image/png' : 'image/jpeg'};base64,${file.buffer.toString('base64')}`;
+      }
+      row.snapshot = { ...row.snapshot, classroomPhoto };
+      row.content = {
+        ...row.content,
+        ...reportVisualsForSnapshot(row.snapshot),
+      };
+      await manager.getRepository(SemesterReportEntity).save(row);
+      await this.log(
+        file ? 'classroom-photo-uploaded' : 'classroom-photo-removed',
+        {
+          reportId: id,
+          details: {
+            revision: { schema: 1, before, after: captureReportVersion(row) },
+          },
+        },
+        manager,
+      );
       return this.reportDto(row);
     });
   }
@@ -576,6 +1097,8 @@ export class SemesterReportsService {
       end: old.periodEnd.toISOString(),
       termId: old.termId,
       subjectId: old.subjectId,
+      reportVersion: old.snapshot?.reportVersion,
+      courseSelections: old.snapshot?.courseSelections,
       studentIds: [old.studentId],
       reportDetails: old.snapshot?.reportDetails,
       studentFeedback: old.snapshot?.teacherInput
@@ -585,7 +1108,25 @@ export class SemesterReportsService {
       teacherObservation: old.teacherObservation,
       courseScope: old.courseScope,
     };
-    return this.generate(input);
+    if (old.snapshot?.reportVersion === 'v2' && !input.courseSelections) {
+      const saved = old.snapshot.courseDocuments as
+        | Array<{ id: string }>
+        | undefined;
+      const documents = await this.findUsableDocuments(old.termId, '*', '*');
+      input.courseSelections = [
+        ...new Set(
+          documents
+            .filter((document) =>
+              saved?.some((source) => source.id === document.id),
+            )
+            .map((document) => document.subjectId),
+        ),
+      ].map((subjectId) => ({ subjectId, courseScope: old.courseScope ?? '' }));
+    }
+    const photo = old.snapshot?.classroomPhoto;
+    return typeof photo === 'string'
+      ? this.generate(input, photo)
+      : this.generate(input);
   }
 
   async createShare(id: string) {
@@ -762,6 +1303,7 @@ export class SemesterReportsService {
       classroomPerformance?: ReferencedEntry[];
     };
     content.learningContents ??= learningContentsForReport(report);
+    Object.assign(content, reportVisualsForSnapshot(report.snapshot ?? {}));
     content.scoreDetails = scoreDetailsForSnapshot(report.snapshot ?? {});
     sourceLabels['teacher-review'] = '教师核对与评价';
     sourceLabels['teacher-input'] = '教师填写的学习评价';
@@ -779,7 +1321,10 @@ export class SemesterReportsService {
     return {
       studentName: report.studentName,
       className: report.className,
-      subject: subject?.name ?? '',
+      subject:
+        report.snapshot?.reportVersion === 'v2'
+          ? String(report.snapshot.subjectName ?? '全部课程')
+          : (subject?.name ?? ''),
       term: term?.name ?? '',
       period: report.periodType,
       start: report.periodStart,
@@ -800,6 +1345,7 @@ export class SemesterReportsService {
       ? (snapshot.allowedReferences as string[])
       : [];
     if (
+      snapshot.reportVersion !== 'v2' &&
       row.periodType !== 'term' &&
       row.courseScope &&
       Array.isArray(snapshot.courseDocuments)
@@ -896,18 +1442,29 @@ export class SemesterReportsService {
     if (end > new Date(shanghaiMidnight(today).getTime() + 86400000))
       throw new BadRequestException('不能生成未来日期的报告');
     const termId = String(input.termId ?? '');
-    const subjectId = String(input.subjectId ?? '');
+    const subjectId =
+      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
     const studentIds = Array.isArray(input.studentIds)
       ? [...new Set(input.studentIds.map(String))]
       : [];
     if (
       !termId ||
       !subjectId ||
+      (subjectId === '*' && input.reportVersion !== 'v2') ||
       studentIds.length < 1 ||
       studentIds.length > 30
     )
       throw new BadRequestException('请选择学期、学科及 1 至 30 名学生');
     return { period, start, end, termId, subjectId, studentIds };
+  }
+
+  private petForPeriod(student: PetStudentEntity, end: Date) {
+    return petAppearanceAtReportEnd(
+      this.students.manager.getRepository(PetStateHistoryEntity),
+      this.teacher.teacherId,
+      student.id,
+      end,
+    );
   }
 
   private async scoreSummary(
@@ -968,6 +1525,129 @@ export class SemesterReportsService {
     });
   }
 
+  private async selectedCourses(
+    input: Record<string, unknown>,
+    termId: string,
+    subjectId: string,
+    period: 'week' | 'month' | 'term',
+    studentClassId?: string,
+  ) {
+    let selections: CourseSelection[] | undefined;
+    if (input.reportVersion === 'v2') {
+      try {
+        selections = parseCourseSelections(input.courseSelections, period);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : '课程选择无效',
+        );
+      }
+    }
+    const subjects = selections
+      ? await Promise.all(
+          selections.map((selection) =>
+            this.requireSubject(selection.subjectId),
+          ),
+        )
+      : [];
+    const found = await this.findUsableDocuments(
+      termId,
+      subjectId,
+      String(input.classId ?? '*'),
+    );
+    const available =
+      // Draft additions target one student; global previews may include all classes.
+      studentClassId === undefined
+        ? found
+        : found.filter(
+            (doc) => doc.classId === '*' || doc.classId === studentClassId,
+          );
+    const groups = selections ?? [
+      {
+        subjectId,
+        courseScope: String(input.courseScope ?? '')
+          .trim()
+          .slice(0, 1000),
+      },
+    ];
+    const documents = selections
+      ? available.filter((document) =>
+          selections.some(
+            (selection) => selection.subjectId === document.subjectId,
+          ),
+        )
+      : available;
+    const selected = groups.flatMap((selection, index) => {
+      const sources = selections
+        ? documents.filter(
+            (document) => document.subjectId === selection.subjectId,
+          )
+        : documents;
+      const pages = selectCoursePages(sources, selection.courseScope, period);
+      if (selections && !pages.some((document) => document.pages.length))
+        throw new BadRequestException(
+          `${subjects[index]?.name ?? '所选学科'}没有匹配的已确认课程页面，请核对授课范围或上传课程 PDF`,
+        );
+      return selections
+        ? pages.filter((document) => document.pages.length)
+        : pages;
+    });
+    const learningContents = groups.flatMap((selection, index) => {
+      const sources = selections
+        ? documents.filter(
+            (document) => document.subjectId === selection.subjectId,
+          )
+        : documents;
+      return this.learningContents(
+        sources,
+        selection.courseScope,
+        period,
+        Boolean(selections),
+      ).map((item) =>
+        selections
+          ? {
+              ...item,
+              section: `${subjects[index]!.name.slice(0, 30)} · ${item.section.slice(0, 67)}`,
+            }
+          : item,
+      );
+    });
+    return {
+      documents,
+      selected,
+      learningContents,
+      selections,
+      subjectName: subjects.map((subject) => subject.name).join('、'),
+      courseScope: selections
+        ? selections
+            .map(
+              (selection, index) =>
+                `${subjects[index]!.name}：${selection.courseScope || '本学期全部内容'}`,
+            )
+            .join('；')
+        : groups[0]!.courseScope,
+    };
+  }
+
+  private learningContents(
+    documents: ReportDocumentEntity[],
+    scope: string,
+    period: 'week' | 'month' | 'term',
+    allCourses: boolean,
+  ) {
+    const items = extractLearningContents(documents, scope, period);
+    if (!allCourses) return items;
+    // Course headings can repeat across subjects; retain the source document in the visible group.
+    return items.map((item) => {
+      const document = documents.find((doc) =>
+        item.sourceRefs.some((ref) => ref.startsWith(`course:${doc.id}:`)),
+      );
+      return {
+        ...item,
+        section: `${document?.fileName.slice(0, 40) ?? '课程'} · ${item.section.slice(0, 57)}`,
+      };
+    });
+  }
+
   private async findUsableDocuments(
     termId: string,
     subjectId: string,
@@ -978,14 +1658,13 @@ export class SemesterReportsService {
         {
           teacherId: this.teacher.teacherId,
           termId,
-          subjectId,
-          classId,
+          ...(subjectId === '*' ? {} : { subjectId, classId }),
           status: 'ready',
         },
         {
           teacherId: this.teacher.teacherId,
           termId,
-          subjectId,
+          ...(subjectId === '*' ? {} : { subjectId }),
           classId: '*',
           status: 'ready',
         },
@@ -1061,6 +1740,9 @@ export class SemesterReportsService {
   private reportDto(row: SemesterReportEntity) {
     return {
       id: row.id,
+      reportVersion: row.snapshot?.reportVersion ?? 'v1',
+      courseSelections: this.reportCourseSelections(row),
+      subjectName: row.snapshot?.subjectName,
       termId: row.termId,
       subjectId: row.subjectId,
       studentId: row.studentId,
@@ -1074,6 +1756,7 @@ export class SemesterReportsService {
       content: row.content
         ? {
             ...row.content,
+            ...reportVisualsForSnapshot(row.snapshot ?? {}),
             learningContents:
               row.content.learningContents ?? learningContentsForReport(row),
             scoreDetails: scoreDetailsForSnapshot(row.snapshot ?? {}),
@@ -1084,6 +1767,7 @@ export class SemesterReportsService {
       courseScope: row.courseScope,
       errorMessage: row.errorMessage,
       createdAt: row.createdAt,
+      updatedAt: row.updatedAt ?? null,
       publishedAt: row.publishedAt,
       generationMode: row.snapshot?.generationMode ?? null,
     };
@@ -1115,6 +1799,29 @@ export class SemesterReportsService {
     const events = manager
       ? manager.getRepository(ReportEventEntity)
       : this.events;
+    let details = input.details ?? null;
+    // Publication/link events also need the contemporaneous report body, not
+    // just status metadata. Read under the caller's report lock/transaction.
+    if (
+      manager &&
+      input.reportId &&
+      !details?.revision &&
+      [
+        'report-published',
+        'report-unpublished',
+        'share-created',
+        'share-revoked',
+      ].includes(action)
+    ) {
+      const report = await manager.getRepository(SemesterReportEntity).findOne({
+        where: { id: input.reportId, teacherId: this.teacher.teacherId },
+      });
+      if (report?.content)
+        details = {
+          ...details,
+          revision: { schema: 1, after: captureReportVersion(report) },
+        };
+    }
     await events.save(
       events.create({
         id: randomUUID(),
@@ -1122,7 +1829,7 @@ export class SemesterReportsService {
         reportId: input.reportId ?? null,
         documentId: input.documentId ?? null,
         action,
-        details: input.details ?? null,
+        details,
       }),
     );
   }

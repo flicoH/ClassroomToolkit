@@ -10,6 +10,7 @@ const features: Record<string, string> = {
   petPoints: "pet-points",
   gachaMachine: "gacha-machine",
   semesterReports: "semester-reports",
+  semesterReportsV2: "semester-reports",
   stickyNotes: "sticky-notes",
   stickyNotesList: "sticky-notes"
 };

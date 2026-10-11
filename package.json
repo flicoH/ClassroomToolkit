@@ -7,16 +7,16 @@
   "scripts": {
     "dev": "concurrently \"pnpm --filter ClassRoomToolkitBackend dev\" \"pnpm --filter ClassRoomToolkitWeb dev\" \"pnpm --filter ClassRoomToolkitAdmin dev\"",
     "lint:prettier": "prettier --write \"**/*.{js,ts,mjs,cjs,json,tsx,css,less,scss,vue,html,md}\"",
-    "lint:eslint": "pnpm exec eslint",
+    "lint:eslint": "eslint .",
     "commit": "pnpm exec git-cz",
     "precommit": "lint-staged",
     "test": "pnpm run test:standards && pnpm run test:backend && pnpm run test:web && pnpm run test:admin",
-    "test:standards": "node --test scripts/check-native-dialogs.test.mjs scripts/check-deployment-workflows.test.mjs && node scripts/check-native-dialogs.mjs && python3 -m unittest discover -s deploy/docling-parser -p 'test_*.py' && python3 -m unittest discover -s deploy/tests -p 'test_*.py'",
+    "test:standards": "node --test scripts/check-eslint.test.mjs scripts/check-dev-build-isolation.test.mjs scripts/check-native-dialogs.test.mjs scripts/check-deployment-workflows.test.mjs && node scripts/check-native-dialogs.mjs && python3 -m unittest discover -s deploy/docling-parser -p 'test_*.py' && python3 -m unittest discover -s deploy/tests -p 'test_*.py'",
     "test:backend": "pnpm --filter ClassRoomToolkitBackend exec jest --runInBand --no-watchman",
     "test:web": "pnpm --filter ClassRoomToolkitWeb test",
     "test:admin": "pnpm --filter ClassRoomToolkitAdmin exec vitest run",
     "build:all": "pnpm --filter ClassRoomToolkitBackend build && pnpm --filter ClassRoomToolkitWeb build && pnpm --filter ClassRoomToolkitAdmin build",
-    "verify": "pnpm run test && pnpm run build:all"
+    "verify": "pnpm run lint:eslint && pnpm run test && pnpm run build:all"
   },
   "config": {
     "commitizen": {

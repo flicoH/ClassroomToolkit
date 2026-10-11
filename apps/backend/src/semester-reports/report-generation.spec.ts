@@ -6,6 +6,7 @@ import {
   resolveReportGenerationMode,
   validateGeneratedReportContent,
   addLearningReportSections,
+  reportVisualsForSnapshot,
 } from './report-generation';
 
 const report = {
@@ -65,6 +66,28 @@ describe('report generation modes', () => {
     jest.restoreAllMocks();
   });
 
+  it('copies original report pets from the snapshot instead of generated prose', () => {
+    const pet = {
+      petId: 'sprout-puff',
+      petName: '团团',
+      stage: '第4形态',
+      level: 4,
+      petHatched: true,
+    };
+    const original = {
+      ...report,
+      snapshot: { ...report.snapshot, reportVersion: 'v1', pet },
+    };
+    expect(
+      addLearningReportSections({ pet: { petId: 'forged' } }, original).pet,
+    ).toEqual(pet);
+    expect(reportVisualsForSnapshot({ reportVersion: 'v1', pet }).pet).toEqual(
+      pet,
+    );
+    expect(
+      reportVisualsForSnapshot({ reportVersion: 'v1' }).pet,
+    ).toBeUndefined();
+  });
   it('uses templates automatically when no AI is configured', () => {
     expect(resolveReportGenerationMode()).toBe('template');
   });

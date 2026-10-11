@@ -1,5 +1,9 @@
 import type { DataSource } from 'typeorm';
-import { parseReportDetails, parseStudentFeedback } from './report-input';
+import {
+  parseCourseSelections,
+  parseReportDetails,
+  parseStudentFeedback,
+} from './report-input';
 import type { SemesterReportEntity } from './semester-report.entity';
 import { SemesterReportsService } from './semester-reports.service';
 import { SemesterReportWorker } from './semester-report.worker';
@@ -49,6 +53,7 @@ type ServiceInternals = {
   findStudents: jest.Mock;
   findReport: jest.Mock;
   scoreSummary: jest.Mock;
+  petForPeriod: jest.Mock;
   students: { find: jest.Mock };
   records: { createQueryBuilder: jest.Mock };
 };
@@ -139,6 +144,11 @@ describe('report generation input', () => {
       { id: 'one', name: '学生一', className: '一班' },
       { id: 'two', name: '学生二', className: '一班' },
     ]);
+    jest.spyOn(internals, 'petForPeriod').mockResolvedValue({
+      pet: null,
+      petAsOf: '2026-09-27T04:00:00.000Z',
+      petHistoryStatus: 'unavailable',
+    });
     jest.spyOn(internals, 'scoreSummary').mockResolvedValue({
       count: 1,
       positive: 5,
@@ -174,6 +184,18 @@ describe('report generation input', () => {
   it('previews each selected student’s pet point changes using an exclusive bound after the chosen end date', async () => {
     const { service, internals } = setup();
     const preview = await service.preview(request);
+    expect(preview.petPreviews).toEqual([
+      expect.objectContaining({
+        studentId: 'one',
+        pet: null,
+        petHistoryStatus: 'unavailable',
+      }),
+      expect.objectContaining({
+        studentId: 'two',
+        pet: null,
+        petHistoryStatus: 'unavailable',
+      }),
+    ]);
     expect(preview.start.toISOString()).toBe('2026-09-20T16:00:00.000Z');
     expect(preview.end.toISOString()).toBe('2026-09-27T16:00:00.000Z');
     expect(internals.scoreSummary).toHaveBeenCalledWith(
@@ -234,6 +256,311 @@ describe('report generation input', () => {
       negative: -2,
       net: 3,
       count: 2,
+    });
+  });
+  it('requires explicit course choices and bounds per-subject scopes', () => {
+    for (const value of [
+      undefined,
+      [],
+      [{ subjectId: '*', courseScope: '' }],
+      [{ subjectId: 'english' }, { subjectId: 'english' }],
+      [{ subjectId: 'english', courseScope: 'x'.repeat(1001) }],
+    ]) {
+      expect(() => parseCourseSelections(value, 'term')).toThrow();
+    }
+    expect(() =>
+      parseCourseSelections(
+        [{ subjectId: 'english', courseScope: '' }],
+        'week',
+      ),
+    ).toThrow('分别填写');
+    expect(
+      parseCourseSelections(
+        [{ subjectId: 'english', courseScope: '' }],
+        'term',
+      ),
+    ).toEqual([{ subjectId: 'english', courseScope: '' }]);
+  });
+  it.each(['week', 'term'] as const)(
+    "v2 %s scopes show only each subject's selected lessons in preview and snapshots",
+    async (period) => {
+      const { service, internals, reports } = setup();
+      const sources = ['english', 'math', 'unselected'].map((subjectId) => ({
+        ...course,
+        id: subjectId,
+        subjectId,
+        classId: '*',
+        fileName: `${subjectId}.pdf`,
+        sourcePages: [
+          {
+            page: 1,
+            text: `| Unit1 | 1 | ${subjectId} 第一课内容 | 教学策略 | 家庭活动 |`,
+          },
+          {
+            page: 2,
+            text: `| Unit2 | 1 | ${subjectId} 第二课内容 | 教学策略 | 家庭活动 |`,
+          },
+        ],
+      }));
+      internals.findUsableDocuments.mockResolvedValue(sources);
+      internals.findStudents.mockResolvedValue([
+        { id: 'one', name: '学生一', classId: 'class', className: '一班' },
+      ]);
+      internals.requireSubject.mockImplementation(async (id: string) => ({
+        name: id === 'english' ? '英语' : '数学',
+      }));
+      const input = {
+        ...request,
+        period,
+        reportVersion: 'v2',
+        courseSelections: [
+          { subjectId: 'english', courseScope: 'Unit1 1' },
+          { subjectId: 'math', courseScope: 'Unit2 1' },
+        ],
+        studentIds: ['one'],
+        studentFeedback: [],
+      };
+      const preview = await service.previewCourseScope(input);
+      expect(preview.learningContents.map((item) => item.text)).toEqual([
+        'english 第一课内容',
+        'math 第二课内容',
+      ]);
+      expect(preview.documents).toEqual([
+        { id: 'english', fileName: 'english.pdf', pages: [1] },
+        { id: 'math', fileName: 'math.pdf', pages: [2] },
+      ]);
+      expect(
+        preview.learningContents.map((item) => item.section).join(' '),
+      ).toContain('数学');
+      await service.generate(input);
+      const snapshot = reports.save.mock.calls[0]![0].snapshot;
+      expect(snapshot.courseSelections).toEqual(input.courseSelections);
+      expect(
+        snapshot.learningContents.map((item: { text: string }) => item.text),
+      ).toEqual(preview.learningContents.map((item) => item.text));
+      expect(snapshot.subjectName).toBe('英语、数学');
+      expect(snapshot.allowedReferences).not.toContain('course:unselected:p1');
+      expect(snapshot.allowedReferences).not.toContain('course:english:p2');
+      expect(
+        generateTemplateReport(reports.save.mock.calls[0]![0])
+          .learningContents.map((item) => item.text)
+          .join(' '),
+      ).not.toContain('unselected');
+      jest
+        .spyOn(internals, 'findReport')
+        .mockResolvedValue(reports.save.mock.calls[0]![0]);
+      const regenerate = jest.spyOn(service, 'generate');
+      await service.regenerate(reports.save.mock.calls[0]![0].id);
+      expect(regenerate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ courseSelections: input.courseSelections }),
+      );
+      await expect(
+        service.generate({ ...input, courseSelections: [] }),
+      ).rejects.toThrow('至少一门');
+      await expect(
+        service.previewCourseScope({
+          ...input,
+          courseSelections: [{ subjectId: 'english', courseScope: '第99页' }],
+        }),
+      ).rejects.toThrow('没有匹配');
+      internals.requireSubject.mockRejectedValueOnce(new Error('学科不存在'));
+      await expect(service.generate(input)).rejects.toThrow('学科不存在');
+    },
+  );
+  it.each(['v1', 'v2'])(
+    'uses the period-end history instead of the live pet for %s reports and regeneration',
+    async (reportVersion) => {
+      const { service, internals, reports } = setup();
+      const pet = {
+        petId: 'sprout-puff',
+        petName: '团团',
+        stage: '第4形态',
+        level: 4,
+        petHatched: true,
+      };
+      const student = {
+        id: 'one',
+        name: '学生一',
+        classId: 'class',
+        className: '一班',
+        ...pet,
+        level: 10,
+        stage: '终极形态',
+      };
+      internals.findStudents.mockResolvedValue([student]);
+      internals.findUsableDocuments.mockResolvedValue([
+        { ...course, subjectId: 'subject', classId: '*' },
+      ]);
+      internals.petForPeriod.mockResolvedValue({
+        pet,
+        petAsOf: '2026-09-26T15:59:59.999Z',
+        petHistoryStatus: 'recorded',
+      });
+      const input = {
+        ...request,
+        end: '2026-09-26',
+        reportVersion,
+        studentIds: ['one'],
+        studentFeedback: [],
+        ...(reportVersion === 'v2'
+          ? {
+              courseSelections: [
+                { subjectId: 'subject', courseScope: 'Unit1 1' },
+              ],
+            }
+          : {}),
+      };
+      await service.generate(input, 'saved-photo');
+      const original = reports.save.mock.calls[0]![0];
+      expect(original.snapshot).toMatchObject({
+        pet,
+        petHistoryStatus: 'recorded',
+        classroomPhoto: 'saved-photo',
+        petAsOf: '2026-09-26T15:59:59.999Z',
+      });
+      expect(internals.petForPeriod).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'one' }),
+        new Date('2026-09-26T16:00:00Z'),
+      );
+      expect(generateTemplateReport(original).pet).toEqual(pet);
+      jest.spyOn(internals, 'findReport').mockResolvedValue(original);
+      await service.regenerate(original.id);
+      expect(reports.save.mock.calls.at(-1)![0].snapshot.pet).toEqual(pet);
+      expect(reports.save.mock.calls.at(-1)![0].snapshot.classroomPhoto).toBe(
+        'saved-photo',
+      );
+      internals.petForPeriod.mockResolvedValue({
+        pet: null,
+        petAsOf: '2026-09-26T15:59:59.999Z',
+        petHistoryStatus: 'unavailable',
+      });
+      await service.generate(input);
+      expect(reports.save.mock.calls.at(-1)![0].snapshot).toMatchObject({
+        pet: null,
+        petHistoryStatus: 'unavailable',
+      });
+    },
+  );
+  it('v2 selects explicitly chosen subjects and snapshots each student pet with both courses', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([
+      { ...course, subjectId: 'english', classId: '*' },
+      {
+        ...course,
+        id: 'math',
+        subjectId: 'math',
+        fileName: 'Math.pdf',
+        classId: '*',
+        sourcePages: [
+          {
+            page: 1,
+            text: '| Unit1 | 1 | 认识数字一二三 | 教学策略 | 家庭活动 |',
+          },
+        ],
+      },
+    ]);
+    internals.findStudents.mockResolvedValue([
+      {
+        id: 'one',
+        name: '学生一',
+        classId: 'class',
+        className: '一班',
+        petId: 'sprout-puff',
+        petName: '团团',
+        stage: '成长形态',
+        level: 4,
+        petHatched: true,
+      },
+    ]);
+    internals.petForPeriod.mockResolvedValue({
+      pet: {
+        petId: 'sprout-puff',
+        petName: '团团',
+        stage: '成长形态',
+        level: 4,
+        petHatched: true,
+      },
+      petAsOf: '2026-09-27T04:00:00.000Z',
+      petHistoryStatus: 'recorded',
+    });
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      courseSelections: [
+        { subjectId: 'english', courseScope: '' },
+        { subjectId: 'math', courseScope: '' },
+      ],
+      period: 'term',
+      studentIds: ['one'],
+      studentFeedback: [],
+      courseScope: '',
+    });
+    expect(internals.requireSubject).toHaveBeenCalledWith('english');
+    expect(internals.requireSubject).toHaveBeenCalledWith('math');
+    expect(internals.findUsableDocuments).toHaveBeenCalledWith(
+      'term',
+      '*',
+      '*',
+    );
+    const row = reports.save.mock.calls[0]![0];
+    expect(
+      row.snapshot.courseDocuments.map((doc: { id: string }) => doc.id),
+    ).toEqual(['course', 'math']);
+    const content = generateTemplateReport(row);
+    expect(content).toMatchObject({
+      reportVersion: 'v2',
+      pet: { petName: '团团', stage: '成长形态' },
+      areasToImprove: [],
+    });
+    expect(
+      content.learningContents.map((item) => item.text).join(' '),
+    ).toContain('认识数字');
+    expect(() =>
+      validateGeneratedReportContent(content, row.snapshot),
+    ).not.toThrow();
+  });
+  it('v2 excludes other-class courses and rejects an empty class before queueing', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([
+      { ...course, subjectId: 'english', classId: 'other-class' },
+    ]);
+    internals.findStudents.mockResolvedValue([
+      { id: 'one', name: '学生一', classId: 'class', className: '一班' },
+    ]);
+    await expect(
+      service.generate({
+        ...request,
+        reportVersion: 'v2',
+        courseSelections: [{ subjectId: 'english', courseScope: 'Unit1 1' }],
+        studentIds: ['one'],
+        studentFeedback: [],
+      }),
+    ).rejects.toThrow('所在班级');
+    expect(reports.save).not.toHaveBeenCalled();
+    await expect(
+      service.generate({ ...request, subjectId: '*' }),
+    ).rejects.toThrow('请选择');
+  });
+  it('all-subject document query remains restricted to the teacher, term and confirmed state', async () => {
+    const { service } = setup();
+    const find = jest.fn().mockResolvedValue([]);
+    const raw = service as unknown as {
+      documents: { find: typeof find };
+      findUsableDocuments: (
+        term: string,
+        subject: string,
+        classId: string,
+      ) => Promise<unknown>;
+    };
+    raw.documents = { find };
+    // Restore the production query rather than asserting a mocked source selector.
+    await (
+      SemesterReportsService.prototype as unknown as typeof raw
+    ).findUsableDocuments.call(service, 'term', '*', '*');
+    expect(find.mock.calls[0]![0].where[0]).toEqual({
+      teacherId: 'teacher',
+      termId: 'term',
+      status: 'ready',
     });
   });
   it('queues separate student snapshots and carries every filled field into each generated report', async () => {

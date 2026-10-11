@@ -127,3 +127,25 @@ export function parseStudentFeedback(
   }
   return result;
 }
+
+export type CourseSelection = { subjectId: string; courseScope: string };
+/** v2 requires explicit per-subject choices; an omitted subject never means all courses. */
+export function parseCourseSelections(
+  value: unknown,
+  period: string,
+): CourseSelection[] {
+  if (!Array.isArray(value) || !value.length || value.length > 20)
+    throw new Error('请按学科选择至少一门课程，最多 20 门');
+  const ids = new Set<string>();
+  return value.map((raw) => {
+    const row = object(raw, '学科课程选择');
+    const subjectId = text(row.subjectId, 64, '学科 ID');
+    const courseScope = text(row.courseScope, 1000, '学科授课范围');
+    if (!subjectId || subjectId === '*' || ids.has(subjectId))
+      throw new Error('学科课程选择不能为空或重复');
+    if (period !== 'term' && courseScope.length < 2)
+      throw new Error('周报和月报请分别填写每门已选学科的授课范围');
+    ids.add(subjectId);
+    return { subjectId, courseScope };
+  });
+}

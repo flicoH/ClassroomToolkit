@@ -37,8 +37,10 @@ export function StudentFeedbackForm({
   subject,
   learningContents,
   value,
-  onChange
+  onChange,
+  reserveNextFocus = false
 }: {
+  reserveNextFocus?: boolean;
   student: { id: string; name: string; className: string };
   subject: string;
   learningContents: Array<Omit<LearningContent, "mastery">>;
@@ -47,6 +49,9 @@ export function StudentFeedbackForm({
 }) {
   return (
     <div className="min-w-0 space-y-5 rounded-2xl border bg-background p-3 sm:p-5">
+      {reserveNextFocus && (
+        <p className="text-xs text-muted-foreground">下一步重点已预留：后续结合模板使用 AI 生成，目前可由老师填写。</p>
+      )}
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold">{student.name}的课堂反馈</h3>

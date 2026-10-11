@@ -45,6 +45,336 @@ describe("SemesterReports mobile workflow", () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
+  async function readyV2Generation(version: "v1" | "v2" = "v2") {
+    const originalGet = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string) => {
+      if (url === "/api/pet-points")
+        return {
+          students: [
+            {
+              id: "student",
+              name: "小明",
+              classId: "class",
+              className: "一班",
+              score: 0,
+              petId: "coal-tail-fox",
+              petName: "当前火狐",
+              level: 10,
+              stage: "第10形态",
+              petHatched: true
+            }
+          ]
+        };
+      if (url.endsWith("course-documents"))
+        return [
+          {
+            id: "doc",
+            termId: "term",
+            subjectId: "subject",
+            status: "ready",
+            fileName: "Reading.pdf",
+            units: ["Unit1", "Unit2"]
+          }
+        ];
+      return originalGet(url);
+    });
+    await act(async () => root.render(<SemesterReports version={version} />));
+    const generateButton = [...container.querySelectorAll("button")].find(button =>
+      button.textContent?.includes("生成 1 份报告")
+    );
+    expect(generateButton).toBeUndefined();
+    act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+    if (version === "v2")
+      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择阅读课程"]')!.click());
+    return [...container.querySelectorAll("button")].find(button => button.textContent?.includes("生成 1 份报告"))!;
+  }
+
+  it.each(["v1", "v2"] as const)(
+    "previews the period-end pet instead of points or the live pet in %s feedback",
+    async version => {
+      vi.useFakeTimers();
+      try {
+        api.post.mockImplementation(async (url: string) =>
+          url.endsWith("preview-input")
+            ? {
+                scoreSummaries: [{ studentId: "student", positive: 99, records: [] }],
+                petPreviews: [
+                  {
+                    studentId: "student",
+                    pet: { petId: "sprout-puff", petName: "历史团团", level: 4, stage: "第4形态", petHatched: true },
+                    petHistoryStatus: "recorded",
+                    petAsOf: "2026-10-09T15:59:59.999Z"
+                  }
+                ]
+              }
+            : { totalPages: 1, learningContents: [], documents: [] }
+        );
+        await readyV2Generation(version);
+        await act(async () => vi.advanceTimersByTimeAsync(450));
+        expect(container.textContent).toContain("历史团团");
+        expect(container.querySelector('img[src="/pets/starling/sprout-puff-2.png"]')).not.toBeNull();
+        expect(container.textContent).not.toContain("积分加减情况");
+        expect(container.textContent).not.toContain("生成时保存当前宠物形态");
+        expect(container.textContent).not.toContain("当前火狐");
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it.each(["", "Unit1"])("generates v2 reports after the matching multi-subject preview, scope=%s", async scope => {
+    vi.useFakeTimers();
+    try {
+      api.post.mockImplementation(async (url: string) => {
+        if (url.endsWith("preview-input")) return { scoreSummaries: [] };
+        if (url.endsWith("preview-scope"))
+          return {
+            courseScope: `阅读：${scope || "本学期全部内容"}`,
+            totalPages: 1,
+            documents: [],
+            learningContents: [{ id: "goal", section: "阅读 · Unit1", text: "阅读第一课", sourceRefs: [] }],
+            totalLearningContents: 1
+          };
+        return {
+          reports: [
+            {
+              id: "report",
+              reportVersion: "v2",
+              studentName: "小明",
+              className: "一班",
+              period: "term",
+              status: "queued",
+              content: null
+            }
+          ]
+        };
+      });
+      const generate = await readyV2Generation();
+      if (scope) act(() => container.querySelector<HTMLButtonElement>('[aria-label="阅读 Unit1"]')!.click());
+      expect(generate.disabled).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+      expect(generate.disabled).toBe(true);
+      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+      expect(generate.disabled).toBe(false);
+      await act(async () => generate.click());
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/semester-reports/reports/generate",
+        expect.objectContaining({
+          reportVersion: "v2",
+          period: "term",
+          studentIds: ["student"],
+          courseSelections: [{ subjectId: "subject", courseScope: scope }]
+        })
+      );
+      expect(container.querySelector('[role="status"]')?.textContent).toContain("已提交 1 份报告");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["v1", "v2"] as const)(
+    "shows unavailable history and a retryable read failure without substituting the current pet in %s",
+    async version => {
+      vi.useFakeTimers();
+      try {
+        api.post.mockImplementation(async (url: string) =>
+          url.endsWith("preview-input")
+            ? {
+                petPreviews: [
+                  {
+                    studentId: "student",
+                    pet: null,
+                    petAsOf: "2026-10-09T15:59:59.999Z",
+                    petHistoryStatus: "unavailable"
+                  }
+                ]
+              }
+            : { totalPages: 1, learningContents: [], documents: [] }
+        );
+        await readyV2Generation(version);
+        await act(async () => vi.advanceTimersByTimeAsync(450));
+        expect(container.textContent).toContain("所选周期结束时的宠物形态尚无历史记录");
+        expect(container.textContent).not.toContain("当前火狐");
+        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+        api.post.mockImplementation(async (url: string) => {
+          if (url.endsWith("preview-input")) throw new Error("历史服务失败");
+          return { totalPages: 1, learningContents: [], documents: [] };
+        });
+        act(() => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+            dates[dates.length - 1],
+            "2026-10-08"
+          );
+          dates[dates.length - 1].dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => vi.advanceTimersByTimeAsync(450));
+        expect(container.textContent).toContain("宠物形态预览失败");
+        expect(container.textContent).not.toContain("当前火狐");
+        expect([...container.querySelectorAll("button")].some(button => button.textContent === "重试")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it("keeps generation disabled for failed and stale v2 previews, then allows a successful retry", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveOld!: (value: unknown) => void;
+      let attempt = 0;
+      const preview = (text: string) => ({
+        courseScope: "阅读：Unit1",
+        totalPages: 1,
+        documents: [],
+        learningContents: [{ id: "goal", section: "阅读", text, sourceRefs: [] }],
+        totalLearningContents: 1
+      });
+      api.post.mockImplementation(async (url: string) => {
+        if (url.endsWith("preview-input")) return { scoreSummaries: [] };
+        if (attempt++ === 0)
+          return new Promise(resolve => {
+            resolveOld = resolve;
+          });
+        if (attempt === 2) throw new Error("课程预览无权限");
+        return preview("当前选课内容");
+      });
+      const generate = await readyV2Generation();
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      act(() => container.querySelector<HTMLButtonElement>('[aria-label="阅读 Unit1"]')!.click());
+      expect(generate.disabled).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(container.textContent).toContain("课程预览无权限");
+      await act(async () => resolveOld(preview("过时内容")));
+      expect(generate.disabled).toBe(true);
+      expect(container.textContent).not.toContain("过时内容");
+      act(() =>
+        [...container.querySelectorAll("button")].find(button => button.textContent === "重新加载学习内容")!.click()
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      expect(container.textContent).toContain("当前选课内容");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it.each([
+    { totalPages: 0, totalLearningContents: 0 },
+    { totalPages: 1, totalLearningContents: 501 }
+  ])("blocks v2 generation for unusable previews: %j", async limits => {
+    vi.useFakeTimers();
+    try {
+      api.post.mockImplementation(async (url: string) =>
+        url.endsWith("preview-input")
+          ? { scoreSummaries: [] }
+          : { courseScope: "阅读：本学期全部内容", documents: [], learningContents: [], ...limits }
+      );
+      const generate = await readyV2Generation();
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(true);
+      act(() => generate.click());
+      expect(api.post).not.toHaveBeenCalledWith("/api/semester-reports/reports/generate", expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("v2 has a separate entry, explicit subject scopes and version-isolated reports", async () => {
+    api.get.mockImplementation(async (url: string) => {
+      if (url.endsWith("report-terms"))
+        return [{ id: "term", name: "秋季", startDate: "2026-09-01", endDate: "2026-12-31" }];
+      if (url.endsWith("report-subjects")) return [{ id: "subject", name: "阅读" }];
+      if (url === "/api/pet-points") return { students: [] };
+      if (url.endsWith("reports"))
+        return [
+          { id: "old", studentName: "旧报告学生", className: "一班", status: "draft", period: "term", content: null },
+          {
+            id: "new",
+            reportVersion: "v2",
+            studentName: "新报告学生",
+            className: "一班",
+            status: "draft",
+            period: "term",
+            content: null
+          }
+        ];
+      return [];
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    expect(container.querySelector('nav[aria-label="学期报告v2导航"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="报告学科"]')).toBeNull();
+    expect(container.textContent).toContain("只显示已勾选学科的学习内容");
+    expect(container.textContent).toContain("新报告学生");
+    expect(container.textContent).not.toContain("旧报告学生");
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/api/semester-reports/course-documents/preview-scope",
+      expect.anything()
+    );
+  });
+  it("sends only checked subject scopes to v2 previews and removes unchecked subjects", async () => {
+    api.post.mockImplementation(async (url: string) =>
+      url.endsWith("preview-input")
+        ? { scoreSummaries: [] }
+        : { totalPages: 1, learningContents: [], documents: [], totalLearningContents: 0 }
+    );
+    const originalGet = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string) => {
+      if (url === "/api/pet-points")
+        return { students: [{ id: "student", name: "小明", classId: "class", className: "一班", score: 0 }] };
+      if (url.endsWith("report-subjects"))
+        return [
+          { id: "english", name: "英语" },
+          { id: "math", name: "数学" }
+        ];
+      if (url.endsWith("course-documents"))
+        return [
+          {
+            id: "en",
+            termId: "term",
+            subjectId: "english",
+            status: "ready",
+            fileName: "English.pdf",
+            units: ["Unit1"]
+          },
+          { id: "ma", termId: "term", subjectId: "math", status: "ready", fileName: "Math.pdf", units: ["Unit1"] }
+        ];
+      return originalGet(url);
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    const english = container.querySelector<HTMLInputElement>('input[aria-label="选择英语课程"]')!;
+    const math = container.querySelector<HTMLInputElement>('input[aria-label="选择数学课程"]')!;
+    expect(english.checked).toBe(false);
+    expect(math.checked).toBe(false);
+    act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+    const message = container.querySelector<HTMLTextAreaElement>('textarea[placeholder^="填写实际观察与鼓励话语"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(message, "保留的老师寄语");
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => english.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+    expect(api.post).toHaveBeenLastCalledWith(
+      "/api/semester-reports/course-documents/preview-scope",
+      expect.objectContaining({ courseSelections: [{ subjectId: "english", courseScope: "" }] })
+    );
+    act(() => math.click());
+    act(() => english.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+    expect(api.post).toHaveBeenLastCalledWith(
+      "/api/semester-reports/course-documents/preview-scope",
+      expect.objectContaining({ courseSelections: [{ subjectId: "math", courseScope: "" }] })
+    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[placeholder^="填写实际观察与鼓励话语"]')!.value).toBe(
+      "保留的老师寄语"
+    );
+  });
   async function render() {
     await act(async () => root.render(<SemesterReports />));
   }
@@ -285,6 +615,388 @@ describe("SemesterReports mobile workflow", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each(["v1", "v2"] as const)(
+    "%s photo failures preserve the draft and successful upload replaces only the photo",
+    async version => {
+      const originalGet = api.get.getMockImplementation()!;
+      const report = {
+        id: "report",
+        reportVersion: version,
+        studentName: "示例学生",
+        className: "一班",
+        status: "draft",
+        period: "term",
+        content: {
+          reportVersion: version,
+          summary: "寄语",
+          courseOverview: "课程",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          classroomPhoto: "data:image/png;base64,old"
+        }
+      };
+      api.get.mockImplementation(async (url: string) => {
+        if (url.endsWith("/reports")) return [report];
+        if (url.endsWith("/reports/report")) return report;
+        if (url.endsWith("/events")) return [];
+        return originalGet(url);
+      });
+      await act(async () => root.render(<SemesterReports version={version} />));
+      await act(async () => button("预览 / 编辑").click());
+      const message = document.querySelector('[role="dialog"]')!.querySelector<HTMLTextAreaElement>("textarea")!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(message, "未保存寄语");
+        message.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const input = document.querySelector<HTMLInputElement>('input[aria-label="上传课堂照片"]')!;
+      const filePicker = vi.spyOn(input, "click");
+      act(() => button("更换课堂照片").click());
+      expect(filePicker).toHaveBeenCalledOnce();
+      const upload = async (file: File) => {
+        Object.defineProperty(input, "files", { configurable: true, value: [file] });
+        await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+      };
+      await upload(new File(["svg"], "photo.svg", { type: "image/svg+xml" }));
+      expect(document.body.textContent).toContain("最大 5MB");
+      const callsBeforeOversize = api.post.mock.calls.length;
+      await upload(new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.png", { type: "image/png" }));
+      expect(api.post.mock.calls).toHaveLength(callsBeforeOversize);
+      api.post.mockRejectedValueOnce(new Error("上传失败"));
+      await upload(new File(["png"], "photo.png", { type: "image/png" }));
+      expect(document.body.textContent).toContain("上传失败");
+      expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')?.src).toContain("base64,old");
+      api.post.mockResolvedValueOnce({
+        ...report,
+        content: { ...report.content, classroomPhoto: "data:image/png;base64,new" }
+      });
+      const boundaryFile = new File([new Uint8Array(5 * 1024 * 1024)], "photo.png", { type: "image/png" });
+      await upload(boundaryFile);
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/semester-reports/reports/report/classroom-photo",
+        expect.any(FormData),
+        expect.objectContaining({ headers: { "Content-Type": undefined } })
+      );
+      expect((api.post.mock.calls.at(-1)![1] as FormData).get("file")).toBe(boundaryFile);
+      expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')?.src).toContain("base64,new");
+      expect(document.querySelector('[role="dialog"]')!.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+        "未保存寄语"
+      );
+      api.delete.mockResolvedValueOnce({ ...report, content: { ...report.content, classroomPhoto: null } });
+      await act(async () => button("移除课堂照片").click());
+      filePicker.mockClear();
+      act(() => button("上传课堂照片").click());
+      expect(filePicker).toHaveBeenCalledOnce();
+      expect(input.classList.contains("hidden")).toBe(true);
+      await act(async () => button("保存草稿").click());
+      expect(api.patch.mock.calls.at(-1)?.[1].content.summary).toBe("未保存寄语");
+      expect(api.patch.mock.calls.at(-1)?.[1].content).not.toHaveProperty("classroomPhoto");
+    }
+  );
+
+  it("adds and removes draft subjects, preserving unsaved edits and allowing retries", async () => {
+    const originalGet = api.get.getMockImplementation()!;
+    const oldGoal = {
+      id: "old",
+      section: "英语",
+      text: "原英语内容",
+      mastery: "mastered",
+      sourceRefs: ["course:en-doc:p1"]
+    };
+    const report = {
+      id: "report",
+      reportVersion: "v2",
+      studentName: "小明",
+      className: "一班",
+      period: "term",
+      termId: "term",
+      status: "draft",
+      courseSelections: [{ subjectId: "english", courseScope: "" }],
+      content: {
+        summary: "原寄语",
+        courseOverview: "课程",
+        strengths: [],
+        areasToImprove: [],
+        homeSuggestions: [],
+        limitations: [],
+        reportVersion: "v2",
+        learningContents: [oldGoal]
+      }
+    };
+    api.get.mockImplementation(async url => {
+      if (url.endsWith("/report-subjects"))
+        return [
+          { id: "english", name: "英语" },
+          { id: "math", name: "数学" }
+        ];
+      if (url.endsWith("/course-documents"))
+        return [
+          { id: "math-doc", subjectId: "math", termId: "term", status: "ready", units: ["Unit1"], fileName: "Math.pdf" }
+        ];
+      if (url.endsWith("/reports")) return [report];
+      if (url.endsWith("/reports/report")) return report;
+      if (url.endsWith("/events")) return [];
+      return originalGet(url);
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    await act(async () => button("预览 / 编辑").click());
+    const modal = document.querySelector('[role="dialog"]')!;
+    expect(modal.querySelector('[aria-label="选择英语课程"]')).toBeNull();
+    const message = [...modal.querySelectorAll<HTMLTextAreaElement>("textarea")].find(
+      input => input.value === "原寄语"
+    )!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(message, "未保存寄语");
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => modal.querySelector<HTMLInputElement>('[aria-label="选择数学课程"]')!.click());
+    api.post.mockRejectedValueOnce(new Error("添加失败"));
+    await act(async () => button("添加到当前报告").click());
+    expect(modal.textContent).toContain("添加失败");
+    expect(message.value).toBe("未保存寄语");
+    api.post.mockResolvedValueOnce({
+      ...report,
+      subjectName: "英语、数学",
+      courseSelections: [...report.courseSelections, { subjectId: "math", courseScope: "" }],
+      content: {
+        ...report.content,
+        learningContents: [
+          oldGoal,
+          {
+            id: "math-goal",
+            section: "数学",
+            text: "新增数学内容",
+            mastery: "unassessed",
+            sourceRefs: ["course:math-doc:p1"]
+          }
+        ]
+      }
+    });
+    await act(async () => button("添加到当前报告").click());
+    expect(api.post).toHaveBeenLastCalledWith("/api/semester-reports/reports/report/course-subjects", {
+      courseSelections: [{ subjectId: "math", courseScope: "" }]
+    });
+    expect(modal.querySelector('[aria-label="选择数学课程"]')).toBeNull();
+    expect(modal.textContent).toContain("所有学科均已添加到当前报告");
+    expect(modal.textContent).toContain("新增数学内容");
+    expect(message.value).toBe("未保存寄语");
+    const rating = modal.querySelector<HTMLSelectElement>('[aria-label="英语 学习内容 1 掌握情况"]')!;
+    act(() => {
+      rating.value = "practicing";
+      rating.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    api.delete.mockRejectedValueOnce(new Error("删除失败"));
+    await act(async () => modal.querySelector<HTMLButtonElement>('[aria-label="删除数学学科"]')!.click());
+    expect(modal.textContent).toContain("删除失败");
+    expect(modal.textContent).toContain("新增数学内容");
+    expect(message.value).toBe("未保存寄语");
+    api.delete.mockResolvedValueOnce({
+      report: { ...report, subjectName: "英语", content: { ...report.content, learningContents: [oldGoal] } },
+      removedReferences: ["course:math-doc:p1"]
+    });
+    await act(async () => modal.querySelector<HTMLButtonElement>('[aria-label="删除数学学科"]')!.click());
+    expect(api.delete).toHaveBeenLastCalledWith("/api/semester-reports/reports/report/course-subjects/math");
+    expect(modal.textContent).not.toContain("新增数学内容");
+    expect(modal.querySelector('[aria-label="选择数学课程"]')).not.toBeNull();
+    expect(modal.querySelector<HTMLButtonElement>('[aria-label="删除英语学科"]')!.disabled).toBe(true);
+    expect(message.value).toBe("未保存寄语");
+    await act(async () => button("保存草稿").click());
+    expect(api.patch.mock.calls.at(-1)![1].content).toMatchObject({
+      summary: "未保存寄语",
+      learningContents: [expect.objectContaining({ id: "old", mastery: "practicing" })]
+    });
+  });
+
+  it.each(["v1", "v2"] as const)(
+    "shows Chinese history and cancels only the restore confirmation with Escape (%s)",
+    async version => {
+      const report = publishedReport(false);
+      report.status = "draft";
+      Object.assign(report, { reportVersion: version });
+      const previousGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) => {
+        if (url.endsWith("/events"))
+          return [{ id: "edit", label: "编辑报告草稿", action: "draft-edited", createdAt: "2026-10-11T00:00:00Z" }];
+        if (url.endsWith("/events/edit"))
+          return {
+            id: "edit",
+            label: "编辑报告草稿",
+            createdAt: "2026-10-11T00:00:00Z",
+            description: "已保存报告版本",
+            currentVersion: "current",
+            canRestoreBefore: true,
+            canRestoreAfter: true,
+            changes: [{ field: "老师寄语", before: "恢复前寄语", after: report.content.summary }]
+          };
+        return previousGet(url);
+      });
+      await act(async () => root.render(<SemesterReports version={version} />));
+      await act(async () => button("预览 / 编辑").click());
+      await act(async () => button("查看记录").click());
+      expect(document.body.textContent).toContain("编辑报告草稿");
+      expect(document.body.textContent).not.toContain("draft-edited");
+      await act(async () => button("恢复修改前").click());
+      expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(2);
+      act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+      expect(document.body.textContent).toContain("报告草稿");
+      expect(api.post).not.toHaveBeenCalled();
+      await act(async () => button("恢复修改前").click());
+      api.post.mockResolvedValueOnce({ ...report, content: { ...report.content, summary: "恢复前寄语" } });
+      await act(async () => button("确认恢复").click());
+      const modal = document.querySelector('[role="dialog"]')!;
+      expect(
+        [...modal.querySelectorAll<HTMLTextAreaElement>("textarea")].some(input => input.value === "恢复前寄语")
+      ).toBe(true);
+      expect(modal.textContent).toContain("历史版本已恢复为草稿");
+    }
+  );
+
+  it.each(["v1", "v2"] as const)(
+    "keeps draft interactions inside the modal instead of refocusing the desktop (%s)",
+    async version => {
+      const report = publishedReport(false);
+      report.status = "draft";
+      Object.assign(report, { reportVersion: version });
+      // AppWindow raises its composited layer on bubbling mouse-down events.
+      const focusDesktop = vi.fn();
+      await act(async () =>
+        root.render(
+          <div onMouseDown={focusDesktop}>
+            <SemesterReports version={version} />
+          </div>
+        )
+      );
+      await act(async () => button("预览 / 编辑").click());
+      const modal = document.querySelector('[role="dialog"]')!;
+      const input = modal.querySelector<HTMLTextAreaElement>("textarea")!;
+      act(() => {
+        input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        input.focus();
+        input.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      expect(focusDesktop).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+      expect(document.querySelector('[role="dialog"]')).toBe(modal);
+      act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    }
+  );
+
+  it("does not jump back to the header when a draft update succeeds or fails", async () => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    report.content = {
+      ...report.content,
+      classroomPhoto: { dataUrl: "data:image/png;base64,test" }
+    } as typeof report.content;
+    await render();
+    await act(async () => button("预览 / 编辑").click());
+    const modal = document.querySelector('[role="dialog"]')!;
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    api.delete.mockRejectedValueOnce(new Error("照片移除失败"));
+    await act(async () => button("移除课堂照片").click());
+    expect(modal.textContent).toContain("照片移除失败");
+    expect(focus).not.toHaveBeenCalled();
+    api.delete.mockResolvedValueOnce({ ...report, content: { ...report.content, classroomPhoto: null } });
+    await act(async () => button("移除课堂照片").click());
+    expect(modal.textContent).toContain("课堂照片已移除");
+    expect(focus).not.toHaveBeenCalled();
+    focus.mockRestore();
+  });
+
+  it.each(["v1", "v2"] as const)(
+    "restores a published history version into the editable draft in %s",
+    async version => {
+      const report = publishedReport();
+      Object.assign(report, { reportVersion: version });
+      const previousGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) => {
+        if (url.endsWith("/events")) return [{ id: "edit", label: "编辑报告草稿", createdAt: "2026-10-11T00:00:00Z" }];
+        if (url.endsWith("/events/edit"))
+          return {
+            id: "edit",
+            label: "编辑报告草稿",
+            createdAt: "2026-10-11T00:00:00Z",
+            description: "已保存报告版本",
+            currentVersion: "current",
+            canRestoreAfter: true,
+            canRestoreBefore: false,
+            changes: []
+          };
+        return previousGet(url);
+      });
+      await act(async () => root.render(<SemesterReports version={version} />));
+      await act(async () => button("查看流程").click());
+      expect(document.querySelector('[role="dialog"]')!.textContent).toContain("报告内容与流程");
+      await act(async () => button("查看记录").click());
+      await act(async () => button("恢复为草稿").click());
+      api.post.mockImplementationOnce(async () => {
+        report.status = "draft";
+        report.share = null;
+        report.content.summary = "恢复的历史内容";
+        return structuredClone(report);
+      });
+      await act(async () => button("确认恢复").click());
+      const modal = document.querySelector('[role="dialog"]')!;
+      expect(modal.textContent).toContain("报告草稿");
+      expect(modal.textContent).toContain("分享链接已失效");
+      expect(
+        [...modal.querySelectorAll<HTMLTextAreaElement>("textarea")].some(input => input.value === "恢复的历史内容")
+      ).toBe(true);
+      expect(button("保存草稿")).toBeTruthy();
+    }
+  );
+
+  it.each(["v1", "v2"] as const)("shows the saved edit time after each report status in %s", async version => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    Object.assign(report, { reportVersion: version, updatedAt: "2026-10-11T08:09:10Z" });
+    await act(async () => root.render(<SemesterReports version={version} />));
+    const status = container.querySelector("article time")!;
+    expect(status).toBeTruthy();
+    expect(status.getAttribute("datetime")).toBe("2026-10-11T08:09:10Z");
+    expect(status.textContent).toBe("2026/10/11 16:09:10");
+    expect(status.parentElement!.textContent).toContain("待审核 · 编辑时间：2026/10/11 16:09:10");
+  });
+  it.each([undefined, null, "invalid"])(
+    "handles unavailable edit timestamps without displaying an invalid date (%s)",
+    async updatedAt => {
+      const report = publishedReport(false);
+      Object.assign(report, { updatedAt });
+      await render();
+      expect(container.querySelector("article")!.textContent).toContain("编辑时间：暂无记录");
+      expect(container.querySelector("article time")).toBeNull();
+      expect(container.textContent).not.toContain("Invalid Date");
+    }
+  );
+
+  it.each(["v1", "v2"] as const)(
+    "refreshes the server edit time after saving and retains it on failure in %s",
+    async version => {
+      const report = Object.assign(publishedReport(false), {
+        reportVersion: version,
+        updatedAt: "2026-10-11T08:09:10Z"
+      });
+      report.status = "draft";
+      await act(async () => root.render(<SemesterReports version={version} />));
+      await act(async () => button("预览 / 编辑").click());
+      api.patch.mockRejectedValueOnce(new Error("保存失败，请重试"));
+      await act(async () => button("保存草稿").click());
+      expect(document.querySelector('[role="dialog"]')!.textContent).toContain("保存失败，请重试");
+      expect(container.querySelector("article time")!.textContent).toBe("2026/10/11 16:09:10");
+      api.patch.mockImplementationOnce(async () => {
+        report.updatedAt = "2026-10-11T16:00:00Z";
+        return structuredClone(report);
+      });
+      await act(async () => button("保存草稿").click());
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(container.querySelector("article time")!.textContent).toBe("2026/10/12 00:00:00");
+      expect(container.querySelector("article time")!.getAttribute("datetime")).toBe(report.updatedAt);
+    }
+  );
 
   function publishedReport(hasShare = true) {
     const originalGet = api.get.getMockImplementation()!;

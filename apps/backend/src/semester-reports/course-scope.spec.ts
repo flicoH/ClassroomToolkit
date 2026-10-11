@@ -213,6 +213,22 @@ describe('course scope selection', () => {
     );
   });
 
+  it('respects explicit lesson/page scopes in a term report and never falls back on a mismatch', () => {
+    expect(
+      selectCoursePages([document], 'Unit1 2', 'term')[0].pages.map(
+        (page) => page.page,
+      ),
+    ).toEqual([5]);
+    expect(
+      selectCoursePages([document], '第4页', 'term')[0].pages.map(
+        (page) => page.page,
+      ),
+    ).toEqual([4]);
+    expect(selectCoursePages([document], 'Unit1 99', 'term')[0].pages).toEqual(
+      [],
+    );
+  });
+
   it('detects course units and lessons stored in Markdown table cells', () => {
     expect(detectCourseUnits(document.sourcePages[0].text)).toEqual([
       'Unit1',
@@ -298,6 +314,20 @@ describe('learning content extraction', () => {
         (item) => item.section === 'Unit2 第1课',
       ),
     ).toBe(true);
+  });
+
+  it('filters term goals on shared pages and includes only the selected lesson continuations', () => {
+    expect(
+      extractLearningContents([course], 'Unit1 1', 'term').map(
+        (item) => item.text,
+      ),
+    ).toEqual(['听懂会说 Clap your hands.', '会说单词 hand, foot']);
+    const items = extractLearningContents([course], 'Unit1 2', 'term');
+    expect(items.some((item) => item.text.includes('第二课故事续页'))).toBe(
+      true,
+    );
+    expect(items.every((item) => item.section === 'Unit1 第2课')).toBe(true);
+    expect(extractLearningContents([course], 'Unit1 99', 'term')).toEqual([]);
   });
   it('supports plain headings and Chinese unit and lesson headings', () => {
     const plain = {

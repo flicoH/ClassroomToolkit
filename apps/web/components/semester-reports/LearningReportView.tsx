@@ -1,5 +1,6 @@
+import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
-import { ScoreDetailsView, type ScoreDetails } from "./ScoreDetailsView";
+import type { ScoreDetails } from "./ScoreDetailsView";
 
 export type ReportEntry = { text: string; sourceRefs: string[] };
 export type LearningContent = ReportEntry & {
@@ -8,6 +9,11 @@ export type LearningContent = ReportEntry & {
   mastery: "unassessed" | "mastered" | "practicing" | "needs_support";
 };
 export type LearningReportContent = {
+  reportVersion?: "v2";
+  pet?: ReportPet | null;
+  petAsOf?: string;
+  petHistoryStatus?: "recorded" | "unavailable";
+  classroomPhoto?: string | null;
   summary: string;
   courseOverview: string;
   strengths: ReportEntry[];
@@ -71,7 +77,7 @@ function Entries({ entries, empty }: { entries: ReportEntry[]; empty: string }) 
 }
 
 /** Shared by preview, the parent page and full-content image export. */
-export function LearningReportView({ report, forImage = false }: { report: LearningReportData; forImage?: boolean }) {
+export function LearningReportView({ report }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
   const details = content.reportDetails;
   const sections = new Map<string, LearningContent[]>();
@@ -96,6 +102,15 @@ export function LearningReportView({ report, forImage = false }: { report: Learn
             · {details?.courseTheme || report.subject}
           </p>
           <p className="mt-2 break-words text-sm text-indigo-100">{report.className}</p>
+          {content.classroomPhoto && (
+            <div className="mt-5 w-full max-w-sm rounded-2xl bg-white/10 p-1">
+              <img
+                src={content.classroomPhoto}
+                alt={`${report.studentName}的课堂照片`}
+                className="max-h-64 w-full rounded-xl object-contain"
+              />
+            </div>
+          )}
         </div>
       </header>
       <div className="space-y-4 p-3 sm:space-y-8 sm:p-9">
@@ -127,26 +142,41 @@ export function LearningReportView({ report, forImage = false }: { report: Learn
             {!sections.size && <p className="text-sm text-slate-500">暂未整理逐项学习内容，请由老师补充。</p>}
           </div>
         </section>
-        <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-          <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
-          {content.classroomPerformance?.length ? (
-            <div className="flex flex-wrap gap-2">
-              {content.classroomPerformance.map((item, index) => (
-                <span key={index} className="rounded-full bg-violet-50 px-4 py-2 text-sm text-violet-800">
-                  {item.text}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
-          )}
-        </section>
-        {content.scoreDetails && (
+        {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.length)) && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-            <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}积分加减情况</h2>
-            <ScoreDetailsView details={content.scoreDetails} forImage={forImage} />
+            {content.reportVersion !== "v2" && (
+              <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
+            )}
+            {content.classroomPerformance?.length ? (
+              <div className="flex flex-wrap gap-2">
+                {content.classroomPerformance.map((item, index) => (
+                  <span key={index} className="rounded-full bg-violet-50 px-4 py-2 text-sm text-violet-800">
+                    {item.text}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
+            )}
           </section>
         )}
+        <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
+          <h2 className="mb-4 text-lg font-bold">我的宠物伙伴</h2>
+          {content.petHistoryStatus === "unavailable" ? (
+            <p className="text-sm text-slate-500">所选周期结束时的宠物形态尚无历史记录。</p>
+          ) : content.reportVersion !== "v2" && content.pet === undefined ? (
+            <p className="text-sm text-slate-500">此报告未保存宠物形态，可由老师重新生成报告。</p>
+          ) : (
+            <ReportPetView pet={content.pet} />
+          )}
+          {content.petAsOf ? (
+            <p className="mt-3 text-center text-xs text-slate-500">形态记录截至 {dateText(content.petAsOf)}</p>
+          ) : (
+            content.pet && (
+              <p className="mt-3 text-center text-xs text-slate-500">生成时保存的形态，尚无周期结束时的历史记录。</p>
+            )
+          )}
+        </section>
         <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
           <h2 className="mb-4 text-lg font-bold">老师想对你说</h2>
           <p className="whitespace-pre-wrap break-words leading-8 text-slate-700">{content.summary}</p>
@@ -164,7 +194,14 @@ export function LearningReportView({ report, forImage = false }: { report: Learn
               <Target className="h-4 w-4" />
               下一步重点
             </h2>
-            <Entries entries={content.areasToImprove} empty="等待老师补充下一阶段的练习重点。" />
+            <Entries
+              entries={content.areasToImprove}
+              empty={
+                content.reportVersion === "v2"
+                  ? "预留位置：后续结合模板使用 AI 生成，也可由老师填写。"
+                  : "等待老师补充下一阶段的练习重点。"
+              }
+            />
           </section>
         </div>
         <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">

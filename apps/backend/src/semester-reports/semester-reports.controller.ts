@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -97,6 +98,18 @@ export class SemesterReportsController {
   @Get('reports/:id/events') getEvents(@Param('id') id: string) {
     return this.reports.getEvents(id);
   }
+  @Get('reports/:id/events/:eventId')
+  getEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
+    return this.reports.getEvent(id, eventId);
+  }
+  @Post('reports/:id/events/:eventId/restore')
+  restoreEvent(
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @Body() body: { side?: unknown; expectedVersion?: unknown },
+  ) {
+    return this.reports.restoreEvent(id, eventId, body);
+  }
   @Patch('reports/:id/draft')
   @TrackFeature('semester-reports', 'save-draft')
   editDraft(
@@ -105,6 +118,40 @@ export class SemesterReportsController {
   ) {
     return this.reports.editDraft(id, body.content);
   }
+  @Post('reports/:id/course-subjects')
+  addDraftSubjects(
+    @Param('id') id: string,
+    @Body() body: { courseSelections: unknown },
+  ) {
+    return this.reports.addDraftSubjects(id, body.courseSelections);
+  }
+  @Delete('reports/:id/course-subjects/:subjectId')
+  removeDraftSubject(
+    @Param('id') id: string,
+    @Param('subjectId') subjectId: string,
+  ) {
+    return this.reports.removeDraftSubject(id, subjectId);
+  }
+  @Post('reports/:id/classroom-photo')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      // Multer rejects at the threshold; allow exactly 5MB and let the service
+      // enforce the inclusive business limit before persisting anything.
+      limits: { fileSize: 5 * 1024 * 1024 + 1, files: 1, fields: 0 },
+    }),
+  )
+  uploadClassroomPhoto(
+    @Param('id') id: string,
+    @UploadedFile() file?: { buffer: Buffer; size: number; mimetype: string },
+  ) {
+    if (!file) throw new BadRequestException('请选择课堂照片');
+    return this.reports.setClassroomPhoto(id, file);
+  }
+  @Delete('reports/:id/classroom-photo')
+  removeClassroomPhoto(@Param('id') id: string) {
+    return this.reports.setClassroomPhoto(id);
+  }
+
   @Post('reports/:id/publish')
   @TrackFeature('semester-reports', 'publish')
   publish(@Param('id') id: string) {

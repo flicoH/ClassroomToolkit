@@ -153,7 +153,7 @@ describe("ScoreDetailsView", () => {
     expect(container.querySelector("ul")?.textContent).toContain("学生二扣分");
   });
 
-  it("includes the saved point changes in the shared teacher and parent report template", () => {
+  it("keeps point details available to teacher tools while the report shows its historical pet", () => {
     act(() =>
       root.render(
         <LearningReportView
@@ -170,6 +170,9 @@ describe("ScoreDetailsView", () => {
               areasToImprove: [],
               homeSuggestions: [],
               limitations: [],
+              pet: { petId: "sprout-puff", petName: "团团", level: 4, stage: "第4形态", petHatched: true },
+              petAsOf: "2026-10-09T15:59:59.999Z",
+              petHistoryStatus: "recorded",
               scoreDetails: {
                 positive: 2,
                 negative: -1,
@@ -183,7 +186,10 @@ describe("ScoreDetailsView", () => {
       )
     );
     expect(container.textContent).toContain("学生一");
-    expect(container.textContent).toContain("本周积分加减情况");
-    expect(container.textContent).toContain("完成任务");
+    expect(container.textContent).toContain("我的宠物伙伴");
+    expect(container.textContent).toContain("团团");
+    expect(container.textContent).toContain("形态记录截至 2026/10/9");
+    expect(container.textContent).not.toContain("本周积分加减情况");
+    expect(container.textContent).not.toContain("完成任务");
   });
 });

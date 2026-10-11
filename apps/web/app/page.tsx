@@ -27,6 +27,7 @@ import { StickyNoteQuick, StickyNotes } from "@/components/apps/StickyNotes";
 import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
 import { Feedback } from "@/components/apps/Feedback";
+import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
 import { SemesterReports } from "@/components/apps/SemesterReports";
 import {
   CartoonCountdownIcon,
@@ -48,6 +49,7 @@ const menuItems: MenuItemData[] = [
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
   { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
+  { name: "学期报告v2", icon: CartoonSemesterReportIcon, contentKey: "semesterReportsV2" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
   { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
@@ -66,6 +68,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <SeatingChart />;
     case "petPoints":
       return <PetPoints />;
+    case "semesterReportsV2":
+      return <SemesterReportsV2 />;
     case "semesterReports":
       return <SemesterReports />;
     case "gachaMachine":

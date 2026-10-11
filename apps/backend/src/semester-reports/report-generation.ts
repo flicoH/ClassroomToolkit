@@ -10,6 +10,17 @@ import {
 export type ReportGenerationMode = 'template' | 'ai';
 type Entry = { text: string; sourceRefs: string[] };
 type Snapshot = {
+  reportVersion?: string;
+  pet?: {
+    petId: string | null;
+    petName: string | null;
+    stage: string;
+    level: number;
+    petHatched: boolean;
+  } | null;
+  petAsOf?: string;
+  petHistoryStatus?: 'recorded' | 'unavailable';
+  classroomPhoto?: string | null;
   subjectName?: string;
   student?: { name?: string };
   courseScope?: string;
@@ -35,6 +46,23 @@ type Snapshot = {
   teacherInput?: StudentFeedback;
   reportDetails?: ReportDetails;
 };
+
+// Saved visuals cannot be replaced by generated or edited prose.
+export function reportVisualsForSnapshot(snapshot: Snapshot) {
+  return {
+    pet: snapshot.pet,
+    petAsOf: snapshot.petAsOf,
+    petHistoryStatus: snapshot.petHistoryStatus,
+    classroomPhoto: snapshot.classroomPhoto ?? null,
+    ...(snapshot.reportVersion === 'v2'
+      ? {
+          reportVersion: 'v2' as const,
+          pet: snapshot.pet ?? null,
+          classroomPhoto: snapshot.classroomPhoto ?? null,
+        }
+      : {}),
+  };
+}
 
 /** Point figures are copied from the saved period snapshot, never from editable prose. */
 export function scoreDetailsForSnapshot(snapshot: Snapshot) {
@@ -104,10 +132,12 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
   ];
   return {
     ...content,
+    ...reportVisualsForSnapshot(snapshot),
     ...(feedback?.teacherMessage ? { summary: feedback.teacherMessage } : {}),
     ...(feedback?.highlight
       ? { strengths: teacherEntry(feedback.highlight) }
       : {}),
+    ...(snapshot.reportVersion === 'v2' ? { areasToImprove: [] } : {}),
     ...(feedback?.nextFocus
       ? { areasToImprove: teacherEntry(feedback.nextFocus) }
       : {}),
