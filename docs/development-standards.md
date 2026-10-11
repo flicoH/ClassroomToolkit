@@ -41,3 +41,12 @@ Backend 的 `pnpm dev` 和调试热更新使用 `tsconfig.dev.json`，输出及�
 `check-eslint.test.mjs` 防止验证入口、提交扩展名覆盖、源码/测试/脚本检测、生成目录排除及 Vue TypeScript 解析退化；集成到规范测试。
 
 验收：包含全量 ESLint 的 `pnpm verify` 完整通过，规范测试 23 项、Backend 321、Web 87、Admin 11 项和三端构建通过。全量 ESLint 为 0 错误；历史 warning 保留，主要为新增覆盖的 Vue 模板格式及既有未使用变量提示。没有批量重写既有业务文件。
+
+
+## 数据库迁移文件加载（2026-10-11）
+
+运行时 AppModule 与迁移 CLI 共用 `migrationFiles` 选择器，只加载迁移目录中的普通文件，文件名须为 `14 位时间戳-名称.ts/js`（名称可含字母、数字、下划线和连字符）。禁止宽泛 `*.ts/js` 扫描：TypeORM 会立即执行匹配模块，放在同目录的 `.spec/.test`、辅助文件和 `.d.ts` 都可能污染应用启动与 E2E 测试。源码测试/ts-node 运行时加载 TS，生产和开发编译产物加载 JS；CLI 仍加载 dist 中 JS 文件。选择器按文件名排序，目录缺失明确失败，不静默跳过迁移。现有迁移名称、表结构、迁移历史、执行顺序和命令保持不变，无新增迁移或删库操作；部署更新 Backend 即可。
+
+`migration-files.spec.ts` 使用 TypeORM 真实迁移类加载器和抛错测试模块复现误加载；同时检查 AppModule 实际迁移配置、TS/JS 入口、测试/声明/辅助文件排除、稳定顺序和目录缺失。回归只读取模块与临时样本，不连接数据库或执行迁移。依赖 MySQL 的完整 E2E 仍由部署 CI 初始化隔离数据库后运行。
+
+迁移加载修复验收：完整 `pnpm verify` 通过（全量 ESLint、规范 23 项、Backend 324、Web 87、Admin 11 项及三端构建）。另在本机独立临时 MySQL 8.0.44 上导入 schema 并执行编译后的迁移 CLI，随后运行 CI 同一 E2E 命令，两套 11 项全部通过；验证了源码 AppModule 和生产 JS 迁移入口均不会加载测试模块。CI 的 MySQL 8.4 环境需由流水线最终验证。临时服务已关闭，数据目录已清理，没有连接或修改现有数据库。

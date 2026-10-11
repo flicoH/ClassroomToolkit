@@ -3,6 +3,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'node:path';
+import { migrationFiles } from './database/migration-files';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import './common/load-env';
@@ -29,7 +30,9 @@ import { SemesterReportsModule } from './semester-reports/semester-reports.modul
       database: process.env.MYSQL_DATABASE ?? 'classroom_toolkit',
       autoLoadEntities: true,
       synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',
-      migrations: [join(__dirname, 'database/migrations/*{.js,.ts}')],
+      migrations: migrationFiles(join(__dirname, 'database/migrations'), [
+        __filename.endsWith('.ts') ? 'ts' : 'js',
+      ]),
       migrationsRun: process.env.TYPEORM_MIGRATIONS_RUN === 'true',
       charset: 'utf8mb4',
     }),
