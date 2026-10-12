@@ -59,6 +59,73 @@ type ServiceInternals = {
 };
 
 describe('report generation input', () => {
+  it('keeps independent classroom ratings with the same label across subjects', () => {
+    const input = {
+      ...feedback,
+      classroomPerformance: [
+        { subjectId: 'english', label: '课堂参与', value: '主动参与' },
+        { subjectId: 'math', label: '课堂参与', value: '需要鼓励' },
+      ],
+    };
+    const parsed = parseStudentFeedback(
+      [input],
+      ['one'],
+      [goalId],
+      ['english', 'math'],
+    ).get('one')!;
+    expect(parsed.classroomPerformance).toEqual(input.classroomPerformance);
+    const report = {
+      snapshot: { reportVersion: 'v2', teacherInput: parsed },
+    } as unknown as SemesterReportEntity;
+    expect(addLearningReportSections({}, report).classroomPerformance).toEqual([
+      {
+        subjectId: 'english',
+        text: '课堂参与 · 主动参与',
+        sourceRefs: ['teacher-input'],
+      },
+      {
+        subjectId: 'math',
+        text: '课堂参与 · 需要鼓励',
+        sourceRefs: ['teacher-input'],
+      },
+    ]);
+  });
+
+  it('validates subject boundaries, duplicate categories and per-subject limits', () => {
+    const ratings = (subjectId: string, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        subjectId,
+        label: `项目${index}`,
+        value: '实际观察',
+      }));
+    const parse = (classroomPerformance: unknown) =>
+      parseStudentFeedback(
+        [{ ...feedback, classroomPerformance }],
+        ['one'],
+        [goalId],
+        ['english', 'math'],
+      );
+    expect(
+      parse([...ratings('english', 8), ...ratings('math', 8)]).get('one')
+        ?.classroomPerformance,
+    ).toHaveLength(16);
+    expect(() => parse(ratings('foreign', 1))).toThrow('已选学科');
+    expect(() =>
+      parse([...ratings('english', 1), ...ratings('english', 1)]),
+    ).toThrow('重复');
+    expect(() => parse(ratings('english', 13))).toThrow('12');
+    expect(() =>
+      parse([{ subjectId: 'english', label: '课堂参与', value: '' }]),
+    ).toThrow('不能为空');
+    expect(() =>
+      parseStudentFeedback(
+        [{ ...feedback, classroomPerformance: ratings('english', 1) }],
+        ['one'],
+        [goalId],
+        [],
+      ),
+    ).toThrow('已选学科');
+  });
   it('accepts picture-template metadata and only dates within the selected period', () => {
     const start = new Date('2026-09-21T00:00:00+08:00');
     const end = new Date('2026-09-28T00:00:00+08:00');

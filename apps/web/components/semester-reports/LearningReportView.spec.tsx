@@ -146,3 +146,26 @@ describe("report pet presentation", () => {
     expect(egg).not.toContain("/pets/starling/");
   });
 });
+
+it("shows separate v2 classroom performance for every subject without copying legacy ratings", () => {
+  const content = {
+    ...report.content,
+    reportVersion: "v2" as const,
+    reportSubjects: [
+      { subjectId: "english", name: "英语" },
+      { subjectId: "math", name: "数学" }
+    ],
+    classroomPerformance: [
+      { subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] },
+      { text: "课堂任务 · 基本完成", sourceRefs: ["teacher-input"] }
+    ]
+  };
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(<LearningReportView report={{ ...report, content }} />);
+  const heading = [...rendered.querySelectorAll("h3")].find(item => item.textContent === "数学的课堂表现");
+  expect(heading).toBeDefined();
+  expect(heading!.parentElement!.textContent).toContain("老师暂未填写");
+  expect(heading!.parentElement!.textContent).not.toContain("主动参与");
+  expect(heading!.parentElement!.textContent).not.toContain("基本完成");
+  expect(rendered.textContent).toContain("未分学科的原课堂表现");
+});

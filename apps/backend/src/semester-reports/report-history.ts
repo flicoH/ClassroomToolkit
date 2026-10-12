@@ -149,7 +149,6 @@ function changesFor(revision: ReportRevision | null) {
     areasToImprove: '下一步重点',
     homeSuggestions: '家庭练习',
     limitations: '报告说明',
-    classroomPerformance: '课堂表现',
   })) {
     add(
       label,
@@ -158,6 +157,27 @@ function changesFor(revision: ReportRevision | null) {
       ['summary', 'courseOverview'].includes(key) ? text : entries,
     );
   }
+  const performance = (state?: ReportVersion) => {
+    const subjects = (state?.snapshot.reportSubjects ?? []) as Array<{
+      subjectId: string;
+      name: string;
+    }>;
+    const selections = (state?.snapshot.courseSelections ?? []) as Array<{
+      subjectId: string;
+    }>;
+    const names = String(state?.snapshot.subjectName ?? '').split('、');
+    return (
+      (state?.content?.classroomPerformance ?? []) as Array<
+        Record<string, unknown>
+      >
+    ).map((item) => ({
+      ...item,
+      text: item.subjectId
+        ? `${subjects.find((subject) => subject.subjectId === item.subjectId)?.name ?? names[selections.findIndex((subject) => subject.subjectId === item.subjectId)] ?? '已选学科'}：${text(item.text)}`
+        : text(item.text),
+    }));
+  };
+  add('课堂表现', performance(before), performance(after), entries);
   const goals = (state?: ReportVersion) =>
     new Map(
       (

@@ -359,6 +359,7 @@ export class SemesterReportsService {
       courseScope,
       selections,
       subjectName,
+      reportSubjects: courseSubjects,
     } = await this.selectedCourses(input, termId, subjectId, period);
     subject.name = subjectName || subject.name;
     if (
@@ -408,6 +409,7 @@ export class SemesterReportsService {
         input.studentFeedback,
         studentIds,
         learningContents.map((item) => item.id),
+        selections?.map((item) => item.subjectId) ?? [],
       );
     } catch (error) {
       throw new BadRequestException(
@@ -459,6 +461,7 @@ export class SemesterReportsService {
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
         courseSelections: selections,
+        reportSubjects: courseSubjects,
         classroomPhoto: classroomPhoto ?? null,
         ...(await this.petForPeriod(student, end)),
         generationMode,
@@ -820,6 +823,10 @@ export class SemesterReportsService {
       const snapshot = {
         ...row.snapshot,
         courseSelections: [...existing, ...additions],
+        reportSubjects: [
+          ...(reportVisualsForSnapshot(row.snapshot).reportSubjects ?? []),
+          ...courses.reportSubjects,
+        ],
         subjectName: [
           String(row.snapshot.subjectName ?? ''),
           courses.subjectName,
@@ -940,6 +947,10 @@ export class SemesterReportsService {
       const snapshot = {
         ...row.snapshot,
         courseSelections: selections,
+        reportSubjects: selections.map((selection, index) => ({
+          subjectId: selection.subjectId,
+          name: names[index]!,
+        })),
         subjectName: names.join('、'),
         courseScope,
         courseDocuments: documents.filter(
@@ -953,6 +964,9 @@ export class SemesterReportsService {
           ? {
               teacherInput: {
                 ...teacherInput,
+                classroomPerformance: (
+                  teacherInput.classroomPerformance ?? []
+                ).filter((item) => item.subjectId !== subjectId),
                 learningMastery: Object.fromEntries(
                   Object.entries(teacherInput.learningMastery ?? {}).filter(
                     ([goalId]) => !removedGoalIds.has(goalId),
@@ -976,7 +990,12 @@ export class SemesterReportsService {
         if (Array.isArray(content[key]))
           content[key] = (
             content[key] as Array<{ sourceRefs: string[] }>
-          ).filter(keepEntry);
+          ).filter(
+            (item) =>
+              keepEntry(item) &&
+              (key !== 'classroomPerformance' ||
+                (item as { subjectId?: string }).subjectId !== subjectId),
+          );
       }
       this.validateContent(content, snapshot);
       row.snapshot = snapshot;
@@ -1617,6 +1636,10 @@ export class SemesterReportsService {
       learningContents,
       selections,
       subjectName: subjects.map((subject) => subject.name).join('、'),
+      reportSubjects: (selections ?? []).map((selection, index) => ({
+        subjectId: selection.subjectId,
+        name: subjects[index]!.name,
+      })),
       courseScope: selections
         ? selections
             .map(

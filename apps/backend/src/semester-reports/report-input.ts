@@ -14,7 +14,11 @@ export type ReportDetails = {
 export type StudentFeedback = {
   studentId: string;
   learningMastery: Record<string, Mastery>;
-  classroomPerformance: Array<{ label: string; value: string }>;
+  classroomPerformance: Array<{
+    subjectId?: string;
+    label: string;
+    value: string;
+  }>;
   teacherMessage: string;
   highlight: string;
   nextFocus: string;
@@ -78,6 +82,7 @@ export function parseStudentFeedback(
   value: unknown,
   selected: string[],
   learningIds: string[],
+  subjectIds?: string[],
 ) {
   const result = new Map<string, StudentFeedback>();
   if (value === undefined) return result;
@@ -103,17 +108,31 @@ export function parseStudentFeedback(
       learningMastery[id] = rating as Mastery;
     }
     const performance = row.classroomPerformance ?? [];
-    if (!Array.isArray(performance) || performance.length > 12)
-      throw new Error('课堂表现最多填写 12 项');
+    if (
+      !Array.isArray(performance) ||
+      performance.length >
+        (subjectIds ? 12 * Math.max(1, subjectIds.length) : 12)
+    )
+      throw new Error('课堂表现最多每门学科填写 12 项');
+    // Category uniqueness is scoped to a subject, so English and maths may differ.
     const labels = new Set<string>();
     const classroomPerformance = performance.map((rawItem) => {
       const item = object(rawItem, '课堂表现');
       const label = text(item.label, 30, '课堂表现项目');
       const value = text(item.value, 100, '课堂表现评价');
-      if (!label || !value || labels.has(label))
+      const subjectId = text(item.subjectId, 64, '课堂表现学科') || undefined;
+      if (subjectId && !subjectIds?.includes(subjectId))
+        throw new Error('课堂表现必须对应已选学科');
+      const key = `${subjectId ?? ''}:${label}`;
+      if (!label || !value || labels.has(key))
         throw new Error('课堂表现项目不能为空或重复');
-      labels.add(label);
-      return { label, value };
+      labels.add(key);
+      if (
+        [...labels].filter((entry) => entry.startsWith(`${subjectId ?? ''}:`))
+          .length > 12
+      )
+        throw new Error('每门学科课堂表现最多填写 12 项');
+      return { ...(subjectId ? { subjectId } : {}), label, value };
     });
     result.set(studentId, {
       studentId,

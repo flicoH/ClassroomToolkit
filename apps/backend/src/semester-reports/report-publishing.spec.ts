@@ -248,6 +248,66 @@ describe('report publishing', () => {
     };
     return state;
   }
+  it('saves independent subject ratings, rejects foreign subjects and restores deleted ratings from history', async () => {
+    const { service, row, events } = removableDraft();
+    const english = {
+      subjectId: 'english',
+      text: '课堂参与 · 主动参与',
+      sourceRefs: ['teacher-review'],
+    };
+    const math = {
+      subjectId: 'math',
+      text: '课堂参与 · 需要鼓励',
+      sourceRefs: ['teacher-review'],
+    };
+    const legacy = {
+      text: '课堂任务 · 基本完成',
+      sourceRefs: ['teacher-review'],
+    };
+    row.snapshot.teacherInput = {
+      classroomPerformance: [
+        { subjectId: 'english', label: '课堂参与', value: '主动参与' },
+        { subjectId: 'math', label: '课堂参与', value: '需要鼓励' },
+      ],
+    };
+    await service.editDraft('report', {
+      ...row.content,
+      classroomPerformance: [english, math, legacy],
+    });
+    await expect(
+      service.editDraft('report', {
+        ...row.content,
+        classroomPerformance: [{ ...math, subjectId: 'foreign' }],
+      }),
+    ).rejects.toThrow('报告中的学科');
+    await expect(
+      service.editDraft('report', {
+        ...row.content,
+        classroomPerformance: [english, english],
+      }),
+    ).rejects.toThrow('重复');
+    await service.removeDraftSubject('report', 'math');
+    expect(row.content!.classroomPerformance).toEqual([english, legacy]);
+    expect(row.snapshot.teacherInput.classroomPerformance).toEqual([
+      { subjectId: 'english', label: '课堂参与', value: '主动参与' },
+    ]);
+    const deletion = events.save.mock.calls.at(-1)![0];
+    const detail = await service.getEvent('report', deletion.id);
+    expect(JSON.stringify(detail.changes)).toContain('数学：课堂参与');
+    const restored = await service.restoreEvent('report', deletion.id, {
+      side: 'before',
+      expectedVersion: detail.currentVersion,
+    });
+    expect(restored.content!.classroomPerformance).toEqual([
+      english,
+      math,
+      legacy,
+    ]);
+    expect(restored.content!.reportSubjects).toEqual([
+      { subjectId: 'english', name: '英语' },
+      { subjectId: 'math', name: '数学' },
+    ]);
+  });
   it('removes a draft subject and its sources while preserving other ratings, prose and visuals', async () => {
     const { service, row, events } = removableDraft();
     const result = await service.removeDraftSubject('report', 'math');
