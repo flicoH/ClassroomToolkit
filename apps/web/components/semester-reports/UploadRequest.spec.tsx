@@ -38,8 +38,8 @@ describe("binary upload request transport", () => {
     async headers => {
       const form = photo("classroom.png");
       await request.post("/api/semester-reports/reports/transport/classroom-photo", form, headers);
-      expect(adapter.mock.calls[0][0].data).toBe(form);
-      expect((adapter.mock.calls[0][0].data as FormData).get("file")).toBeInstanceOf(File);
+      expect(adapter.mock.calls[0]![0].data).toBe(form);
+      expect((adapter.mock.calls[0]![0].data as FormData).get("file")).toBeInstanceOf(File);
     }
   );
   it("sends a newly chosen photo immediately instead of reusing a cached upload", async () => {
@@ -48,7 +48,7 @@ describe("binary upload request transport", () => {
     await request.post("/api/semester-reports/reports/replacement/classroom-photo", first, multipart);
     await request.post("/api/semester-reports/reports/replacement/classroom-photo", second, multipart);
     expect(adapter).toHaveBeenCalledTimes(2);
-    expect(adapter.mock.calls[1][0].data).toBe(second);
+    expect(adapter.mock.calls[1]![0].data).toBe(second);
   });
   it("allows an immediate retry after a failed multipart request", async () => {
     adapter.mockRejectedValueOnce(new Error("上传失败"));

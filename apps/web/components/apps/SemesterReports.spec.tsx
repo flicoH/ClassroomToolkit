@@ -207,7 +207,7 @@ describe("SemesterReports mobile workflow", () => {
             dates[dates.length - 1],
             "2026-10-08"
           );
-          dates[dates.length - 1].dispatchEvent(new Event("input", { bubbles: true }));
+          dates[dates.length - 1]!.dispatchEvent(new Event("input", { bubbles: true }));
         });
         await act(async () => vi.advanceTimersByTimeAsync(450));
         expect(container.textContent).toContain("宠物形态预览失败");
@@ -722,7 +722,9 @@ describe("SemesterReports mobile workflow", () => {
         homeSuggestions: [],
         limitations: [],
         reportVersion: "v2",
-        learningContents: [oldGoal]
+        learningContents: [oldGoal],
+        reportSubjects: [{ subjectId: "english", name: "英语" }],
+        classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }]
       }
     };
     api.get.mockImplementation(async url => {
@@ -762,6 +764,10 @@ describe("SemesterReports mobile workflow", () => {
       courseSelections: [...report.courseSelections, { subjectId: "math", courseScope: "" }],
       content: {
         ...report.content,
+        reportSubjects: [
+          { subjectId: "english", name: "英语" },
+          { subjectId: "math", name: "数学" }
+        ],
         learningContents: [
           oldGoal,
           {
@@ -781,6 +787,13 @@ describe("SemesterReports mobile workflow", () => {
     expect(modal.querySelector('[aria-label="选择数学课程"]')).toBeNull();
     expect(modal.textContent).toContain("所有学科均已添加到当前报告");
     expect(modal.textContent).toContain("新增数学内容");
+    expect(modal.querySelector<HTMLInputElement>('[aria-label="英语 课堂参与"]')!.value).toBe("主动参与");
+    const mathPerformance = modal.querySelector<HTMLInputElement>('[aria-label="数学 课堂参与"]')!;
+    expect(mathPerformance.value).toBe("");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(mathPerformance, "需要鼓励");
+      mathPerformance.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     expect(message.value).toBe("未保存寄语");
     const rating = modal.querySelector<HTMLSelectElement>('[aria-label="英语 学习内容 1 掌握情况"]')!;
     act(() => {
@@ -790,6 +803,7 @@ describe("SemesterReports mobile workflow", () => {
     api.delete.mockRejectedValueOnce(new Error("删除失败"));
     await act(async () => modal.querySelector<HTMLButtonElement>('[aria-label="删除数学学科"]')!.click());
     expect(modal.textContent).toContain("删除失败");
+    expect(mathPerformance.value).toBe("需要鼓励");
     expect(modal.textContent).toContain("新增数学内容");
     expect(message.value).toBe("未保存寄语");
     api.delete.mockResolvedValueOnce({
@@ -803,7 +817,9 @@ describe("SemesterReports mobile workflow", () => {
     expect(modal.querySelector<HTMLButtonElement>('[aria-label="删除英语学科"]')!.disabled).toBe(true);
     expect(message.value).toBe("未保存寄语");
     await act(async () => button("保存草稿").click());
+    expect(modal.querySelector('[aria-label="数学 课堂参与"]')).toBeNull();
     expect(api.patch.mock.calls.at(-1)![1].content).toMatchObject({
+      classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }],
       summary: "未保存寄语",
       learningContents: [expect.objectContaining({ id: "old", mastery: "practicing" })]
     });

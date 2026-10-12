@@ -22,6 +22,8 @@ type Snapshot = {
   petHistoryStatus?: 'recorded' | 'unavailable';
   classroomPhoto?: string | null;
   subjectName?: string;
+  courseSelections?: Array<{ subjectId: string; courseScope: string }>;
+  reportSubjects?: Array<{ subjectId: string; name: string }>;
   student?: { name?: string };
   courseScope?: string;
   allowedReferences?: string[];
@@ -40,6 +42,7 @@ type Snapshot = {
   courseDocuments?: Array<{
     id: string;
     fileName: string;
+    subjectId?: string;
     pages: Array<{ page: number; text: string }>;
   }>;
   learningContents?: LearningContent[];
@@ -47,7 +50,7 @@ type Snapshot = {
   reportDetails?: ReportDetails;
 };
 
-// Saved visuals cannot be replaced by generated or edited prose.
+// Snapshot-derived presentation data cannot be replaced by generated or edited prose.
 export function reportVisualsForSnapshot(snapshot: Snapshot) {
   return {
     pet: snapshot.pet,
@@ -57,6 +60,21 @@ export function reportVisualsForSnapshot(snapshot: Snapshot) {
     ...(snapshot.reportVersion === 'v2'
       ? {
           reportVersion: 'v2' as const,
+          reportSubjects:
+            snapshot.reportSubjects ??
+            (
+              snapshot.courseSelections ??
+              [
+                ...new Set(
+                  (snapshot.courseDocuments ?? [])
+                    .map((doc) => doc.subjectId)
+                    .filter((id): id is string => Boolean(id)),
+                ),
+              ].map((subjectId) => ({ subjectId, courseScope: '' }))
+            ).map((selection, index) => ({
+              subjectId: selection.subjectId,
+              name: snapshot.subjectName?.split('、')[index] || '已选学科',
+            })),
           pet: snapshot.pet ?? null,
           classroomPhoto: snapshot.classroomPhoto ?? null,
         }
@@ -149,6 +167,7 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
     learningContents: learningContentsForReport(report),
     classroomPerformance: (feedback?.classroomPerformance ?? []).map(
       (item) => ({
+        ...(item.subjectId ? { subjectId: item.subjectId } : {}),
         text: `${item.label} · ${item.value}`,
         sourceRefs: ['teacher-input'],
       }),
@@ -413,9 +432,17 @@ export function validateGeneratedReportContent(
   if (content.classroomPerformance !== undefined) {
     if (
       !Array.isArray(content.classroomPerformance) ||
-      content.classroomPerformance.length > 12
+      content.classroomPerformance.length >
+        (snapshot.reportVersion === 'v2' ? 240 : 12)
     )
       throw new Error('课堂表现格式无效');
+    const allowedSubjects = new Set(
+      (reportVisualsForSnapshot(snapshot as Snapshot).reportSubjects ?? []).map(
+        (subject) => subject.subjectId,
+      ),
+    );
+    const counts = new Map<string, number>();
+    const keys = new Set<string>();
     for (const item of content.classroomPerformance as Array<
       Record<string, unknown>
     >) {
@@ -431,6 +458,19 @@ export function validateGeneratedReportContent(
         )
       )
         throw new Error('课堂表现缺少有效的教师评价依据');
+      if (
+        item.subjectId !== undefined &&
+        (typeof item.subjectId !== 'string' ||
+          !allowedSubjects.has(item.subjectId))
+      )
+        throw new Error('课堂表现必须对应报告中的学科');
+      const subject = String(item.subjectId ?? '');
+      const count = (counts.get(subject) ?? 0) + 1;
+      const key = `${subject}:${item.text.split(' · ')[0]}`;
+      if (count > 12 || (item.subjectId !== undefined && keys.has(key)))
+        throw new Error('每门学科课堂表现最多 12 项，且项目不能重复');
+      counts.set(subject, count);
+      keys.add(key);
     }
   }
 }

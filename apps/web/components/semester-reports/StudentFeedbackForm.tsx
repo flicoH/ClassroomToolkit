@@ -1,11 +1,11 @@
 "use client";
 
-import { Input } from "@/components/ui/input";
+import { ClassroomPerformanceFields, type PerformanceRating } from "./ClassroomPerformanceFields";
 import { masteryLabels, type LearningContent } from "./LearningReportView";
 
 export type StudentReportFeedback = {
   learningMastery: Record<string, LearningContent["mastery"]>;
-  classroomPerformance: Array<{ label: string; value: string }>;
+  classroomPerformance: PerformanceRating[];
   teacherMessage: string;
   highlight: string;
   nextFocus: string;
@@ -22,24 +22,16 @@ export function emptyStudentFeedback(): StudentReportFeedback {
   };
 }
 
-const performances: Array<[string, string[]]> = [
-  ["课堂任务", ["独立完成", "基本完成", "需要帮助"]],
-  ["看图表达", ["能说词", "能说短句", "能完整表达", "需要提示"]],
-  ["听指令反应", ["能听懂并反应", "基本听懂", "需要引导"]],
-  ["跟读发音", ["清晰准确", "基本跟读", "需要练习"]],
-  ["英语开口", ["主动表达", "能模仿说", "需要鼓励"]],
-  ["课堂参与", ["主动参与", "引导参与", "需要鼓励"]],
-  ["专注情况", ["专注稳定", "基本专注", "需要提醒"]],
-  ["进入状态", ["迅速进入", "逐渐进入", "需要适应"]]
-];
 export function StudentFeedbackForm({
   student,
   subject,
   learningContents,
   value,
   onChange,
+  subjects,
   reserveNextFocus = false
 }: {
+  subjects?: Array<{ subjectId: string; name: string }>;
   reserveNextFocus?: boolean;
   student: { id: string; name: string; className: string };
   subject: string;
@@ -96,39 +88,12 @@ export function StudentFeedbackForm({
           <p className="text-sm text-muted-foreground">请先选择授课范围，等待学习内容加载。</p>
         )}
       </section>
-      <section className="space-y-3">
-        <h4 className="font-semibold">本期的课堂表现</h4>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {performances.map(([original, options], index) => {
-            const label = original === "英语开口" && !subject.includes("英") ? "学科表达" : original;
-            const listId = `report-feedback-${student.id}-${index}`;
-            return (
-              <label key={label} className="space-y-1 text-sm">
-                {label}
-                <Input
-                  list={listId}
-                  maxLength={100}
-                  placeholder="选择或填写实际表现"
-                  value={value.classroomPerformance.find(item => item.label === label)?.value ?? ""}
-                  onChange={event =>
-                    onChange({
-                      classroomPerformance: [
-                        ...value.classroomPerformance.filter(item => item.label !== label),
-                        ...(event.target.value ? [{ label, value: event.target.value }] : [])
-                      ]
-                    })
-                  }
-                />
-                <datalist id={listId}>
-                  {options.map(option => (
-                    <option key={option} value={option} />
-                  ))}
-                </datalist>
-              </label>
-            );
-          })}
-        </div>
-      </section>
+      <ClassroomPerformanceFields
+        subjects={subjects}
+        subject={subject}
+        value={value.classroomPerformance}
+        onChange={classroomPerformance => onChange({ classroomPerformance })}
+      />
       <label className="block space-y-2 text-sm font-semibold">
         老师想对你说
         <textarea

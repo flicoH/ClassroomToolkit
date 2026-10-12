@@ -2,7 +2,7 @@ import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
 import type { ScoreDetails } from "./ScoreDetailsView";
 
-export type ReportEntry = { text: string; sourceRefs: string[] };
+export type ReportEntry = { subjectId?: string; text: string; sourceRefs: string[] };
 export type LearningContent = ReportEntry & {
   id: string;
   section: string;
@@ -10,6 +10,7 @@ export type LearningContent = ReportEntry & {
 };
 export type LearningReportContent = {
   reportVersion?: "v2";
+  reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
   petAsOf?: string;
   petHistoryStatus?: "recorded" | "unavailable";
@@ -142,18 +143,31 @@ export function LearningReportView({ report }: { report: LearningReportData; for
             {!sections.size && <p className="text-sm text-slate-500">暂未整理逐项学习内容，请由老师补充。</p>}
           </div>
         </section>
-        {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.length)) && (
+        {content.reportVersion === "v2" &&
+          (content.reportSubjects ?? []).map(subject => (
+            <section key={subject.subjectId} className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
+              <h3 className="mb-4 text-lg font-bold">{subject.name}的课堂表现</h3>
+              <Entries
+                entries={(content.classroomPerformance ?? []).filter(item => item.subjectId === subject.subjectId)}
+                empty="老师暂未填写具体课堂表现。"
+              />
+            </section>
+          ))}
+        {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.some(item => !item.subjectId))) && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             {content.reportVersion !== "v2" && (
               <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
             )}
+            {content.reportVersion === "v2" && <h3 className="mb-4 font-bold">未分学科的原课堂表现</h3>}
             {content.classroomPerformance?.length ? (
               <div className="flex flex-wrap gap-2">
-                {content.classroomPerformance.map((item, index) => (
-                  <span key={index} className="rounded-full bg-violet-50 px-4 py-2 text-sm text-violet-800">
-                    {item.text}
-                  </span>
-                ))}
+                {content.classroomPerformance
+                  .filter(item => content.reportVersion !== "v2" || !item.subjectId)
+                  .map((item, index) => (
+                    <span key={index} className="rounded-full bg-violet-50 px-4 py-2 text-sm text-violet-800">
+                      {item.text}
+                    </span>
+                  ))}
               </div>
             ) : (
               <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>

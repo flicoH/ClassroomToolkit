@@ -1,4 +1,9 @@
 "use client";
+import {
+  ClassroomPerformanceFields,
+  performanceRatings,
+  performanceEntries
+} from "@/components/semester-reports/ClassroomPerformanceFields";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -95,16 +100,6 @@ type ScorePreview = {
 const base = "/api/semester-reports";
 const mobileReportControls =
   "max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11 max-md:[&_select]:h-11 max-md:[&_select]:min-w-0 max-md:[&_select]:max-w-full max-md:[&_select]:text-base max-md:[&_textarea]:text-base max-md:[&_input:not([type=checkbox]):not([type=file])]:h-11 max-md:[&_input]:text-base [&_input]:min-w-0 [&_input]:max-w-full";
-const performanceCategories = [
-  "课堂任务",
-  "看图表达",
-  "听指令反应",
-  "跟读发音",
-  "英语开口",
-  "课堂参与",
-  "专注情况",
-  "进入状态"
-];
 const labels: Record<string, string> = {
   queued: "排队中",
   generating: "生成中",
@@ -731,16 +726,6 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setLoadingReportId(null);
     }
   }
-  function setPerformance(category: string, value: string) {
-    if (!draft) return;
-    const other = (draft.classroomPerformance ?? []).filter(item => !item.text.startsWith(`${category} · `));
-    setDraft({
-      ...draft,
-      classroomPerformance: value.trim()
-        ? [...other, { text: `${category} · ${value.trim()}`, sourceRefs: ["teacher-review"] }]
-        : other
-    });
-  }
   function sourceLabel(reference: string) {
     const match = /^course:(.+):p(\d+)$/.exec(reference);
     if (match)
@@ -803,6 +788,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         current
           ? {
               ...current,
+              reportSubjects: (updated.content as ReportContent).reportSubjects,
               learningContents: [
                 ...(current.learningContents ?? []),
                 ...incoming.filter(item => !(current.learningContents ?? []).some(old => old.id === item.id))
@@ -847,7 +833,10 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               strengths: current.strengths.filter(keepEntry),
               areasToImprove: current.areasToImprove.filter(keepEntry),
               homeSuggestions: current.homeSuggestions.filter(keepEntry),
-              classroomPerformance: current.classroomPerformance?.filter(keepEntry)
+              reportSubjects: (updated.content as ReportContent).reportSubjects,
+              classroomPerformance: current.classroomPerformance?.filter(
+                item => item.subjectId !== subjectId && keepEntry(item)
+              )
             }
           : current
       );
@@ -1578,6 +1567,13 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                     : (subjects.find(subject => subject.id === subjectId)?.name ?? "")
                 }
                 learningContents={scopePreview?.learningContents ?? []}
+                subjects={
+                  isV2
+                    ? subjects
+                        .filter(subject => Object.hasOwn(subjectScopes, subject.id))
+                        .map(subject => ({ subjectId: subject.id, name: subject.name }))
+                    : undefined
+                }
                 reserveNextFocus={isV2}
                 value={studentFeedback[feedbackKey] ?? emptyStudentFeedback()}
                 onChange={patch =>
@@ -2007,30 +2003,25 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                       <p className="text-xs text-muted-foreground">
                         仅填写实际观察，如“基本完成”“能说词”“引导参与”；留空的项目不会展示。
                       </p>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {performanceCategories.map(original => {
-                          const category =
-                            original === "英语开口" &&
-                            !subjects.find(subject => subject.id === editing.subjectId)?.name.includes("英")
-                              ? "学科表达"
-                              : original;
-                          return (
-                            <label key={category} className="space-y-1 text-sm">
-                              {category}
-                              <Input
-                                maxLength={100}
-                                value={
-                                  (draft.classroomPerformance ?? [])
-                                    .find(item => item.text.startsWith(`${category} · `))
-                                    ?.text.slice(category.length + 3) ?? ""
-                                }
-                                placeholder="填写实际课堂表现"
-                                onChange={event => setPerformance(category, event.target.value)}
-                              />
-                            </label>
-                          );
-                        })}
-                      </div>
+                      <ClassroomPerformanceFields
+                        subjects={
+                          isV2
+                            ? (draft.reportSubjects ??
+                              (editing.courseSelections ?? []).map(selection => ({
+                                subjectId: selection.subjectId,
+                                name: subjects.find(subject => subject.id === selection.subjectId)?.name ?? "已选学科"
+                              })))
+                            : undefined
+                        }
+                        subject={subjects.find(subject => subject.id === editing.subjectId)?.name ?? ""}
+                        value={performanceRatings(draft.classroomPerformance ?? [])}
+                        onChange={ratings =>
+                          setDraft({
+                            ...draft,
+                            classroomPerformance: performanceEntries(ratings, draft.classroomPerformance ?? [])
+                          })
+                        }
+                      />
                     </section>
                     <label className="block space-y-1 text-sm font-medium">
                       老师想对你说
