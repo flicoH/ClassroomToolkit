@@ -34,3 +34,9 @@ test("production compilation excludes generated development files and preserves 
   const ignored = readFileSync(new URL("../.gitignore", import.meta.url), "utf8");
   assert.match(ignored, /^\.dev-dist\/$/m);
 });
+
+test("backend development polls source changes reliably on external volumes", () => {
+  const dev = config("tsconfig.dev.json");
+  assert.equal(dev.watchOptions.watchFile, ts.WatchFileKind.DynamicPriorityPolling);
+  assert.equal(dev.watchOptions.watchDirectory, ts.WatchDirectoryKind.DynamicPriorityPolling);
+});

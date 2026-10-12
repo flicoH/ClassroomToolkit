@@ -157,6 +157,22 @@ function changesFor(revision: ReportRevision | null) {
       ['summary', 'courseOverview'].includes(key) ? text : entries,
     );
   }
+  for (const [key, label] of Object.entries({
+    learningReadiness: '学习准备与课堂能力',
+    communicationCooperation: '表达沟通与同伴合作',
+    independenceRules: '生活自理与规则意识',
+    overallUnderstanding: '综合画像理解',
+  })) {
+    add(
+      label,
+      (
+        before?.content?.growthAssessment as Record<string, unknown> | undefined
+      )?.[key],
+      (
+        after.content?.growthAssessment as Record<string, unknown> | undefined
+      )?.[key],
+    );
+  }
   const performance = (state?: ReportVersion) => {
     const subjects = (state?.snapshot.reportSubjects ?? []) as Array<{
       subjectId: string;
@@ -188,13 +204,30 @@ function changesFor(revision: ReportRevision | null) {
     );
   const oldGoals = goals(before);
   const newGoals = goals(after);
+  const manualGoal = (item?: Record<string, unknown>) =>
+    Boolean(
+      item &&
+      (String(item.id).startsWith('manual-') ||
+        (Array.isArray(item.sourceRefs) &&
+          item.sourceRefs.some(
+            (ref) =>
+              typeof ref === 'string' && ref.startsWith('teacher-course:'),
+          ))),
+    );
   const goalText = (value: unknown) => {
     if (!value) return '未包含此学习内容';
     const item = value as Record<string, unknown>;
-    return `${text(item.section)}\n${text(item.text)}\n掌握情况：${mastery[String(item.mastery)] ?? '待评价'}`;
+    return `${text(item.section)}\n${text(item.text)}${manualGoal(item) ? '' : `\n掌握情况：${mastery[String(item.mastery)] ?? '待评价'}`}`;
   };
   for (const id of new Set([...oldGoals.keys(), ...newGoals.keys()]))
-    add('学习内容与掌握评价', oldGoals.get(id), newGoals.get(id), goalText);
+    add(
+      manualGoal(newGoals.get(id) ?? oldGoals.get(id))
+        ? '学习内容'
+        : '学习内容与掌握评价',
+      oldGoals.get(id),
+      newGoals.get(id),
+      goalText,
+    );
   add('报告学科', before?.snapshot.subjectName, after.snapshot.subjectName);
   add('授课范围', before?.courseScope, after.courseScope);
   if (

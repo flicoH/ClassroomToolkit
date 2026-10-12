@@ -1,7 +1,8 @@
 "use client";
 
+import { GrowthAssessmentFields, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ClassroomPerformanceFields, type PerformanceRating } from "./ClassroomPerformanceFields";
-import { masteryLabels, type LearningContent } from "./LearningReportView";
+import { showsLearningMastery, masteryLabels, type LearningContent } from "./LearningReportView";
 
 export type StudentReportFeedback = {
   learningMastery: Record<string, LearningContent["mastery"]>;
@@ -10,6 +11,7 @@ export type StudentReportFeedback = {
   highlight: string;
   nextFocus: string;
   homePractice: string;
+  growthAssessment?: GrowthAssessment;
 };
 export function emptyStudentFeedback(): StudentReportFeedback {
   return {
@@ -31,7 +33,7 @@ export function StudentFeedbackForm({
   subjects,
   reserveNextFocus = false
 }: {
-  subjects?: Array<{ subjectId: string; name: string }>;
+  subjects?: import("./performance-config").PerformanceSubject[];
   reserveNextFocus?: boolean;
   student: { id: string; name: string; className: string };
   subject: string;
@@ -52,42 +54,61 @@ export function StudentFeedbackForm({
           </p>
         </div>
       </div>
-      <section className="space-y-3">
-        <h4 className="font-semibold">本期学习内容与掌握</h4>
-        <p className="text-xs text-muted-foreground">选择单元或课时后列出对应内容，请按实际表现逐项评价。</p>
-        <div className="space-y-2 md:max-h-96 md:overflow-y-auto">
-          {learningContents.map((item, index) => (
-            <div key={item.id} className="rounded-xl border bg-slate-50/50 p-3">
-              <div className="mb-2 flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between">
-                <span className="min-w-0 break-words text-xs font-semibold text-indigo-600">{item.section}</span>
-                <select
-                  aria-label={`${student.name} 学习内容 ${index + 1} 掌握情况`}
-                  className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm md:w-auto"
-                  value={value.learningMastery[item.id] ?? "unassessed"}
-                  onChange={event =>
-                    onChange({
-                      learningMastery: {
-                        ...value.learningMastery,
-                        [item.id]: event.target.value as LearningContent["mastery"]
+      {subjects === undefined && (
+        <section className="space-y-3">
+          <h4 className="font-semibold">
+            本期学习内容{!learningContents.length || learningContents.some(showsLearningMastery) ? "与掌握" : ""}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {learningContents.some(showsLearningMastery)
+              ? "PDF 学习内容请按实际表现逐项评价；手填内容按教学记录展示。"
+              : "手填内容按教学记录展示。"}
+          </p>
+          <div className="space-y-2 md:max-h-96 md:overflow-y-auto">
+            {learningContents.map((item, index) => (
+              <div key={item.id} className="rounded-xl border bg-slate-50/50 p-3">
+                <div className="mb-2 flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                  <span className="min-w-0 break-words text-xs font-semibold text-indigo-600">{item.section}</span>
+                  {showsLearningMastery(item) && (
+                    <select
+                      aria-label={`${student.name} 学习内容 ${index + 1} 掌握情况`}
+                      className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm md:w-auto"
+                      value={value.learningMastery[item.id] ?? "unassessed"}
+                      onChange={event =>
+                        onChange({
+                          learningMastery: {
+                            ...value.learningMastery,
+                            [item.id]: event.target.value as LearningContent["mastery"]
+                          }
+                        })
                       }
-                    })
-                  }
-                >
-                  {Object.entries(masteryLabels).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                    >
+                      {Object.entries(masteryLabels).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
+                  {item.text}
+                </p>
               </div>
-              <p className="whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">{item.text}</p>
-            </div>
-          ))}
-        </div>
-        {!learningContents.length && (
-          <p className="text-sm text-muted-foreground">请先选择授课范围，等待学习内容加载。</p>
-        )}
-      </section>
+            ))}
+          </div>
+          {!learningContents.length && (
+            <p className="text-sm text-muted-foreground">请先选择授课范围，等待学习内容加载。</p>
+          )}
+        </section>
+      )}
+      {subjects !== undefined && (
+        <GrowthAssessmentFields
+          studentName={student.name}
+          value={value.growthAssessment}
+          onChange={growthAssessment => onChange({ growthAssessment })}
+        />
+      )}
       <ClassroomPerformanceFields
         subjects={subjects}
         subject={subject}
@@ -126,16 +147,18 @@ export function StudentFeedbackForm({
           />
         </label>
       </div>
-      <label className="block space-y-2 text-sm font-semibold">
-        回家可以这样练
-        <textarea
-          className="min-h-28 w-full rounded-md border bg-background p-3 text-sm font-normal"
-          maxLength={800}
-          value={value.homePractice}
-          placeholder="填写练习内容、方法和建议时长，例如每天 5—10 分钟跟读与亲子问答。"
-          onChange={event => onChange({ homePractice: event.target.value })}
-        />
-      </label>
+      {subjects === undefined && (
+        <label className="block space-y-2 text-sm font-semibold">
+          回家可以这样练
+          <textarea
+            className="min-h-28 w-full rounded-md border bg-background p-3 text-sm font-normal"
+            maxLength={800}
+            value={value.homePractice}
+            placeholder="填写练习内容、方法和建议时长，例如每天 5—10 分钟跟读与亲子问答。"
+            onChange={event => onChange({ homePractice: event.target.value })}
+          />
+        </label>
+      )}
     </div>
   );
 }

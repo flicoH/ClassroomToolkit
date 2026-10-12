@@ -60,6 +60,11 @@ import {
   reportVersionToken,
 } from './report-history';
 
+import {
+  defaultPerformanceConfig,
+  parsePerformanceConfig,
+} from './performance-config';
+
 const periods = ['week', 'month', 'term'] as const;
 
 @Injectable()
@@ -91,10 +96,15 @@ export class SemesterReportsService {
     });
   }
   async listSubjects() {
-    return this.subjects.find({
+    const subjects = await this.subjects.find({
       where: { teacherId: this.teacher.teacherId, enabled: true },
       order: { name: 'ASC' },
     });
+    return subjects.map((subject) => ({
+      ...subject,
+      performanceConfig:
+        subject.performanceConfig ?? defaultPerformanceConfig(),
+    }));
   }
 
   async createTerm(input: Record<string, string>) {
@@ -124,8 +134,15 @@ export class SemesterReportsService {
         teacherId: this.teacher.teacherId,
         name: input.name.trim().slice(0, 100),
         enabled: true,
+        performanceConfig: defaultPerformanceConfig(),
       }),
     );
+  }
+
+  async updateSubjectPerformance(id: string, input: Record<string, unknown>) {
+    const subject = await this.requireSubject(id);
+    const performanceConfig = parsePerformanceConfig(input.performanceConfig);
+    return this.subjects.save({ ...subject, performanceConfig });
   }
 
   async listDocuments() {
@@ -370,11 +387,14 @@ export class SemesterReportsService {
       throw new BadRequestException(
         '周报和月报请填写本周期已授课章节或教学范围',
       );
-    if (!documents.length)
+    if (input.reportVersion !== 'v2' && !documents.length)
       throw new BadRequestException('请先上传并确认所选学科的课程 PDF');
     if (documents.length > 20)
       throw new BadRequestException('单次最多使用 20 份课程 PDF');
-    if (!selectedCourseDocuments.some((document) => document.pages.length))
+    if (
+      input.reportVersion !== 'v2' &&
+      !selectedCourseDocuments.some((document) => document.pages.length)
+    )
       throw new BadRequestException(
         '所填授课范围未匹配到课程 PDF 页面，请检查章节名称',
       );
@@ -440,6 +460,7 @@ export class SemesterReportsService {
       studentCourses.some((courses) =>
         selections!.some(
           (selection) =>
+            selection.manualContent === undefined &&
             !courses.some(
               (course) =>
                 course.pages.length &&
@@ -467,10 +488,12 @@ export class SemesterReportsService {
         generationMode,
         learningContents: isV2
           ? learningContents.filter((item) =>
-              item.sourceRefs.every((ref) =>
-                studentCourses[index]!.some((course) =>
-                  ref.startsWith(`course:${course.id}:`),
-                ),
+              item.sourceRefs.every(
+                (ref) =>
+                  ref.startsWith('teacher-course:') ||
+                  studentCourses[index]!.some((course) =>
+                    ref.startsWith(`course:${course.id}:`),
+                  ),
               ),
             )
           : learningContents,
@@ -496,6 +519,9 @@ export class SemesterReportsService {
           })),
         })),
         allowedReferences: [
+          ...(selections ?? [])
+            .filter((selection) => selection.manualContent)
+            .map((selection) => `teacher-course:${selection.subjectId}`),
           ...studentCourses[index]!.flatMap((d) =>
             d.pages.map((page) => `course:${d.id}:p${page.page}`),
           ),
@@ -844,6 +870,9 @@ export class SemesterReportsService {
         allowedReferences: [
           ...new Set([
             ...((row.snapshot.allowedReferences ?? []) as string[]),
+            ...additions
+              .filter((selection) => selection.manualContent)
+              .map((selection) => `teacher-course:${selection.subjectId}`),
             ...courses.selected.flatMap((doc) =>
               doc.pages.map((page) => `course:${doc.id}:p${page.page}`),
             ),
@@ -910,7 +939,10 @@ export class SemesterReportsService {
       );
       const isRemovedReference = (ref: string) => {
         const match = /^course:(.+):p\d+$/.exec(ref);
-        return Boolean(match && removedDocuments.has(match[1]!));
+        return (
+          ref === `teacher-course:${subjectId}` ||
+          Boolean(match && removedDocuments.has(match[1]!))
+        );
       };
       const removedReferences = (
         (row.snapshot.allowedReferences ?? []) as string[]
@@ -932,7 +964,7 @@ export class SemesterReportsService {
       const courseScope = selections
         .map(
           (item, index) =>
-            `${names[index]}：${item.courseScope || '本学期全部内容'}`,
+            `${names[index]}：${item.manualContent !== undefined ? item.manualContent || '教学内容待补充' : item.courseScope || '本学期全部内容'}`,
         )
         .join('；');
       const originalGoals = (row.snapshot.learningContents ??
@@ -1305,6 +1337,10 @@ export class SemesterReportsService {
       for (const page of doc.pages ?? [])
         sourceLabels[`course:${doc.id}:p${page.page}`] =
           `${doc.fileName} 第 ${page.page} 页`;
+    for (const subject of reportVisualsForSnapshot(report.snapshot ?? {})
+      .reportSubjects ?? [])
+      sourceLabels[`teacher-course:${subject.subjectId}`] =
+        `${subject.name}：教师填写的教学内容`;
     for (const record of snapshot.scoreSummary?.records ?? [])
       sourceLabels[`score:${record.id}`] =
         `课堂评价：${record.label}${record.delta > 0 ? ` +${record.delta}` : ` ${record.delta}`}`;
@@ -1580,7 +1616,7 @@ export class SemesterReportsService {
         : found.filter(
             (doc) => doc.classId === '*' || doc.classId === studentClassId,
           );
-    const groups = selections ?? [
+    const groups: CourseSelection[] = selections ?? [
       {
         subjectId,
         courseScope: String(input.courseScope ?? '')
@@ -1591,16 +1627,24 @@ export class SemesterReportsService {
     const documents = selections
       ? available.filter((document) =>
           selections.some(
-            (selection) => selection.subjectId === document.subjectId,
+            (selection) =>
+              selection.manualContent === undefined &&
+              selection.subjectId === document.subjectId,
           ),
         )
       : available;
     const selected = groups.flatMap((selection, index) => {
+      if (selection.manualContent !== undefined) return [];
+
       const sources = selections
         ? documents.filter(
             (document) => document.subjectId === selection.subjectId,
           )
         : documents;
+      if (selections && !sources.length)
+        throw new BadRequestException(
+          `${subjects[index]?.name ?? '所选学科'}没有已确认课程 PDF，请填写教学内容`,
+        );
       const pages = selectCoursePages(sources, selection.courseScope, period);
       if (selections && !pages.some((document) => document.pages.length))
         throw new BadRequestException(
@@ -1611,6 +1655,23 @@ export class SemesterReportsService {
         : pages;
     });
     const learningContents = groups.flatMap((selection, index) => {
+      // Teacher-authored goals have stable IDs and subject-specific provenance;
+      // they are teaching content, never evidence of the student's mastery.
+      if (selection.manualContent !== undefined)
+        return selection.manualContent
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((text, line) => ({
+            id: `manual-${createHash('sha256')
+              .update(JSON.stringify([selection.subjectId, text, line]))
+              .digest('hex')
+              .slice(0, 24)}`,
+            section: `${subjects[index]!.name.slice(0, 60)} · 教师填写`,
+            text,
+            sourceRefs: [`teacher-course:${selection.subjectId}`],
+          }));
+
       const sources = selections
         ? documents.filter(
             (document) => document.subjectId === selection.subjectId,
@@ -1644,7 +1705,7 @@ export class SemesterReportsService {
         ? selections
             .map(
               (selection, index) =>
-                `${subjects[index]!.name}：${selection.courseScope || '本学期全部内容'}`,
+                `${subjects[index]!.name}：${selection.manualContent !== undefined ? selection.manualContent || '教学内容待补充' : selection.courseScope || '本学期全部内容'}`,
             )
             .join('；')
         : groups[0]!.courseScope,

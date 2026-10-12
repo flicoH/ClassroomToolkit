@@ -3,5 +3,10 @@
   "compilerOptions": {
     "outDir": "./.dev-dist",
     "tsBuildInfoFile": "./.dev-dist/tsconfig.dev.tsbuildinfo"
+  },
+  "watchOptions": {
+    "watchFile": "dynamicPriorityPolling",
+    "watchDirectory": "dynamicPriorityPolling",
+    "excludeDirectories": ["**/node_modules", "**/.git", "dist", ".dev-dist"]
   }
 }

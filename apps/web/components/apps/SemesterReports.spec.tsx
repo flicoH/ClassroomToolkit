@@ -89,6 +89,177 @@ describe("SemesterReports mobile workflow", () => {
     return [...container.querySelectorAll("button")].find(button => button.textContent?.includes("生成 1 份报告"))!;
   }
 
+  it("saves per-subject configuration, keeps edits after failure and generates only chosen ratings", async () => {
+    vi.useFakeTimers();
+    try {
+      api.post.mockImplementation(async (url: string) =>
+        url.endsWith("generate")
+          ? { reports: [] }
+          : { totalPages: 0, learningContents: [], documents: [], totalLearningContents: 0, scoreSummaries: [] }
+      );
+      const generate = await readyV2Generation();
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      const input = container.querySelector<HTMLTextAreaElement>('[aria-label="阅读 课程任务下拉选项"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "完成挑战\n需要支持");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const save = [...container.querySelectorAll("button")].find(button => button.textContent === "保存课堂表现配置")!;
+      api.patch.mockRejectedValueOnce(new Error("配置保存失败"));
+      await act(async () => save.click());
+      expect(container.querySelector('[role="status"]')?.textContent).toContain("配置保存失败");
+      expect(input.value).toBe("完成挑战\n需要支持");
+      api.patch.mockImplementation(async (_url: string, body: { performanceConfig: unknown }) => ({
+        id: "subject",
+        name: "阅读",
+        performanceConfig: body.performanceConfig
+      }));
+      await act(async () => save.click());
+      expect(api.patch).toHaveBeenLastCalledWith(
+        "/api/semester-reports/report-subjects/subject/performance-config",
+        expect.objectContaining({
+          performanceConfig: expect.arrayContaining([{ label: "课程任务", options: ["完成挑战", "需要支持"] }])
+        })
+      );
+      const task = container.querySelector<HTMLSelectElement>('[aria-label="阅读 课程任务"]')!;
+      expect([...task.options].map(option => option.value)).toEqual(["", "完成挑战", "需要支持"]);
+      act(() => {
+        task.value = "完成挑战";
+        task.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await act(async () => generate.click());
+      expect(api.post).toHaveBeenLastCalledWith(
+        "/api/semester-reports/reports/generate",
+        expect.objectContaining({
+          studentFeedback: [
+            expect.objectContaining({
+              classroomPerformance: [{ subjectId: "subject", label: "课程任务", value: "完成挑战" }]
+            })
+          ]
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("persists consecutive custom additions and shows them only for their subject without a second save", async () => {
+    vi.useFakeTimers();
+    try {
+      const original = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) =>
+        url.endsWith("report-subjects")
+          ? [
+              { id: "subject", name: "阅读" },
+              { id: "math", name: "数学" }
+            ]
+          : original(url)
+      );
+      api.post.mockResolvedValue({
+        totalPages: 0,
+        learningContents: [],
+        documents: [],
+        totalLearningContents: 0,
+        scoreSummaries: []
+      });
+      api.patch.mockImplementation(async (url: string, body: { performanceConfig: unknown }) => ({
+        id: url.includes("/math/") ? "math" : "subject",
+        name: url.includes("/math/") ? "数学" : "阅读",
+        performanceConfig: body.performanceConfig
+      }));
+      await readyV2Generation();
+      act(() => container.querySelector<HTMLInputElement>('[aria-label="选择数学课程"]')!.click());
+      const subject = container.querySelector<HTMLSelectElement>('[aria-label="配置课堂表现的学科"]')!;
+      act(() => {
+        subject.value = "math";
+        subject.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      function type(label: string, value: string) {
+        const input = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!;
+        act(() => {
+          Object.getOwnPropertyDescriptor(
+            input instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype,
+            "value"
+          )!.set!.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      for (const label of ["同伴协作", "课堂表达"]) {
+        type("新增课堂表现名称", label);
+        type("新增课堂表现下拉选项", "主动完成\n需要引导");
+        await act(async () =>
+          [...container.querySelectorAll("button")].find(button => button.textContent === "添加课堂表现项目")!.click()
+        );
+        expect(container.querySelector<HTMLSelectElement>(`[aria-label="数学 ${label}"]`)?.options.length).toBe(3);
+        expect(container.querySelector(`[aria-label="阅读 ${label}"]`)).toBeNull();
+      }
+      expect(api.patch).toHaveBeenCalledTimes(2);
+      expect(api.patch).toHaveBeenLastCalledWith(
+        "/api/semester-reports/report-subjects/math/performance-config",
+        expect.objectContaining({
+          performanceConfig: expect.arrayContaining([
+            { label: "同伴协作", options: ["主动完成", "需要引导"] },
+            { label: "课堂表达", options: ["主动完成", "需要引导"] }
+          ])
+        })
+      );
+      act(() => {
+        subject.value = "subject";
+        subject.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      act(() => {
+        subject.value = "math";
+        subject.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(container.querySelector('[aria-label="数学 同伴协作下拉选项"]')).toBeTruthy();
+      expect(container.querySelector('[aria-label="数学 课堂表达下拉选项"]')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not overwrite saved subject fields with an older polling response", async () => {
+    vi.useFakeTimers();
+    try {
+      const original = api.get.getMockImplementation()!;
+      let reads = 0;
+      let resolveSubjects!: (value: Array<{ id: string; name: string }>) => void;
+      api.get.mockImplementation(async (url: string) => {
+        if (url.endsWith("report-subjects") && ++reads === 2)
+          return new Promise(resolve => {
+            resolveSubjects = resolve;
+          });
+        if (url.endsWith("/reports"))
+          return [{ id: "queued", reportVersion: "v2", status: "queued", studentName: "小明", content: null }];
+        return original(url);
+      });
+      api.post.mockResolvedValue({ totalPages: 0, learningContents: [], documents: [], scoreSummaries: [] });
+      api.patch.mockImplementation(async (_url: string, body: { performanceConfig: unknown }) => ({
+        id: "subject",
+        name: "阅读",
+        performanceConfig: body.performanceConfig
+      }));
+      await readyV2Generation();
+      await act(async () => vi.advanceTimersByTimeAsync(2500));
+      const input = container.querySelector<HTMLTextAreaElement>('[aria-label="阅读 课程任务下拉选项"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "新评价\n需要支持");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () =>
+        [...container.querySelectorAll("button")].find(button => button.textContent === "保存课堂表现配置")!.click()
+      );
+      await act(async () => resolveSubjects([{ id: "subject", name: "阅读" }]));
+      expect(
+        [...container.querySelector<HTMLSelectElement>('[aria-label="阅读 课程任务"]')!.options].map(
+          option => option.value
+        )
+      ).toEqual(["", "新评价", "需要支持"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["v1", "v2"] as const)(
     "previews the period-end pet instead of points or the live pet in %s feedback",
     async version => {
@@ -122,7 +293,92 @@ describe("SemesterReports mobile workflow", () => {
     }
   );
 
-  it.each(["", "Unit1"])("generates v2 reports after the matching multi-subject preview, scope=%s", async scope => {
+  it("generates a v2 report with no PDF after the teacher fills the selected subject's content", async () => {
+    vi.useFakeTimers();
+    try {
+      const original = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async url =>
+        url === "/api/pet-points"
+          ? { students: [{ id: "student", name: "小明", className: "一班", classId: "class" }] }
+          : url.endsWith("course-documents")
+            ? []
+            : original(url)
+      );
+      api.post.mockImplementation(async url =>
+        url.endsWith("preview-input")
+          ? { scoreSummaries: [] }
+          : url.endsWith("preview-scope")
+            ? {
+                totalPages: 0,
+                documents: [],
+                totalLearningContents: 1,
+                learningContents: [
+                  {
+                    id: "manual",
+                    section: "阅读 · 教师填写",
+                    text: "认识汉字并朗读短句",
+                    sourceRefs: ["teacher-course:subject"]
+                  }
+                ]
+              }
+            : { reports: [] }
+      );
+      await act(async () => root.render(<SemesterReports version="v2" />));
+      act(() => container.querySelector<HTMLInputElement>('[aria-label="选择 一班 小明"]')!.click());
+      act(() => container.querySelector<HTMLInputElement>('[aria-label="选择阅读课程"]')!.click());
+      const generate = [...container.querySelectorAll("button")].find(button =>
+        button.textContent?.includes("生成 1 份报告")
+      )!;
+      expect(generate.disabled).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(api.post).toHaveBeenCalledWith(
+        expect.stringContaining("preview-scope"),
+        expect.objectContaining({ courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }] })
+      );
+      expect(generate.disabled).toBe(false);
+      expect(container.querySelector('[aria-label="阅读教学内容"]')).toBeNull();
+      expect(container.textContent).toContain("阅读的课堂表现");
+      expect(container.textContent).not.toContain("回家可以这样练");
+      const growth = container.querySelector<HTMLTextAreaElement>('[aria-label="小明 学习准备与课堂能力"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(growth, "能准备学习材料");
+        growth.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => generate.click());
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/semester-reports/reports/generate",
+        expect.objectContaining({
+          courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }],
+          studentFeedback: expect.arrayContaining([
+            expect.objectContaining({
+              studentId: "student",
+              growthAssessment: expect.objectContaining({ learningReadiness: "能准备学习材料" })
+            })
+          ])
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("v2 hides PDF setup and curriculum inputs even when confirmed PDFs exist", async () => {
+    api.post.mockResolvedValue({
+      totalPages: 0,
+      learningContents: [],
+      totalLearningContents: 0,
+      documents: [],
+      scoreSummaries: []
+    });
+    await readyV2Generation();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(container.querySelector('[aria-label="阅读授课范围"]')).toBeNull();
+    expect(container.querySelector('[aria-label="阅读教学内容"]')).toBeNull();
+    expect(container.querySelector('[aria-label="阅读 Unit1"]')).toBeNull();
+    expect(container.textContent).not.toContain("学习内容与掌握");
+  });
+  it("generates v2 reports from checked subjects without curriculum choices", async () => {
+    const scope = "";
     vi.useFakeTimers();
     try {
       api.post.mockImplementation(async (url: string) => {
@@ -150,7 +406,7 @@ describe("SemesterReports mobile workflow", () => {
         };
       });
       const generate = await readyV2Generation();
-      if (scope) act(() => container.querySelector<HTMLButtonElement>('[aria-label="阅读 Unit1"]')!.click());
+
       expect(generate.disabled).toBe(true);
       await act(async () => vi.advanceTimersByTimeAsync(450));
       expect(generate.disabled).toBe(false);
@@ -165,7 +421,7 @@ describe("SemesterReports mobile workflow", () => {
           reportVersion: "v2",
           period: "term",
           studentIds: ["student"],
-          courseSelections: [{ subjectId: "subject", courseScope: scope }]
+          courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }]
         })
       );
       expect(container.querySelector('[role="status"]')?.textContent).toContain("已提交 1 份报告");
@@ -242,7 +498,8 @@ describe("SemesterReports mobile workflow", () => {
       });
       const generate = await readyV2Generation();
       await act(async () => vi.advanceTimersByTimeAsync(450));
-      act(() => container.querySelector<HTMLButtonElement>('[aria-label="阅读 Unit1"]')!.click());
+      act(() => container.querySelector<HTMLInputElement>('[aria-label="选择阅读课程"]')!.click());
+      act(() => container.querySelector<HTMLInputElement>('[aria-label="选择阅读课程"]')!.click());
       expect(generate.disabled).toBe(true);
       await act(async () => vi.advanceTimersByTimeAsync(450));
       expect(container.textContent).toContain("课程预览无权限");
@@ -250,35 +507,35 @@ describe("SemesterReports mobile workflow", () => {
       expect(generate.disabled).toBe(true);
       expect(container.textContent).not.toContain("过时内容");
       act(() =>
-        [...container.querySelectorAll("button")].find(button => button.textContent === "重新加载学习内容")!.click()
+        [...container.querySelectorAll("button")].find(button => button.textContent === "重新确认学科")!.click()
       );
       await act(async () => vi.advanceTimersByTimeAsync(450));
       expect(generate.disabled).toBe(false);
-      expect(container.textContent).toContain("当前选课内容");
+      expect(container.textContent).not.toContain("当前选课内容");
     } finally {
       vi.useRealTimers();
     }
   });
-  it.each([
-    { totalPages: 0, totalLearningContents: 0 },
-    { totalPages: 1, totalLearningContents: 501 }
-  ])("blocks v2 generation for unusable previews: %j", async limits => {
-    vi.useFakeTimers();
-    try {
-      api.post.mockImplementation(async (url: string) =>
-        url.endsWith("preview-input")
-          ? { scoreSummaries: [] }
-          : { courseScope: "阅读：本学期全部内容", documents: [], learningContents: [], ...limits }
-      );
-      const generate = await readyV2Generation();
-      await act(async () => vi.advanceTimersByTimeAsync(450));
-      expect(generate.disabled).toBe(true);
-      act(() => generate.click());
-      expect(api.post).not.toHaveBeenCalledWith("/api/semester-reports/reports/generate", expect.anything());
-    } finally {
-      vi.useRealTimers();
+  it.each([{ totalPages: 1, totalLearningContents: 501 }])(
+    "blocks v2 generation for unusable previews: %j",
+    async limits => {
+      vi.useFakeTimers();
+      try {
+        api.post.mockImplementation(async (url: string) =>
+          url.endsWith("preview-input")
+            ? { scoreSummaries: [] }
+            : { courseScope: "阅读：本学期全部内容", documents: [], learningContents: [], ...limits }
+        );
+        const generate = await readyV2Generation();
+        await act(async () => vi.advanceTimersByTimeAsync(450));
+        expect(generate.disabled).toBe(true);
+        act(() => generate.click());
+        expect(api.post).not.toHaveBeenCalledWith("/api/semester-reports/reports/generate", expect.anything());
+      } finally {
+        vi.useRealTimers();
+      }
     }
-  });
+  );
   it("v2 has a separate entry, explicit subject scopes and version-isolated reports", async () => {
     api.get.mockImplementation(async (url: string) => {
       if (url.endsWith("report-terms"))
@@ -303,7 +560,7 @@ describe("SemesterReports mobile workflow", () => {
     await act(async () => root.render(<SemesterReports version="v2" />));
     expect(container.querySelector('nav[aria-label="学期报告v2导航"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="报告学科"]')).toBeNull();
-    expect(container.textContent).toContain("只显示已勾选学科的学习内容");
+    expect(container.textContent).toContain("无需上传 PDF 或选择学科内容");
     expect(container.textContent).toContain("新报告学生");
     expect(container.textContent).not.toContain("旧报告学生");
     await act(async () => {
@@ -360,7 +617,7 @@ describe("SemesterReports mobile workflow", () => {
     });
     expect(api.post).toHaveBeenLastCalledWith(
       "/api/semester-reports/course-documents/preview-scope",
-      expect.objectContaining({ courseSelections: [{ subjectId: "english", courseScope: "" }] })
+      expect.objectContaining({ courseSelections: [{ subjectId: "english", courseScope: "", manualContent: "" }] })
     );
     act(() => math.click());
     act(() => english.click());
@@ -369,7 +626,7 @@ describe("SemesterReports mobile workflow", () => {
     });
     expect(api.post).toHaveBeenLastCalledWith(
       "/api/semester-reports/course-documents/preview-scope",
-      expect.objectContaining({ courseSelections: [{ subjectId: "math", courseScope: "" }] })
+      expect.objectContaining({ courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }] })
     );
     expect(container.querySelector<HTMLTextAreaElement>('textarea[placeholder^="填写实际观察与鼓励话语"]')!.value).toBe(
       "保留的老师寄语"
@@ -646,7 +903,9 @@ describe("SemesterReports mobile workflow", () => {
       });
       await act(async () => root.render(<SemesterReports version={version} />));
       await act(async () => button("预览 / 编辑").click());
-      const message = document.querySelector('[role="dialog"]')!.querySelector<HTMLTextAreaElement>("textarea")!;
+      const message = document
+        .querySelector('[role="dialog"]')!
+        .querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')!;
       act(() => {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(message, "未保存寄语");
         message.dispatchEvent(new Event("input", { bubbles: true }));
@@ -681,9 +940,11 @@ describe("SemesterReports mobile workflow", () => {
       );
       expect((api.post.mock.calls.at(-1)![1] as FormData).get("file")).toBe(boundaryFile);
       expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')?.src).toContain("base64,new");
-      expect(document.querySelector('[role="dialog"]')!.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
-        "未保存寄语"
-      );
+      expect(
+        document
+          .querySelector('[role="dialog"]')!
+          .querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')?.value
+      ).toBe("未保存寄语");
       api.delete.mockResolvedValueOnce({ ...report, content: { ...report.content, classroomPhoto: null } });
       await act(async () => button("移除课堂照片").click());
       filePicker.mockClear();
@@ -695,6 +956,45 @@ describe("SemesterReports mobile workflow", () => {
       expect(api.patch.mock.calls.at(-1)?.[1].content).not.toHaveProperty("classroomPhoto");
     }
   );
+
+  it("hides all curriculum controls in v2 while preserving saved content", async () => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    Object.assign(report, { reportVersion: "v2" });
+    Object.assign(report.content, {
+      reportVersion: "v2",
+      learningContents: [
+        {
+          id: "manual-one",
+          section: "科学 · 教师填写",
+          text: "观察叶子",
+          mastery: "mastered",
+          sourceRefs: ["teacher-course:science"]
+        },
+        {
+          id: "pdf-one",
+          section: "英语 · Unit1",
+          text: "跟读英语",
+          mastery: "practicing",
+          sourceRefs: ["course:doc:p1"]
+        }
+      ]
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    await act(async () => button("预览 / 编辑").click());
+    const modal = document.querySelector('[role="dialog"]')!;
+    expect(modal.querySelector('[aria-label="科学 · 教师填写 学习内容 1 掌握情况"]')).toBeNull();
+    expect(modal.querySelector('[aria-label="英语 · Unit1 学习内容 2 掌握情况"]')).toBeNull();
+    api.patch.mockRejectedValueOnce(new Error("保存失败"));
+    await act(async () => button("保存草稿").click());
+    expect(modal.textContent).not.toContain("观察叶子");
+    expect(api.patch.mock.calls.at(-1)![1].content.learningContents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "manual-one", text: "观察叶子", mastery: "mastered" }),
+        expect.objectContaining({ id: "pdf-one", mastery: "practicing" })
+      ])
+    );
+  });
 
   it("adds and removes draft subjects, preserving unsaved edits and allowing retries", async () => {
     const originalGet = api.get.getMockImplementation()!;
@@ -713,7 +1013,7 @@ describe("SemesterReports mobile workflow", () => {
       period: "term",
       termId: "term",
       status: "draft",
-      courseSelections: [{ subjectId: "english", courseScope: "" }],
+      courseSelections: [{ subjectId: "english", courseScope: "", manualContent: "" }],
       content: {
         summary: "原寄语",
         courseOverview: "课程",
@@ -782,29 +1082,24 @@ describe("SemesterReports mobile workflow", () => {
     });
     await act(async () => button("添加到当前报告").click());
     expect(api.post).toHaveBeenLastCalledWith("/api/semester-reports/reports/report/course-subjects", {
-      courseSelections: [{ subjectId: "math", courseScope: "" }]
+      courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }]
     });
     expect(modal.querySelector('[aria-label="选择数学课程"]')).toBeNull();
     expect(modal.textContent).toContain("所有学科均已添加到当前报告");
-    expect(modal.textContent).toContain("新增数学内容");
+    expect(modal.textContent).not.toContain("新增数学内容");
     expect(modal.querySelector<HTMLInputElement>('[aria-label="英语 课堂参与"]')!.value).toBe("主动参与");
-    const mathPerformance = modal.querySelector<HTMLInputElement>('[aria-label="数学 课堂参与"]')!;
+    const mathPerformance = modal.querySelector<HTMLSelectElement>('[aria-label="数学 课堂参与"]')!;
     expect(mathPerformance.value).toBe("");
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(mathPerformance, "需要鼓励");
-      mathPerformance.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(mathPerformance, "需要鼓励");
+      mathPerformance.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(message.value).toBe("未保存寄语");
-    const rating = modal.querySelector<HTMLSelectElement>('[aria-label="英语 学习内容 1 掌握情况"]')!;
-    act(() => {
-      rating.value = "practicing";
-      rating.dispatchEvent(new Event("change", { bubbles: true }));
-    });
     api.delete.mockRejectedValueOnce(new Error("删除失败"));
     await act(async () => modal.querySelector<HTMLButtonElement>('[aria-label="删除数学学科"]')!.click());
     expect(modal.textContent).toContain("删除失败");
     expect(mathPerformance.value).toBe("需要鼓励");
-    expect(modal.textContent).toContain("新增数学内容");
+    expect(modal.textContent).not.toContain("新增数学内容");
     expect(message.value).toBe("未保存寄语");
     api.delete.mockResolvedValueOnce({
       report: { ...report, subjectName: "英语", content: { ...report.content, learningContents: [oldGoal] } },
@@ -821,7 +1116,7 @@ describe("SemesterReports mobile workflow", () => {
     expect(api.patch.mock.calls.at(-1)![1].content).toMatchObject({
       classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }],
       summary: "未保存寄语",
-      learningContents: [expect.objectContaining({ id: "old", mastery: "practicing" })]
+      learningContents: [expect.objectContaining({ id: "old", mastery: "mastered" })]
     });
   });
 
@@ -887,7 +1182,7 @@ describe("SemesterReports mobile workflow", () => {
       );
       await act(async () => button("预览 / 编辑").click());
       const modal = document.querySelector('[role="dialog"]')!;
-      const input = modal.querySelector<HTMLTextAreaElement>("textarea")!;
+      const input = modal.querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')!;
       act(() => {
         input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
         input.focus();

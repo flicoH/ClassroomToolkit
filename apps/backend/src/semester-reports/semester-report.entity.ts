@@ -1,3 +1,4 @@
+import type { PerformanceField } from './performance-config';
 import {
   Column,
   CreateDateColumn,
@@ -22,6 +23,8 @@ export class ReportSubjectEntity {
   @Column({ name: 'teacher_id', length: 64 }) teacherId!: string;
   @Column({ length: 100 }) name!: string;
   @Column({ default: true }) enabled!: boolean;
+  @Column({ name: 'performance_config', type: 'json', nullable: true })
+  performanceConfig!: PerformanceField[] | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 

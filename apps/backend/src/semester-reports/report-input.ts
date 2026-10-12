@@ -11,6 +11,41 @@ export type ReportDetails = {
   lessonNumber: number | null;
   lessonDate: string | null;
 };
+export type GrowthAssessment = {
+  learningReadiness: string;
+  communicationCooperation: string;
+  independenceRules: string;
+  overallUnderstanding: string;
+};
+/** Fixed teacher-authored dimensions keep student feedback and generated prose distinct. */
+export function parseGrowthAssessment(
+  value: unknown,
+): GrowthAssessment | undefined {
+  if (value === undefined) return undefined;
+  const row = object(value, '成长评价');
+  if (
+    Object.keys(row).some(
+      (key) =>
+        ![
+          'learningReadiness',
+          'communicationCooperation',
+          'independenceRules',
+          'overallUnderstanding',
+        ].includes(key),
+    )
+  )
+    throw new Error('成长评价含未知项目');
+  return {
+    learningReadiness: text(row.learningReadiness, 800, '学习准备与课堂能力'),
+    communicationCooperation: text(
+      row.communicationCooperation,
+      800,
+      '表达沟通与同伴合作',
+    ),
+    independenceRules: text(row.independenceRules, 800, '生活自理与规则意识'),
+    overallUnderstanding: text(row.overallUnderstanding, 800, '综合画像理解'),
+  };
+}
 export type StudentFeedback = {
   studentId: string;
   learningMastery: Record<string, Mastery>;
@@ -23,6 +58,7 @@ export type StudentFeedback = {
   highlight: string;
   nextFocus: string;
   homePractice: string;
+  growthAssessment?: GrowthAssessment;
 };
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -136,6 +172,9 @@ export function parseStudentFeedback(
     });
     result.set(studentId, {
       studentId,
+      ...(row.growthAssessment === undefined
+        ? {}
+        : { growthAssessment: parseGrowthAssessment(row.growthAssessment) }),
       learningMastery,
       classroomPerformance,
       teacherMessage: text(row.teacherMessage, 2500, '老师寄语'),
@@ -147,7 +186,11 @@ export function parseStudentFeedback(
   return result;
 }
 
-export type CourseSelection = { subjectId: string; courseScope: string };
+export type CourseSelection = {
+  subjectId: string;
+  courseScope: string;
+  manualContent?: string;
+};
 /** v2 requires explicit per-subject choices; an omitted subject never means all courses. */
 export function parseCourseSelections(
   value: unknown,
@@ -162,9 +205,28 @@ export function parseCourseSelections(
     const courseScope = text(row.courseScope, 1000, '学科授课范围');
     if (!subjectId || subjectId === '*' || ids.has(subjectId))
       throw new Error('学科课程选择不能为空或重复');
-    if (period !== 'term' && courseScope.length < 2)
+    // Explicit sources preserve saved teacher content across later PDF uploads and regeneration.
+    const manualContent =
+      row.manualContent === undefined
+        ? undefined
+        : text(row.manualContent, 1000, '教师填写的教学内容');
+    if (
+      manualContent !== undefined &&
+      manualContent.length > 0 &&
+      manualContent.length < 2
+    )
+      throw new Error('请填写至少 2 个字符的教学内容');
+    if (
+      manualContent === undefined &&
+      period !== 'term' &&
+      courseScope.length < 2
+    )
       throw new Error('周报和月报请分别填写每门已选学科的授课范围');
     ids.add(subjectId);
-    return { subjectId, courseScope };
+    return {
+      subjectId,
+      courseScope,
+      ...(manualContent !== undefined ? { manualContent } : {}),
+    };
   });
 }

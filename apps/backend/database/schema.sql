@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS semester_report_terms (
 CREATE TABLE IF NOT EXISTS semester_report_subjects (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
   name VARCHAR(100) NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  performance_config JSON NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   INDEX idx_sr_subjects_teacher (teacher_id, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告学科';

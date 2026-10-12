@@ -32,6 +32,12 @@ export class SemesterReportsController {
   @Post('report-subjects') createSubject(@Body() body: Record<string, string>) {
     return this.reports.createSubject(body);
   }
+  @Patch('report-subjects/:id/performance-config') updateSubjectPerformance(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.reports.updateSubjectPerformance(id, body);
+  }
   @Get('course-documents') listDocuments() {
     return this.reports.listDocuments();
   }

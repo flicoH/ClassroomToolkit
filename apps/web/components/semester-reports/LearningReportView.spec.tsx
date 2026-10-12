@@ -162,10 +162,116 @@ it("shows separate v2 classroom performance for every subject without copying le
   };
   const rendered = document.createElement("div");
   rendered.innerHTML = renderToStaticMarkup(<LearningReportView report={{ ...report, content }} />);
-  const heading = [...rendered.querySelectorAll("h3")].find(item => item.textContent === "数学的课堂表现");
+  const heading = rendered.querySelector('[aria-label="数学的课堂表现"] h3');
   expect(heading).toBeDefined();
   expect(heading!.parentElement!.textContent).toContain("老师暂未填写");
   expect(heading!.parentElement!.textContent).not.toContain("主动参与");
   expect(heading!.parentElement!.textContent).not.toContain("基本完成");
   expect(rendered.textContent).toContain("未分学科的原课堂表现");
+});
+
+it("hides mastery for teacher-written content in preview, parent rendering and image export", () => {
+  const manual = {
+    id: "manual-goal",
+    section: "科学 · 教师填写",
+    text: "观察种子发芽",
+    mastery: "mastered" as const,
+    sourceRefs: ["科学：教师填写的教学内容"]
+  };
+  const pdf = {
+    id: "pdf-goal",
+    section: "英语 · Unit1",
+    text: "朗读英语短句",
+    mastery: "practicing" as const,
+    sourceRefs: ["English.pdf 第 1 页"]
+  };
+  for (const forImage of [false, true]) {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{ ...report, content: { ...report.content, reportVersion: "v2", learningContents: [manual, pdf] } }}
+      />
+    );
+    expect(rendered.textContent).not.toContain(manual.text);
+    expect(rendered.textContent).not.toContain(pdf.text);
+    expect(rendered.textContent).not.toContain("练习中");
+    const original = renderToStaticMarkup(
+      <LearningReportView report={{ ...report, content: { ...report.content, learningContents: [pdf] } }} />
+    );
+    expect(original).toContain("练习中");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        report={{ ...report, content: { ...report.content, reportVersion: "v2", learningContents: [manual] } }}
+      />
+    );
+    expect(rendered.textContent).not.toContain("掌握");
+    expect(rendered.textContent).not.toContain("待评价");
+  }
+});
+
+it("renders v2 growth dimensions and two-column subject performance without home practice", () => {
+  const content = {
+    ...report.content,
+    reportVersion: "v2" as const,
+    growthAssessment: {
+      learningReadiness: "能整理学习材料",
+      communicationCooperation: "主动与同伴合作",
+      independenceRules: "遵守活动规则",
+      overallUnderstanding: "逐渐建立学习习惯"
+    },
+    reportSubjects: [
+      { subjectId: "english", name: "英语" },
+      { subjectId: "math", name: "数学" }
+    ],
+    classroomPerformance: [
+      { subjectId: "english", text: "英语开口 · 主动表达", sourceRefs: ["teacher-input"] },
+      { subjectId: "math", text: "课堂任务 · 独立完成", sourceRefs: ["teacher-input"] }
+    ],
+    homeSuggestions: [{ text: "旧家庭练习记录", sourceRefs: ["teacher-input"] }]
+  };
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(<LearningReportView report={{ ...report, content }} />);
+  expect(rendered.textContent).toContain("学习准备与课堂能力");
+  expect(rendered.textContent).toContain("主动与同伴合作");
+  expect(rendered.textContent).toContain("生活自理与规则意识");
+  expect(rendered.textContent).toContain("逐渐建立学习习惯");
+  expect(rendered.querySelector('[aria-label="分学科学习表现"]')?.className).toContain("sm:grid-cols-2");
+  expect(rendered.textContent).toContain("英语开口");
+  expect(rendered.textContent).toContain("独立完成");
+  expect(rendered.textContent).not.toContain("回家可以这样练");
+  expect(rendered.textContent).not.toContain("旧家庭练习记录");
+  expect(rendered.textContent).not.toContain("暂未整理逐项学习内容");
+});
+
+it.each([false, true])("uses the same responsive columns for growth and classroom cards (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  const observation = "能独立准备学习材料，主动参与活动。".repeat(30);
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          growthAssessment: {
+            learningReadiness: observation,
+            communicationCooperation: "",
+            independenceRules: "遵守规则",
+            overallUnderstanding: "持续成长"
+          }
+        }
+      }}
+    />
+  );
+  const growth = rendered.querySelector('[aria-label="学习习惯与能力成长总结"]')!;
+  const classroom = rendered.querySelector('[aria-label="分学科学习表现"]')!;
+  expect(growth.className).toBe(classroom.className);
+  expect(growth.classList.contains("grid")).toBe(true);
+  expect(growth.classList.contains("sm:grid-cols-2")).toBe(true);
+  expect(growth.children).toHaveLength(4);
+  expect(growth.textContent).toContain(observation);
+  expect(growth.textContent).toContain("老师暂未填写。");
+  for (const card of growth.children) expect(card.classList.contains("min-w-0")).toBe(true);
 });

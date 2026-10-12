@@ -26,13 +26,17 @@ import { copyText } from "@/lib/clipboard";
 import { createUuid } from "@/lib/id";
 import {
   LearningReportView,
+  showsLearningMastery,
   masteryLabels,
   type LearningContent,
   type LearningReportContent
 } from "@/components/semester-reports/LearningReportView";
 import { ReportStudentPicker } from "@/components/semester-reports/ReportStudentPicker";
 import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
-import { SubjectCoursePicker } from "@/components/semester-reports/SubjectCoursePicker";
+import { SubjectCoursePicker, courseSelectionsFromScopes } from "@/components/semester-reports/SubjectCoursePicker";
+import { SubjectPerformanceConfig } from "@/components/semester-reports/SubjectPerformanceConfig";
+import type { PerformanceField } from "@/components/semester-reports/performance-config";
+import { GrowthAssessmentFields } from "@/components/semester-reports/GrowthAssessmentFields";
 import { ReportHistory } from "@/components/semester-reports/ReportHistory";
 import { ReportPetView, type ReportPet } from "@/components/semester-reports/ReportPetView";
 import type { ScoreDetails } from "@/components/semester-reports/ScoreDetailsView";
@@ -46,10 +50,10 @@ import {
 } from "@/components/semester-reports/StudentFeedbackForm";
 
 type Term = { id: string; name: string; startDate: string; endDate: string };
-type Subject = { id: string; name: string };
+type Subject = { id: string; name: string; performanceConfig?: PerformanceField[] | null };
 type Student = ReportPet & { id: string; name: string; classId: string; className: string; score: number };
 type Report = {
-  courseSelections?: Array<{ subjectId: string; courseScope: string }>;
+  courseSelections?: Array<{ subjectId: string; courseScope: string; manualContent?: string }>;
   reportVersion?: "v1" | "v2";
   subjectName?: string;
   id: string;
@@ -172,6 +176,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [draftSubjectScopes, setDraftSubjectScopes] = useState<Record<string, string>>({});
   const [termId, setTermId] = useState("");
   const [subjectId, setSubjectId] = useState("");
+  const subjectRevision = useRef(0);
   const [period, setPeriod] = useState(isV2 ? "term" : "month");
   const [generationMode, setGenerationMode] = useState("template");
   const [start, setStart] = useState(localDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
@@ -190,15 +195,19 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [courseScope, setCourseScope] = useState("");
   const [subjectScopes, setSubjectScopes] = useState<Record<string, string>>({});
   const courseSelections = useMemo(
-    () => Object.entries(subjectScopes).map(([subjectId, courseScope]) => ({ subjectId, courseScope })),
-    [subjectScopes]
+    () => courseSelectionsFromScopes(subjectScopes, documents, termId, isV2),
+    [subjectScopes, documents, termId, isV2]
   );
   const courseSelectionKey = isV2 ? JSON.stringify(courseSelections) : subjectId;
   const feedbackContext = isV2 ? "v2" : subjectId;
   const invalidCourseSelection =
     isV2 &&
     (!courseSelections.length ||
-      courseSelections.some(selection => period !== "term" && selection.courseScope.trim().length < 2));
+      courseSelections.some(selection =>
+        selection.manualContent !== undefined
+          ? selection.manualContent.trim().length > 0 && selection.manualContent.trim().length < 2
+          : period !== "term" && selection.courseScope.trim().length < 2
+      ));
   useEffect(() => {
     setSubjectScopes({});
   }, [termId]);
@@ -268,6 +277,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
 
   const load = useCallback(
     async (refreshToken?: string) => {
+      const loadedSubjectRevision = subjectRevision.current;
       const [t, s, p, r, d] = await Promise.all([
         request.get<Term[], Term[]>(`${base}/report-terms`),
         request.get<Subject[], Subject[]>(`${base}/report-subjects`),
@@ -279,7 +289,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         request.get<Document[], Document[]>(`${base}/course-documents`)
       ]);
       setTerms(t);
-      setSubjects(s);
+      // Ignore lists requested before a subject mutation completed; polling must not undo a successful save.
+      if (loadedSubjectRevision === subjectRevision.current) setSubjects(s);
       setStudents(p.students);
       setReports(r.filter(report => (report.reportVersion ?? "v1") === version));
       setDocuments(d);
@@ -483,6 +494,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setMessage("请先填写学科名称。");
       return;
     }
+    subjectRevision.current += 1;
     setBusy(true);
     setMessage("");
     try {
@@ -493,6 +505,26 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
+      subjectRevision.current += 1;
+      setBusy(false);
+    }
+  }
+  async function saveSubjectPerformance(fields: PerformanceField[]): Promise<boolean> {
+    subjectRevision.current += 1;
+    setBusy(true);
+    setMessage("");
+    try {
+      const row = await request.patch<Subject, Subject>(`${base}/report-subjects/${subjectId}/performance-config`, {
+        performanceConfig: fields
+      });
+      setSubjects(current => current.map(subject => (subject.id === row.id ? row : subject)));
+      setMessage("课堂表现配置已保存。");
+      return true;
+    } catch (error) {
+      setMessage(errorMessage(error));
+      return false;
+    } finally {
+      subjectRevision.current += 1;
       setBusy(false);
     }
   }
@@ -606,9 +638,13 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             ...value,
             studentId,
             learningMastery: Object.fromEntries(
-              Object.entries(value.learningMastery).filter(([id]) => allowed.has(id))
+              Object.entries(value.learningMastery).filter(([id]) => !isV2 && allowed.has(id))
             ),
-            classroomPerformance: value.classroomPerformance.filter(item => item.value.trim())
+            classroomPerformance: value.classroomPerformance.filter(
+              item =>
+                item.value.trim() &&
+                (!isV2 || courseSelections.some(selection => selection.subjectId === item.subjectId))
+            )
           };
         })
       });
@@ -730,6 +766,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     const match = /^course:(.+):p(\d+)$/.exec(reference);
     if (match)
       return `${documents.find(document => document.id === match[1])?.fileName ?? "课程 PDF"} 第 ${match[2]} 页`;
+    if (reference.startsWith("teacher-course:")) return "教师填写的教学内容";
     if (reference === "teacher-review") return "教师核对与评价";
     if (reference === "teacher-input") return "教师填写的学习评价";
     if (reference === "teacher-observation") return "教师观察";
@@ -773,10 +810,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     setMessage("");
     try {
       const updated = await request.post<Report, Report>(`${base}/reports/${editing.id}/course-subjects`, {
-        courseSelections: Object.entries(draftSubjectScopes).map(([subjectId, courseScope]) => ({
-          subjectId,
-          courseScope
-        }))
+        courseSelections: courseSelectionsFromScopes(draftSubjectScopes, documents, editing.termId ?? "", isV2)
       });
       // A late response must not append content into another report opened meanwhile.
       if (activeEditingId.current !== updated.id) {
@@ -888,7 +922,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       >
         {(
           [
-            ["courses", "课程资料"],
+            ["courses", isV2 ? "学期与学科" : "课程资料"],
             ["compose", "填写报告"],
             ["reports", "报告列表"]
           ] as const
@@ -913,39 +947,44 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           {message}
         </p>
       )}
-      {((uploadState && !uploadState.error) ||
-        processingDocuments.length > 0 ||
-        reviewDocuments.length > 0 ||
-        documentRefreshFailed) && (
-        <div
-          aria-label="PDF 处理状态"
-          role="status"
-          className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900"
-        >
-          {(uploadState && !uploadState.error) || processingDocuments.length > 0 ? (
-            <LoaderCircle className="h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
-          ) : (
-            <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
-          )}
-          <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
-            {uploadState &&
-              !uploadState.error &&
-              `正在上传 PDF：${uploadState.fileName}${uploadState.progress === null ? "。" : uploadState.progress === 100 ? "，等待服务器确认。" : ` · ${uploadState.progress}%。`}`}
-            {processingDocuments.length > 0 && `${processingDocuments.length} 份 PDF 正在处理，完成后请核对章节。`}
-            {reviewDocuments.length > 0 && ` ${reviewDocuments.length} 份 PDF 已解析，等待确认章节。`}
-            {documentRefreshFailed && " 状态刷新失败，已保留当前状态，将自动重试。"}
-          </p>
-          {documentRefreshFailed ? (
-            <Button size="sm" variant="outline" onClick={() => void load().catch(() => setDocumentRefreshFailed(true))}>
-              刷新处理状态
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={() => showSection("courses")}>
-              查看课程资料
-            </Button>
-          )}
-        </div>
-      )}
+      {!isV2 &&
+        ((uploadState && !uploadState.error) ||
+          processingDocuments.length > 0 ||
+          reviewDocuments.length > 0 ||
+          documentRefreshFailed) && (
+          <div
+            aria-label="PDF 处理状态"
+            role="status"
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900"
+          >
+            {(uploadState && !uploadState.error) || processingDocuments.length > 0 ? (
+              <LoaderCircle className="h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
+            ) : (
+              <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+            )}
+            <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+              {uploadState &&
+                !uploadState.error &&
+                `正在上传 PDF：${uploadState.fileName}${uploadState.progress === null ? "。" : uploadState.progress === 100 ? "，等待服务器确认。" : ` · ${uploadState.progress}%。`}`}
+              {processingDocuments.length > 0 && `${processingDocuments.length} 份 PDF 正在处理，完成后请核对章节。`}
+              {reviewDocuments.length > 0 && ` ${reviewDocuments.length} 份 PDF 已解析，等待确认章节。`}
+              {documentRefreshFailed && " 状态刷新失败，已保留当前状态，将自动重试。"}
+            </p>
+            {documentRefreshFailed ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void load().catch(() => setDocumentRefreshFailed(true))}
+              >
+                刷新处理状态
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => showSection("courses")}>
+                查看课程资料
+              </Button>
+            )}
+          </div>
+        )}
       <div className="mb-4 flex min-w-0 items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 md:hidden dark:border-border dark:bg-muted">
         <p className="min-w-0 break-words text-sm leading-6">
           {term?.name || "未选择学期"}{" "}
@@ -967,12 +1006,14 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         {/* Keep panels mounted so changing mobile sections never clears inputs or selection. */}
         <section
           id={`${sectionId}-courses`}
-          aria-label="课程资料"
+          aria-label={isV2 ? "学期与学科" : "课程资料"}
           className={`${mobileSection === "courses" ? "" : "hidden md:block"} min-w-0 space-y-4 rounded-2xl border bg-background p-4 md:rounded-xl`}
         >
           <div>
-            <h2 className="font-semibold">课程资料</h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">选择学期和学科，上传并核对课程 PDF。</p>
+            <h2 className="font-semibold">{isV2 ? "学期与学科" : "课程资料"}</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {isV2 ? "选择学期并维护学科，报告中直接勾选所需学科。" : "选择学期和学科，上传并核对课程 PDF。"}
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <select
@@ -991,19 +1032,21 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 </option>
               ))}
             </select>
-            <select
-              aria-label="课程学科"
-              className="h-9 w-full min-w-0 rounded-md border bg-background px-2"
-              value={subjectId}
-              onChange={e => setSubjectId(e.target.value)}
-            >
-              <option value="">选择学科</option>
-              {subjects.map(x => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
+            {!isV2 && (
+              <select
+                aria-label="课程学科"
+                className="h-9 w-full min-w-0 rounded-md border bg-background px-2"
+                value={subjectId}
+                onChange={e => setSubjectId(e.target.value)}
+              >
+                <option value="">选择学科</option>
+                {subjects.map(x => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <details
             key={terms.length && subjects.length ? "ready" : "empty"}
@@ -1064,203 +1107,237 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               当前学期：{term.startDate} 至 {term.endDate}
             </p>
           )}
-          <label
-            className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 text-center text-sm leading-6 focus-within:ring-2 focus-within:ring-ring ${busy || !termId || !subjectId ? "opacity-60" : "hover:bg-indigo-50"}`}
-          >
-            {uploadState && !uploadState.error ? (
-              <LoaderCircle className="h-7 w-7 animate-spin text-indigo-600" aria-hidden="true" />
-            ) : (
-              <Upload className="h-6 w-6 text-indigo-500" aria-hidden="true" />
-            )}
-            {uploadState && !uploadState.error
-              ? "正在上传 PDF…"
-              : !termId
-                ? "请先新建并选择学期，再上传课程 PDF"
-                : !subjectId
-                  ? "请先选择学科，再上传课程 PDF"
-                  : "选择课程 PDF（最大 30MB）"}
-            <span className="text-xs text-muted-foreground">上传后自动解析，核对章节后用于报告</span>
-            <input
-              className="sr-only"
-              type="file"
-              accept="application/pdf,.pdf"
-              disabled={busy || !termId || !subjectId}
-              onChange={e => {
-                const file = e.target.files?.[0];
-                e.currentTarget.value = "";
-                void upload(file);
-              }}
-            />
-          </label>
-          {uploadState && (
-            <div
-              role={uploadState.error ? "alert" : "status"}
-              className={`space-y-2 rounded-xl border p-4 text-sm ${uploadState.error ? "border-red-200 bg-red-50 text-red-800" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
-            >
-              <p className="break-words font-semibold [overflow-wrap:anywhere]">{uploadState.fileName}</p>
-              {uploadState.error ? (
-                <p>{uploadState.error} 请重新选择文件上传。</p>
-              ) : (
-                <>
-                  <p>
-                    {uploadState.progress === 100
-                      ? "文件已传输，正在等待服务器确认…"
-                      : `正在上传 PDF${uploadState.progress === null ? "…" : ` · ${uploadState.progress}%`}`}
-                  </p>
-                  <div
-                    role="progressbar"
-                    aria-label="PDF 上传进度"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={uploadState.progress ?? undefined}
-                    className="h-2 overflow-hidden rounded-full bg-indigo-100"
-                  >
-                    <div
-                      className={`h-full rounded-full bg-indigo-600 transition-[width] ${uploadState.progress === null ? "w-1/3 animate-pulse" : ""}`}
-                      style={uploadState.progress === null ? undefined : { width: `${uploadState.progress}%` }}
-                    />
-                  </div>
-                  <p className="text-xs">上传期间请保持此页面打开，上传完成后会在后台自动解析。</p>
-                </>
-              )}
-            </div>
-          )}
-          <div className="space-y-2">
-            {documents
-              .filter(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId))
-              .map(doc => (
-                <div
-                  key={doc.id}
-                  className={`rounded-xl border p-3 text-sm ${doc.status === "queued" || doc.status === "parsing" ? "border-indigo-200 bg-indigo-50/50" : doc.status === "needs_review" ? "border-emerald-200 bg-emerald-50/40" : "bg-muted/20"}`}
-                  aria-busy={doc.status === "queued" || doc.status === "parsing"}
+          {isV2 && subjects.length > 0 && (
+            <details className="group rounded-xl border p-3">
+              <summary className="min-h-11 cursor-pointer text-sm font-medium">配置学科课堂表现</summary>
+              <div className="mt-3 space-y-3">
+                <select
+                  aria-label="配置课堂表现的学科"
+                  className="h-10 w-full min-w-0 rounded-md border bg-background px-2"
+                  value={subjectId}
+                  disabled={busy}
+                  onChange={event => setSubjectId(event.target.value)}
                 >
-                  <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
-                    <div className="flex min-w-0 flex-1 items-start gap-2">
-                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" aria-hidden="true" />
-                      <div className="min-w-0 flex-1">
-                        <p className="break-words font-medium leading-6 [overflow-wrap:anywhere]">{doc.fileName}</p>
-                        <span
-                          className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs ${doc.status === "failed" ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700"}`}
-                        >
-                          {labels[doc.status] ?? doc.status}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 max-md:[&_button]:flex-1 md:shrink-0">
-                      {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() =>
-                            void documentAction(doc.id, "confirm").catch(error => setMessage(errorMessage(error)))
-                          }
-                        >
-                          确认章节
-                        </Button>
-                      )}
-                      {doc.status === "ready" && reviewingDocumentId !== doc.id && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() => {
-                            setReviewingDocumentId(doc.id);
-                            setUnitDrafts(old => ({
-                              ...old,
-                              [doc.id]:
-                                (doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
-                                  ? doc.detectedUnits!.join("\n")
-                                  : (doc.units ?? []).join("\n")
-                            }));
-                          }}
-                        >
-                          重新核对章节
-                        </Button>
-                      )}
-                      {doc.status === "ready" && reviewingDocumentId === doc.id && (
-                        <Button size="sm" variant="ghost" onClick={() => setReviewingDocumentId(null)}>
-                          取消
-                        </Button>
-                      )}
-                      {doc.status === "failed" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() =>
-                            void documentAction(doc.id, "retry").catch(error => setMessage(errorMessage(error)))
-                          }
-                        >
-                          重试
-                        </Button>
-                      )}
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="删除课程 PDF"
-                        disabled={busy}
-                        onClick={() => setDeleteTarget({ kind: "document", document: doc })}
+                  {subjects.map(subject => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.name}
+                    </option>
+                  ))}
+                </select>
+                {subjects.find(subject => subject.id === subjectId) && (
+                  <SubjectPerformanceConfig
+                    key={subjectId}
+                    subject={subjects.find(subject => subject.id === subjectId)!}
+                    busy={busy}
+                    onSave={saveSubjectPerformance}
+                  />
+                )}
+              </div>
+            </details>
+          )}
+          {!isV2 && (
+            <>
+              <label
+                className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 text-center text-sm leading-6 focus-within:ring-2 focus-within:ring-ring ${busy || !termId || !subjectId ? "opacity-60" : "hover:bg-indigo-50"}`}
+              >
+                {uploadState && !uploadState.error ? (
+                  <LoaderCircle className="h-7 w-7 animate-spin text-indigo-600" aria-hidden="true" />
+                ) : (
+                  <Upload className="h-6 w-6 text-indigo-500" aria-hidden="true" />
+                )}
+                {uploadState && !uploadState.error
+                  ? "正在上传 PDF…"
+                  : !termId
+                    ? "请先新建并选择学期，再上传课程 PDF"
+                    : !subjectId
+                      ? "请先选择学科，再上传课程 PDF"
+                      : "选择课程 PDF（最大 30MB）"}
+                <span className="text-xs text-muted-foreground">上传后自动解析，核对章节后用于报告</span>
+                <input
+                  className="sr-only"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={busy || !termId || !subjectId}
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    e.currentTarget.value = "";
+                    void upload(file);
+                  }}
+                />
+              </label>
+              {uploadState && (
+                <div
+                  role={uploadState.error ? "alert" : "status"}
+                  className={`space-y-2 rounded-xl border p-4 text-sm ${uploadState.error ? "border-red-200 bg-red-50 text-red-800" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
+                >
+                  <p className="break-words font-semibold [overflow-wrap:anywhere]">{uploadState.fileName}</p>
+                  {uploadState.error ? (
+                    <p>{uploadState.error} 请重新选择文件上传。</p>
+                  ) : (
+                    <>
+                      <p>
+                        {uploadState.progress === 100
+                          ? "文件已传输，正在等待服务器确认…"
+                          : `正在上传 PDF${uploadState.progress === null ? "…" : ` · ${uploadState.progress}%`}`}
+                      </p>
+                      <div
+                        role="progressbar"
+                        aria-label="PDF 上传进度"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={uploadState.progress ?? undefined}
+                        className="h-2 overflow-hidden rounded-full bg-indigo-100"
                       >
-                        <Trash2 />
-                        <span className="md:hidden">删除</span>
-                      </Button>
-                    </div>
-                  </div>
-                  {documentStatusHints[doc.status] && (
-                    <div
-                      role="status"
-                      className={`mt-3 flex items-start gap-3 rounded-lg p-3 ${doc.status === "needs_review" ? "bg-emerald-100/60 text-emerald-900" : "bg-indigo-100/60 text-indigo-900"}`}
-                    >
-                      {doc.status === "needs_review" ? (
-                        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-                      ) : (
-                        <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
-                      )}
-                      <div>
-                        <p className="font-semibold">{documentStatusHints[doc.status]?.title}</p>
-                        <p className="mt-1 text-xs leading-6">{documentStatusHints[doc.status]?.description}</p>
+                        <div
+                          className={`h-full rounded-full bg-indigo-600 transition-[width] ${uploadState.progress === null ? "w-1/3 animate-pulse" : ""}`}
+                          style={uploadState.progress === null ? undefined : { width: `${uploadState.progress}%` }}
+                        />
                       </div>
-                    </div>
-                  )}
-                  {doc.errorMessage && (
-                    <p
-                      role="alert"
-                      className="mt-3 break-words rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700 [overflow-wrap:anywhere]"
-                    >
-                      {doc.errorMessage}
-                    </p>
-                  )}
-                  {(doc.status === "ready" || doc.status === "needs_review") && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      已提取 {doc.pageCount ?? 0} 页、{doc.units?.length ?? 0} 个单元或课时
-                      {doc.status === "ready" ? "，可在下方选择课时查看学习内容。" : "，请核对章节并确认。"}
-                      {(doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
-                        ? ` 新版识别到 ${doc.detectedUnits?.length} 个章节，请重新核对。`
-                        : ""}
-                    </p>
-                  )}
-                  {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
-                    <textarea
-                      className="mt-2 min-h-16 w-full rounded border bg-background p-2 text-xs"
-                      aria-label={`${doc.fileName} 课程章节`}
-                      value={
-                        unitDrafts[doc.id] ??
-                        ((doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
-                          ? doc.detectedUnits?.join("\n")
-                          : doc.units?.join("\n")) ??
-                        ""
-                      }
-                      onChange={e => setUnitDrafts(old => ({ ...old, [doc.id]: e.target.value }))}
-                      placeholder="检查或修正解析出的课程章节，每行一章"
-                    />
+                      <p className="text-xs">上传期间请保持此页面打开，上传完成后会在后台自动解析。</p>
+                    </>
                   )}
                 </div>
-              ))}
-            {!documents.some(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId)) && (
-              <p className="py-2 text-center text-sm text-muted-foreground">还没有课程 PDF，上传后会显示在这里。</p>
-            )}
-          </div>
+              )}
+              <div className="space-y-2">
+                {documents
+                  .filter(d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId))
+                  .map(doc => (
+                    <div
+                      key={doc.id}
+                      className={`rounded-xl border p-3 text-sm ${doc.status === "queued" || doc.status === "parsing" ? "border-indigo-200 bg-indigo-50/50" : doc.status === "needs_review" ? "border-emerald-200 bg-emerald-50/40" : "bg-muted/20"}`}
+                      aria-busy={doc.status === "queued" || doc.status === "parsing"}
+                    >
+                      <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                        <div className="flex min-w-0 flex-1 items-start gap-2">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words font-medium leading-6 [overflow-wrap:anywhere]">{doc.fileName}</p>
+                            <span
+                              className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs ${doc.status === "failed" ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700"}`}
+                            >
+                              {labels[doc.status] ?? doc.status}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 max-md:[&_button]:flex-1 md:shrink-0">
+                          {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() =>
+                                void documentAction(doc.id, "confirm").catch(error => setMessage(errorMessage(error)))
+                              }
+                            >
+                              确认章节
+                            </Button>
+                          )}
+                          {doc.status === "ready" && reviewingDocumentId !== doc.id && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() => {
+                                setReviewingDocumentId(doc.id);
+                                setUnitDrafts(old => ({
+                                  ...old,
+                                  [doc.id]:
+                                    (doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
+                                      ? doc.detectedUnits!.join("\n")
+                                      : (doc.units ?? []).join("\n")
+                                }));
+                              }}
+                            >
+                              重新核对章节
+                            </Button>
+                          )}
+                          {doc.status === "ready" && reviewingDocumentId === doc.id && (
+                            <Button size="sm" variant="ghost" onClick={() => setReviewingDocumentId(null)}>
+                              取消
+                            </Button>
+                          )}
+                          {doc.status === "failed" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() =>
+                                void documentAction(doc.id, "retry").catch(error => setMessage(errorMessage(error)))
+                              }
+                            >
+                              重试
+                            </Button>
+                          )}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="删除课程 PDF"
+                            disabled={busy}
+                            onClick={() => setDeleteTarget({ kind: "document", document: doc })}
+                          >
+                            <Trash2 />
+                            <span className="md:hidden">删除</span>
+                          </Button>
+                        </div>
+                      </div>
+                      {documentStatusHints[doc.status] && (
+                        <div
+                          role="status"
+                          className={`mt-3 flex items-start gap-3 rounded-lg p-3 ${doc.status === "needs_review" ? "bg-emerald-100/60 text-emerald-900" : "bg-indigo-100/60 text-indigo-900"}`}
+                        >
+                          {doc.status === "needs_review" ? (
+                            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                          ) : (
+                            <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
+                          )}
+                          <div>
+                            <p className="font-semibold">{documentStatusHints[doc.status]?.title}</p>
+                            <p className="mt-1 text-xs leading-6">{documentStatusHints[doc.status]?.description}</p>
+                          </div>
+                        </div>
+                      )}
+                      {doc.errorMessage && (
+                        <p
+                          role="alert"
+                          className="mt-3 break-words rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700 [overflow-wrap:anywhere]"
+                        >
+                          {doc.errorMessage}
+                        </p>
+                      )}
+                      {(doc.status === "ready" || doc.status === "needs_review") && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          已提取 {doc.pageCount ?? 0} 页、{doc.units?.length ?? 0} 个单元或课时
+                          {doc.status === "ready" ? "，可在下方选择课时查看学习内容。" : "，请核对章节并确认。"}
+                          {(doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
+                            ? ` 新版识别到 ${doc.detectedUnits?.length} 个章节，请重新核对。`
+                            : ""}
+                        </p>
+                      )}
+                      {(doc.status === "needs_review" || reviewingDocumentId === doc.id) && (
+                        <textarea
+                          className="mt-2 min-h-16 w-full rounded border bg-background p-2 text-xs"
+                          aria-label={`${doc.fileName} 课程章节`}
+                          value={
+                            unitDrafts[doc.id] ??
+                            ((doc.detectedUnits?.length ?? 0) > (doc.units?.length ?? 0)
+                              ? doc.detectedUnits?.join("\n")
+                              : doc.units?.join("\n")) ??
+                            ""
+                          }
+                          onChange={e => setUnitDrafts(old => ({ ...old, [doc.id]: e.target.value }))}
+                          placeholder="检查或修正解析出的课程章节，每行一章"
+                        />
+                      )}
+                    </div>
+                  ))}
+                {!documents.some(
+                  d => (!termId || d.termId === termId) && (!subjectId || d.subjectId === subjectId)
+                ) && (
+                  <p className="py-2 text-center text-sm text-muted-foreground">还没有课程 PDF，上传后会显示在这里。</p>
+                )}
+              </div>
+            </>
+          )}
           <Button className="w-full md:hidden" variant="outline" onClick={() => showSection("compose")}>
             下一步：填写报告
           </Button>
@@ -1273,7 +1350,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           <div>
             <h2 className="font-semibold">填写报告</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              选择学生与授课范围，再填写每位学生的课堂反馈。
+              {isV2 ? "勾选学生和学科，再填写成长评价和课堂表现。" : "选择学生与授课范围，再填写每位学生的课堂反馈。"}
             </p>
           </div>
           <section className="space-y-3 rounded-xl bg-indigo-50/40 p-3">
@@ -1339,7 +1416,9 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           </label> */}
           {generationMode === "template" && (
             <p className="text-xs text-muted-foreground">
-              按下方填写的掌握评价、课堂表现和寄语整理报告，结合综合积分生成可审核草稿。
+              {isV2
+                ? "按下方填写的成长评价、各科课堂表现和寄语整理报告，结合综合积分生成可审核草稿。"
+                : "按下方填写的掌握评价、课堂表现和寄语整理报告，结合综合积分生成可审核草稿。"}
             </p>
           )}
           <div className="grid gap-2 sm:grid-cols-2">
@@ -1381,6 +1460,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           <ReportStudentPicker students={students} selected={selected} onChange={setSelected} />
           {isV2 ? (
             <SubjectCoursePicker
+              subjectsOnly
               subjects={subjects}
               documents={documents}
               termId={termId}
@@ -1451,7 +1531,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               )}
             </>
           )}
-          {scopePreview && (
+          {!isV2 && scopePreview && (
             <div className="rounded-md border p-2 text-xs" aria-live="polite">
               {scopePreview.totalPages > 0 ? (
                 scopePreview.documents.map(document => (
@@ -1460,15 +1540,19 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   </p>
                 ))
               ) : (
-                <p>未匹配到 PDF 页面，请选择上方单元、课时或页码，也可以填写“第3页”或“第3-5页”。</p>
+                <p>
+                  {isV2 && courseSelections.some(selection => selection.manualContent !== undefined)
+                    ? "已选择手填学科，可填写成长评价和课堂表现后生成报告。"
+                    : "未匹配到 PDF 页面，请选择上方单元、课时或页码，也可以填写“第3页”或“第3-5页”。"}
+                </p>
               )}
             </div>
           )}
-          {scopePreview && scopePreview.learningContents?.length > 0 && !selectedStudents.length && (
+          {!isV2 && scopePreview && scopePreview.learningContents?.length > 0 && !selectedStudents.length && (
             <section className="space-y-3 rounded-xl border bg-indigo-50/30 p-3" aria-live="polite">
               <h3 className="text-sm font-semibold">已选学习内容 · {scopePreview.totalLearningContents} 项</h3>
               <p className="text-xs text-muted-foreground">
-                以下内容来自所选单元或课时。选择学生后，即可在下方逐项填写掌握情况。
+                以下内容来自课程 PDF 或老师填写的教学内容。选择学生后，即可在下方逐项填写掌握情况。
               </p>
               <div className="max-h-80 space-y-2 overflow-y-auto">
                 {scopePreview.learningContents.map(item => (
@@ -1480,7 +1564,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                         .map(ref => {
                           const match = /^course:(.+):p(\d+)$/.exec(ref);
                           const document = scopePreview.documents.find(doc => doc.id === match?.[1]);
-                          return document ? `${document.fileName} 第 ${match?.[2]} 页` : "课程资料";
+                          return ref.startsWith("teacher-course:")
+                            ? "教师填写的教学内容"
+                            : document
+                              ? `${document.fileName} 第 ${match?.[2]} 页`
+                              : "课程资料";
                         })
                         .join("；")}
                     </p>
@@ -1492,7 +1580,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               )}
             </section>
           )}
-          {scopePreview && scopePreview.totalPages > 0 && !scopePreview.learningContents?.length && (
+          {!isV2 && scopePreview && scopePreview.totalPages > 0 && !scopePreview.learningContents?.length && (
             <p className="text-xs text-amber-700">
               已匹配页面，但未提取到该单元的学习内容；请检查 PDF 的表格或章节格式。
             </p>
@@ -1501,12 +1589,12 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-xs text-destructive">{scopePreviewError}</p>
               <Button size="sm" variant="outline" onClick={() => setScopePreviewAttempt(current => current + 1)}>
-                重新加载学习内容
+                {isV2 ? "重新确认学科" : "重新加载学习内容"}
               </Button>
             </div>
           )}
           {!scopePreview && !scopePreviewError && (period === "term" || courseScope.trim().length >= 2) && (
-            <p className="text-xs text-muted-foreground">正在加载所选学习内容…</p>
+            <p className="text-xs text-muted-foreground">{isV2 ? "正在确认已选学科…" : "正在加载所选学习内容…"}</p>
           )}
           {feedbackStudent ? (
             <section className="space-y-3">
@@ -1571,7 +1659,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   isV2
                     ? subjects
                         .filter(subject => Object.hasOwn(subjectScopes, subject.id))
-                        .map(subject => ({ subjectId: subject.id, name: subject.name }))
+                        .map(subject => ({
+                          subjectId: subject.id,
+                          name: subject.name,
+                          performanceConfig: subject.performanceConfig
+                        }))
                     : undefined
                 }
                 reserveNextFocus={isV2}
@@ -1586,7 +1678,9 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             </section>
           ) : (
             <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-              请先选择学生，再填写掌握评价、课堂表现和老师寄语。
+              {isV2
+                ? "请先选择学生和学科，再填写成长评价、课堂表现和老师寄语。"
+                : "请先选择学生，再填写掌握评价、课堂表现和老师寄语。"}
             </p>
           )}
           <label className="block space-y-1 text-sm">
@@ -1607,7 +1701,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            积分依据为周期综合评价记录，不代表所选学科的掌握程度。课程资料须先解析并确认。
+            积分依据为周期综合评价记录，不代表所选学科的掌握程度。
+            {isV2 ? "勾选学科即可填写反馈，无需课程资料。" : "课程资料须先解析并确认。"}
           </p>
           <Button
             disabled={
@@ -1628,7 +1723,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               (isV2
                 ? invalidCourseSelection || !scopePreview || Boolean(scopePreviewError)
                 : period !== "term" && courseScope.trim().length < 2) ||
-              scopePreview.totalPages === 0 ||
+              (scopePreview.totalPages === 0 &&
+                !(isV2 && courseSelections.some(selection => selection.manualContent !== undefined))) ||
               (scopePreview?.totalLearningContents ?? 0) > 500
             }
             className="w-full sm:w-auto"
@@ -1864,6 +1960,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                     </p>
                     {availableDraftSubjects.length ? (
                       <SubjectCoursePicker
+                        subjectsOnly
                         subjects={availableDraftSubjects}
                         documents={documents}
                         termId={editing.termId ?? ""}
@@ -1878,8 +1975,12 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                       disabled={
                         busy ||
                         !Object.keys(draftSubjectScopes).length ||
-                        (editing.period !== "term" &&
-                          Object.values(draftSubjectScopes).some(scope => scope.trim().length < 2))
+                        courseSelectionsFromScopes(draftSubjectScopes, documents, editing.termId ?? "", isV2).some(
+                          selection =>
+                            selection.manualContent !== undefined
+                              ? selection.manualContent.trim().length > 0 && selection.manualContent.trim().length < 2
+                              : editing.period !== "term" && selection.courseScope.trim().length < 2
+                        )
                       }
                       onClick={() => void addDraftSubjects()}
                     >
@@ -1948,56 +2049,74 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 ) : (
                   <>
                     <p className="mb-3 text-xs text-muted-foreground">检查事实表述与每条建议的引用。</p>
-                    <section className="space-y-3">
-                      <h3 className="font-semibold">{periodTitles[period]}学习内容与掌握</h3>
-                      <p className="text-xs text-muted-foreground">
-                        学习目标来自课程 PDF；掌握情况请依据实际课堂观察逐项填写，默认待评价。
-                      </p>
-                      {(draft.learningContents ?? []).map((item, index) => (
-                        <div key={item.id} className="space-y-2 rounded-lg border p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-sm font-semibold text-indigo-600">{item.section}</p>
-                            <select
-                              aria-label={`${item.section} 学习内容 ${index + 1} 掌握情况`}
-                              className="h-9 rounded-md border bg-background px-2 text-sm"
-                              value={item.mastery}
+                    {!isV2 && (
+                      <section className="space-y-3">
+                        <h3 className="font-semibold">
+                          {periodTitles[period]}学习内容
+                          {!draft.learningContents?.length || draft.learningContents.some(showsLearningMastery)
+                            ? "与掌握"
+                            : ""}
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          {draft.learningContents?.some(showsLearningMastery)
+                            ? "PDF 学习内容的掌握情况请依据实际课堂观察填写；手填内容只展示教学记录。"
+                            : "手填内容只展示教学记录，可直接修改文字。"}
+                        </p>
+                        {(draft.learningContents ?? []).map((item, index) => (
+                          <div key={item.id} className="space-y-2 rounded-lg border p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-indigo-600">{item.section}</p>
+                              {showsLearningMastery(item) && (
+                                <select
+                                  aria-label={`${item.section} 学习内容 ${index + 1} 掌握情况`}
+                                  className="h-9 rounded-md border bg-background px-2 text-sm"
+                                  value={item.mastery}
+                                  onChange={event =>
+                                    setDraft({
+                                      ...draft,
+                                      learningContents: draft.learningContents?.map((entry, i) =>
+                                        i === index
+                                          ? { ...entry, mastery: event.target.value as LearningContent["mastery"] }
+                                          : entry
+                                      )
+                                    })
+                                  }
+                                >
+                                  {Object.entries(masteryLabels).map(([value, label]) => (
+                                    <option key={value} value={value}>
+                                      {label}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                            <textarea
+                              className="min-h-20 w-full rounded-md border bg-background p-2 text-sm"
+                              value={item.text}
+                              maxLength={1500}
                               onChange={event =>
                                 setDraft({
                                   ...draft,
                                   learningContents: draft.learningContents?.map((entry, i) =>
-                                    i === index
-                                      ? { ...entry, mastery: event.target.value as LearningContent["mastery"] }
-                                      : entry
+                                    i === index ? { ...entry, text: event.target.value } : entry
                                   )
                                 })
                               }
-                            >
-                              {Object.entries(masteryLabels).map(([value, label]) => (
-                                <option key={value} value={value}>
-                                  {label}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </div>
-                          <textarea
-                            className="min-h-20 w-full rounded-md border bg-background p-2 text-sm"
-                            value={item.text}
-                            maxLength={1500}
-                            onChange={event =>
-                              setDraft({
-                                ...draft,
-                                learningContents: draft.learningContents?.map((entry, i) =>
-                                  i === index ? { ...entry, text: event.target.value } : entry
-                                )
-                              })
-                            }
-                          />
-                        </div>
-                      ))}
-                      {!draft.learningContents?.length && (
-                        <p className="text-sm text-muted-foreground">暂无逐项内容，请重新选择授课范围生成。</p>
-                      )}
-                    </section>
+                        ))}
+                        {!draft.learningContents?.length && (
+                          <p className="text-sm text-muted-foreground">暂无逐项内容，请重新选择授课范围生成。</p>
+                        )}
+                      </section>
+                    )}
+                    {isV2 && (
+                      <GrowthAssessmentFields
+                        studentName={editing.studentName}
+                        value={draft.growthAssessment}
+                        onChange={growthAssessment => setDraft({ ...draft, growthAssessment })}
+                      />
+                    )}
                     <section className="space-y-3">
                       <h3 className="font-semibold">{periodTitles[period]}的课堂表现</h3>
                       <p className="text-xs text-muted-foreground">
@@ -2006,11 +2125,17 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                       <ClassroomPerformanceFields
                         subjects={
                           isV2
-                            ? (draft.reportSubjects ??
-                              (editing.courseSelections ?? []).map(selection => ({
-                                subjectId: selection.subjectId,
-                                name: subjects.find(subject => subject.id === selection.subjectId)?.name ?? "已选学科"
-                              })))
+                            ? (
+                                draft.reportSubjects ??
+                                (editing.courseSelections ?? []).map(selection => ({
+                                  subjectId: selection.subjectId,
+                                  name: subjects.find(subject => subject.id === selection.subjectId)?.name ?? "已选学科"
+                                }))
+                              ).map(subject => ({
+                                ...subject,
+                                performanceConfig: subjects.find(current => current.id === subject.subjectId)
+                                  ?.performanceConfig
+                              }))
                             : undefined
                         }
                         subject={subjects.find(subject => subject.id === editing.subjectId)?.name ?? ""}
@@ -2027,6 +2152,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                       老师想对你说
                       <textarea
                         className="min-h-20 w-full rounded-md border bg-background p-3 font-normal"
+                        aria-label="老师想对你说"
                         value={draft.summary}
                         readOnly={editing.status !== "draft"}
                         onChange={e => setDraft({ ...draft, summary: e.target.value })}
@@ -2038,50 +2164,57 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                         ["下一步重点", "areasToImprove"],
                         ["回家可以这样练", "homeSuggestions"]
                       ] as const
-                    ).map(([title, key]) => (
-                      <section key={key} className="space-y-2">
-                        <h3 className="text-sm font-semibold">{title}</h3>
-                        {draft[key].map((entry, index) => (
-                          <div key={index} className="rounded-md border p-3">
-                            <textarea
-                              className="min-h-16 w-full bg-background text-sm"
-                              value={entry.text}
-                              readOnly={editing.status !== "draft"}
-                              onChange={e =>
-                                setDraft({
-                                  ...draft,
-                                  [key]: draft[key].map((item, i) =>
-                                    i === index ? { ...item, text: e.target.value } : item
-                                  )
-                                })
-                              }
-                            />
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              {/* <p className="text-xs text-muted-foreground">
+                    )
+                      .filter(([, key]) => !isV2 || key !== "homeSuggestions")
+                      .map(([title, key]) => (
+                        <section key={key} className="space-y-2">
+                          <h3 className="text-sm font-semibold">{title}</h3>
+                          {draft[key].map((entry, index) => (
+                            <div key={index} className="rounded-md border p-3">
+                              <textarea
+                                className="min-h-16 w-full bg-background text-sm"
+                                value={entry.text}
+                                readOnly={editing.status !== "draft"}
+                                onChange={e =>
+                                  setDraft({
+                                    ...draft,
+                                    [key]: draft[key].map((item, i) =>
+                                      i === index ? { ...item, text: e.target.value } : item
+                                    )
+                                  })
+                                }
+                              />
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                {/* <p className="text-xs text-muted-foreground">
                                 依据：{entry.sourceRefs.map(sourceLabel).join("、")}
                               </p> */}
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setDraft({ ...draft, [key]: draft[key].filter((_, i) => i !== index) })}
-                              >
-                                移除此项
-                              </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() =>
+                                    setDraft({ ...draft, [key]: draft[key].filter((_, i) => i !== index) })
+                                  }
+                                >
+                                  移除此项
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            setDraft({ ...draft, [key]: [...draft[key], { text: "", sourceRefs: ["teacher-review"] }] })
-                          }
-                          disabled={draft[key].length >= 8}
-                        >
-                          添加教师评价
-                        </Button>
-                      </section>
-                    ))}
+                          ))}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                [key]: [...draft[key], { text: "", sourceRefs: ["teacher-review"] }]
+                              })
+                            }
+                            disabled={draft[key].length >= 8}
+                          >
+                            添加教师评价
+                          </Button>
+                        </section>
+                      ))}
                   </>
                 )}
               </div>

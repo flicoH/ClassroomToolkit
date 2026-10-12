@@ -508,6 +508,222 @@ describe('report generation input', () => {
       });
     },
   );
+  it('generates v2 growth feedback for each student without PDF or teaching content', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([]);
+    const assessment = {
+      learningReadiness: '会准备材料',
+      communicationCooperation: '主动合作',
+      independenceRules: '遵守规则',
+      overallUnderstanding: '逐渐独立',
+    };
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      courseSelections: [
+        { subjectId: 'science', courseScope: '', manualContent: '' },
+      ],
+      studentFeedback: [
+        { ...feedback, learningMastery: {}, growthAssessment: assessment },
+        {
+          studentId: 'two',
+          growthAssessment: {
+            ...assessment,
+            learningReadiness: '在提示下准备材料',
+          },
+        },
+      ],
+    });
+    const rows = reports.save.mock.calls.map(([row]) => row);
+    const first = generateTemplateReport(rows[0]);
+    const second = generateTemplateReport(rows[1]);
+    expect(first.learningContents).toEqual([]);
+    expect(first.growthAssessment).toEqual(assessment);
+    expect(second.growthAssessment!.learningReadiness).toBe('在提示下准备材料');
+    expect(first.homeSuggestions).toEqual([]);
+    expect(() =>
+      parseStudentFeedback(
+        [{ studentId: 'one', growthAssessment: { unknown: '内容' } }],
+        ['one'],
+        [],
+      ),
+    ).toThrow('未知项目');
+    expect(() =>
+      validateGeneratedReportContent(first, rows[0].snapshot),
+    ).not.toThrow();
+    expect(() =>
+      parseStudentFeedback(
+        [
+          {
+            studentId: 'one',
+            growthAssessment: { learningReadiness: '字'.repeat(801) },
+          },
+        ],
+        ['one'],
+        [],
+      ),
+    ).toThrow('800');
+    expect(() =>
+      parseStudentFeedback(
+        [{ studentId: 'one', growthAssessment: [] }],
+        ['one'],
+        [],
+      ),
+    ).toThrow('格式');
+    expect(() =>
+      validateGeneratedReportContent(
+        { ...first, growthAssessment: { overallUnderstanding: 5 } },
+        rows[0].snapshot,
+      ),
+    ).toThrow('800');
+  });
+  it('keeps the template overview within its limit when twenty manual subjects have long names', async () => {
+    const { service, internals, reports } = setup();
+    internals.requireSubject.mockResolvedValue({ name: '学'.repeat(100) });
+    internals.findUsableDocuments.mockResolvedValue([]);
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      studentFeedback: [],
+      courseSelections: Array.from({ length: 20 }, (_, index) => ({
+        subjectId: `subject-${index}`,
+        courseScope: '',
+        manualContent: '实际教学内容',
+      })),
+    });
+    const row = reports.save.mock.calls[0]![0];
+    const content = generateTemplateReport(row);
+    expect(content.learningContents).toHaveLength(20);
+    expect(content.courseOverview.length).toBeLessThanOrEqual(2500);
+    expect(() =>
+      validateGeneratedReportContent(content, row.snapshot),
+    ).not.toThrow();
+  });
+  it('rejects empty/manual overflow and unowned subjects without queuing reports', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([]);
+    const input = {
+      ...request,
+      period: 'term',
+      reportVersion: 'v2',
+      studentFeedback: [],
+    };
+    for (const manualContent of ['字', '字'.repeat(1001)]) {
+      await expect(
+        service.generate({
+          ...input,
+          courseSelections: [
+            { subjectId: 'science', courseScope: '', manualContent },
+          ],
+        }),
+      ).rejects.toThrow();
+    }
+    await expect(
+      service.generate({
+        ...input,
+        courseSelections: [{ subjectId: 'science', courseScope: '' }],
+      }),
+    ).rejects.toThrow('填写教学内容');
+    internals.requireSubject.mockRejectedValueOnce(new Error('学科不存在'));
+    await expect(
+      service.generate({
+        ...input,
+        courseSelections: [
+          {
+            subjectId: 'foreign',
+            courseScope: '',
+            manualContent: '实际教学内容',
+          },
+        ],
+      }),
+    ).rejects.toThrow('学科不存在');
+    expect(reports.save).not.toHaveBeenCalled();
+  });
+  it('combines teacher-written content with PDF goals and still enforces class-specific PDF availability', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([
+      { ...course, subjectId: 'english', classId: '*' },
+    ]);
+    const input = {
+      ...request,
+      reportVersion: 'v2',
+      studentFeedback: [],
+      courseSelections: [
+        { subjectId: 'english', courseScope: 'Unit1 1' },
+        {
+          subjectId: 'science',
+          courseScope: '',
+          manualContent: '认识植物的叶子',
+        },
+      ],
+    };
+    await service.generate(input);
+    const row = reports.save.mock.calls[0]![0];
+    const generated = generateTemplateReport(row);
+    expect(
+      generated.learningContents.some((item) =>
+        item.sourceRefs.includes('course:course:p4'),
+      ),
+    ).toBe(true);
+    expect(
+      generated.learningContents.some((item) => item.text === '认识植物的叶子'),
+    ).toBe(true);
+    expect(() =>
+      validateGeneratedReportContent(generated, row.snapshot),
+    ).not.toThrow();
+    internals.findUsableDocuments.mockResolvedValue([
+      { ...course, subjectId: 'english', classId: 'other-class' },
+    ]);
+    await expect(service.generate(input)).rejects.toThrow('部分学生');
+  });
+  it('generates v2 reports from teacher-written subjects without any PDF and preserves them on regeneration', async () => {
+    const { service, internals, reports } = setup();
+    internals.findUsableDocuments.mockResolvedValue([]);
+    const input = {
+      ...request,
+      reportVersion: 'v2',
+      period: 'term',
+      studentFeedback: [],
+      courseSelections: [
+        {
+          subjectId: 'science',
+          courseScope: '',
+          manualContent: '认识植物的根和叶\n观察种子发芽',
+        },
+      ],
+    };
+    const preview = await service.previewCourseScope(input);
+    expect(preview.totalPages).toBe(0);
+    expect(preview.learningContents.map((item) => item.text)).toEqual([
+      '认识植物的根和叶',
+      '观察种子发芽',
+    ]);
+    await service.generate(input);
+    const row = reports.save.mock.calls[0]![0];
+    const content = generateTemplateReport(row);
+    expect(content.learningContents.map((item) => item.text)).toEqual([
+      '认识植物的根和叶',
+      '观察种子发芽',
+    ]);
+    expect(
+      content.learningContents.every((item) => item.mastery === 'unassessed'),
+    ).toBe(true);
+    expect(() =>
+      validateGeneratedReportContent(content, row.snapshot),
+    ).not.toThrow();
+    expect(row.snapshot.courseDocuments).toEqual([]);
+    jest.spyOn(internals, 'findReport').mockResolvedValue(row);
+    internals.findUsableDocuments.mockResolvedValue([
+      { ...course, subjectId: 'science', classId: '*' },
+    ]);
+    await service.regenerate(row.id);
+    expect(reports.save.mock.calls.at(-1)![0].snapshot.courseDocuments).toEqual(
+      [],
+    );
+    expect(
+      reports.save.mock.calls.at(-1)![0].snapshot.courseSelections,
+    ).toEqual(input.courseSelections);
+  });
   it('v2 selects explicitly chosen subjects and snapshots each student pet with both courses', async () => {
     const { service, internals, reports } = setup();
     internals.findUsableDocuments.mockResolvedValue([
@@ -741,6 +957,70 @@ describe('report generation input', () => {
       }),
     ).rejects.toThrow('已选学生');
     expect(reports.save).not.toHaveBeenCalled();
+  });
+  it('passes teacher-written goals and their allowed references to AI without requiring PDFs', async () => {
+    const previous = { ...process.env };
+    const fetch = jest.spyOn(global, 'fetch');
+    try {
+      process.env.REPORT_AI_BASE_URL = 'https://example.invalid/v1';
+      process.env.REPORT_AI_API_KEY = 'test';
+      process.env.REPORT_AI_MODEL = 'test';
+      const { service, internals, reports } = setup();
+      internals.findUsableDocuments.mockResolvedValue([]);
+      await service.generate({
+        ...request,
+        reportVersion: 'v2',
+        studentFeedback: [],
+        courseSelections: [
+          {
+            subjectId: 'science',
+            courseScope: '',
+            manualContent: '认识植物的根和叶',
+          },
+        ],
+      });
+      const report = reports.save.mock.calls[0]![0];
+      fetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(generateTemplateReport(report)),
+              },
+            },
+          ],
+        }),
+      } as Response);
+      const worker = new SemesterReportWorker({} as DataSource) as unknown as {
+        generate: (
+          report: SemesterReportEntity,
+          mode: 'ai',
+        ) => Promise<Record<string, unknown>>;
+      };
+      const result = await worker.generate(report, 'ai');
+      const body = JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string);
+      const aiInput = JSON.parse(body.messages[1].content);
+      expect(aiInput.course).toEqual([]);
+      expect(aiInput.courseSelections[0].manualContent).toBe(
+        '认识植物的根和叶',
+      );
+      expect(aiInput.allowedReferences).toContain('teacher-course:science');
+      expect(result.learningContents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            text: '认识植物的根和叶',
+            mastery: 'unassessed',
+          }),
+        ]),
+      );
+      expect(() =>
+        validateGeneratedReportContent(result, report.snapshot),
+      ).not.toThrow();
+    } finally {
+      process.env = previous;
+      fetch.mockRestore();
+    }
   });
   it('passes individual teacher feedback to AI and preserves it in the report', async () => {
     const previous = { ...process.env };

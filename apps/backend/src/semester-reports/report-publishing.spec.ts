@@ -177,7 +177,7 @@ describe('report publishing', () => {
       service.addDraftSubjects('report', [
         { subjectId: 'missing', courseScope: 'Unit99' },
       ]),
-    ).rejects.toThrow('没有匹配');
+    ).rejects.toThrow('填写教学内容');
     row.status = 'published';
     await expect(
       service.addDraftSubjects('report', [
@@ -248,6 +248,105 @@ describe('report publishing', () => {
     };
     return state;
   }
+  it('adds, publishes and removes teacher-written subjects and restores their provenance', async () => {
+    const { service, row, events } = removableDraft();
+    const internals = service as unknown as {
+      requireSubject: jest.Mock;
+      findStudents: jest.Mock;
+      findUsableDocuments: jest.Mock;
+    };
+    jest
+      .spyOn(internals, 'requireSubject')
+      .mockImplementation(async (id: string) => ({
+        name: id === 'science' ? '科学' : '英语',
+      }));
+    jest
+      .spyOn(internals, 'findStudents')
+      .mockResolvedValue([{ id: 'student', classId: 'class' }]);
+    jest.spyOn(internals, 'findUsableDocuments').mockResolvedValue([]);
+    row.snapshot.courseSelections = [{ subjectId: 'english', courseScope: '' }];
+    row.snapshot.subjectName = '英语';
+    await service.addDraftSubjects('report', [
+      { subjectId: 'science', courseScope: '', manualContent: '观察种子发芽' },
+    ]);
+    const manual = (
+      row.content!.learningContents as Array<{
+        id: string;
+        text: string;
+        sourceRefs: string[];
+      }>
+    ).find((item) => item.text === '观察种子发芽')!;
+    expect(manual.sourceRefs).toEqual(['teacher-course:science']);
+    expect(row.snapshot.allowedReferences).toContain('teacher-course:science');
+    const publication = await service.publish('report');
+    const token = new URL(publication.url).pathname.split('/').pop()!;
+    const parent = await service.publicReport(token);
+    expect(
+      (
+        parent.content.learningContents as Array<{
+          text: string;
+          sourceRefs: string[];
+        }>
+      ).find((item) => item.text === manual.text)?.sourceRefs,
+    ).toEqual(['科学：教师填写的教学内容']);
+    await service.unpublish('report');
+    await service.removeDraftSubject('report', 'science');
+    expect(JSON.stringify(row.content)).not.toContain('观察种子发芽');
+    expect(row.snapshot.allowedReferences).not.toContain(
+      'teacher-course:science',
+    );
+    const deletion = events.save.mock.calls.at(-1)![0];
+    const detail = await service.getEvent('report', deletion.id);
+    const restored = await service.restoreEvent('report', deletion.id, {
+      side: 'before',
+      expectedVersion: detail.currentVersion,
+    });
+    expect(restored.content!.learningContents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: '观察种子发芽',
+          sourceRefs: ['teacher-course:science'],
+        }),
+      ]),
+    );
+  });
+  it('saves, validates and restores per-student growth dimensions with Chinese history', async () => {
+    const { service, row, events } = setup();
+    row.snapshot = { reportVersion: 'v2' };
+    const growth = {
+      learningReadiness: '会准备材料',
+      communicationCooperation: '主动合作',
+      independenceRules: '遵守规则',
+      overallUnderstanding: '逐渐独立',
+    };
+    await service.editDraft('report', { ...content, growthAssessment: growth });
+    const first = events.save.mock.calls.at(-1)![0];
+    await service.editDraft('report', {
+      ...content,
+      growthAssessment: { ...growth, learningReadiness: '自己准备材料' },
+    });
+    const detail = await service.getEvent('report', first.id);
+    expect(detail.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: '学习准备与课堂能力',
+          after: '会准备材料',
+        }),
+      ]),
+    );
+    await service.restoreEvent('report', first.id, {
+      side: 'after',
+      expectedVersion: detail.currentVersion,
+    });
+    expect(row.content!.growthAssessment).toEqual(growth);
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        growthAssessment: { ...growth, independenceRules: '字'.repeat(801) },
+      }),
+    ).rejects.toThrow('800');
+    expect(row.content!.growthAssessment).toEqual(growth);
+  });
   it('saves independent subject ratings, rejects foreign subjects and restores deleted ratings from history', async () => {
     const { service, row, events } = removableDraft();
     const english = {

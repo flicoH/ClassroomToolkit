@@ -82,6 +82,38 @@ describe('report history', () => {
     expect(JSON.stringify(result)).not.toContain('sourceRefs');
     expect(JSON.stringify(result)).not.toContain('photo');
   });
+  it('shows manual content changes without mastery labels or old ratings', () => {
+    const report = row();
+    report.content!.learningContents = [
+      {
+        id: 'manual-one',
+        section: '科学 · 教师填写',
+        text: '观察叶子',
+        mastery: 'mastered',
+        sourceRefs: ['teacher-course:science'],
+      },
+    ];
+    const before = captureReportVersion(report);
+    (
+      report.content!.learningContents as Array<Record<string, unknown>>
+    )[0]!.text = '观察叶子和根';
+    const after = captureReportVersion(report);
+    const detail = historyEventDto({
+      action: 'draft-edited',
+      details: { revision: { schema: 1, before, after } },
+    } as unknown as ReportEventEntity);
+    expect(detail.changes).toContainEqual({
+      field: '学习内容',
+      before: '科学 · 教师填写\n观察叶子',
+      after: '科学 · 教师填写\n观察叶子和根',
+    });
+    expect(JSON.stringify(detail)).not.toContain('掌握');
+    expect(before.content?.learningContents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mastery: 'mastered' }),
+      ]),
+    );
+  });
   it('invalidates recovery tokens when another tab publishes the report', () => {
     const report = row();
     report.status = 'draft';

@@ -1,5 +1,6 @@
 "use client";
 import { useId } from "react";
+import { defaultPerformanceConfig, type PerformanceField, type PerformanceSubject } from "./performance-config";
 import type { ReportEntry } from "./LearningReportView";
 import { Input } from "@/components/ui/input";
 
@@ -51,13 +52,13 @@ export function ClassroomPerformanceFields({
   value,
   onChange
 }: {
-  subjects?: Array<{ subjectId: string; name: string }>;
+  subjects?: PerformanceSubject[];
   subject: string;
   value: PerformanceRating[];
   onChange: (value: PerformanceRating[]) => void;
 }) {
   const id = useId();
-  const groups: Array<{ subjectId?: string; name: string }> =
+  const groups: Array<{ subjectId?: string; name: string; performanceConfig?: PerformanceField[] | null }> =
     subjects === undefined
       ? [{ name: subject }]
       : [...subjects, ...(value.some(item => !item.subjectId) ? [{ name: "未分学科的原课堂表现" }] : [])];
@@ -69,53 +70,74 @@ export function ClassroomPerformanceFields({
             {group.subjectId ? `${group.name}的课堂表现` : subjects ? group.name : "本期的课堂表现"}
           </h4>
           <div className="grid gap-3 sm:grid-cols-2">
-            {[
-              ...performances,
-              ...value
-                .filter(
-                  item =>
-                    item.subjectId === group.subjectId &&
-                    !performances.some(
-                      ([label]) =>
-                        (label === "英语开口" && !group.name.includes("英") ? "学科表达" : label) === item.label
-                    )
-                )
-                .map(item => [item.label, []] as [string, string[]])
-            ].map(([original, options], index) => {
-              const label = original === "英语开口" && !group.name.includes("英") ? "学科表达" : original;
-              const listId = `${id}-${groupIndex}-${index}`;
-              return (
-                <label key={label} className="space-y-1 text-sm">
-                  {label}
-                  <Input
-                    aria-label={`${group.name} ${label}`}
-                    list={listId}
-                    maxLength={100}
-                    placeholder="选择或填写实际表现"
-                    value={value.find(item => item.subjectId === group.subjectId && item.label === label)?.value ?? ""}
-                    onChange={event =>
-                      onChange([
-                        ...value.filter(item => !(item.subjectId === group.subjectId && item.label === label)),
-                        ...(event.target.value
-                          ? [
-                              {
-                                ...(group.subjectId ? { subjectId: group.subjectId } : {}),
-                                label,
-                                value: event.target.value
-                              }
-                            ]
-                          : [])
-                      ])
-                    }
-                  />
-                  <datalist id={listId}>
-                    {options.map(option => (
-                      <option key={option} value={option} />
-                    ))}
-                  </datalist>
-                </label>
-              );
-            })}
+            {(() => {
+              const configured: Array<[string, string[]]> = group.subjectId
+                ? (group.performanceConfig ?? defaultPerformanceConfig()).map(field => [field.label, field.options])
+                : performances.map(([label, options]) => [
+                    label === "英语开口" && !group.name.includes("英") ? "学科表达" : label,
+                    options
+                  ]);
+              // Keep previously saved categories and values visible when a teacher changes the current configuration.
+              const fields = [
+                ...configured,
+                ...value
+                  .filter(
+                    item => item.subjectId === group.subjectId && !configured.some(([label]) => label === item.label)
+                  )
+                  .map(item => [item.label, []] as [string, string[]])
+              ];
+              return fields.map(([label, options], index) => {
+                const listId = `${id}-${groupIndex}-${index}`;
+                const selected =
+                  value.find(item => item.subjectId === group.subjectId && item.label === label)?.value ?? "";
+                const update = (next: string) =>
+                  onChange([
+                    ...value.filter(item => !(item.subjectId === group.subjectId && item.label === label)),
+                    ...(next
+                      ? [{ ...(group.subjectId ? { subjectId: group.subjectId } : {}), label, value: next }]
+                      : [])
+                  ]);
+                return (
+                  <label key={label} className="space-y-1 text-sm">
+                    {label}
+                    {group.subjectId ? (
+                      <select
+                        aria-label={`${group.name} ${label}`}
+                        className="h-10 w-full min-w-0 rounded-md border bg-background px-2"
+                        value={selected}
+                        onChange={event => update(event.target.value)}
+                      >
+                        <option value="">暂不评价（不显示在报告中）</option>
+                        {selected && !options.includes(selected) && (
+                          <option value={selected}>{selected}（原记录）</option>
+                        )}
+                        {options.map(option => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <>
+                        <Input
+                          aria-label={`${group.name} ${label}`}
+                          list={listId}
+                          maxLength={100}
+                          placeholder="选择或填写实际表现"
+                          value={selected}
+                          onChange={event => update(event.target.value)}
+                        />
+                        <datalist id={listId}>
+                          {options.map(option => (
+                            <option key={option} value={option} />
+                          ))}
+                        </datalist>
+                      </>
+                    )}
+                  </label>
+                );
+              });
+            })()}
           </div>
         </section>
       ))}

@@ -1,3 +1,4 @@
+import { GrowthAssessmentView, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
 import type { ScoreDetails } from "./ScoreDetailsView";
@@ -10,6 +11,7 @@ export type LearningContent = ReportEntry & {
 };
 export type LearningReportContent = {
   reportVersion?: "v2";
+  growthAssessment?: GrowthAssessment;
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
   petAsOf?: string;
@@ -42,6 +44,11 @@ export type LearningReportData = {
   courseScope?: string | null;
   content: LearningReportContent;
 };
+
+/** Manual IDs survive the public API's conversion of references to Chinese labels. */
+export function showsLearningMastery(item: Pick<LearningContent, "id" | "sourceRefs">) {
+  return !item.id.startsWith("manual-") && !item.sourceRefs.some(ref => ref.startsWith("teacher-course:"));
+}
 
 export const masteryLabels = {
   unassessed: "待评价",
@@ -115,44 +122,87 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         </div>
       </header>
       <div className="space-y-4 p-3 sm:space-y-8 sm:p-9">
-        <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-          <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
-            <BookOpenText className="h-5 w-5 text-indigo-600" />
-            {periodTitles[report.period]}学习内容与掌握
-          </h2>
-          <div className="space-y-4">
-            {[...sections].map(([section, items]) => (
-              <div key={section} className="rounded-2xl border border-slate-100 bg-white p-3 sm:p-5">
-                <h3 className="mb-3 font-semibold text-indigo-950">{section}</h3>
-                <div className="divide-y divide-slate-100">
-                  {items.map(item => (
-                    <div key={item.id} className="flex flex-col items-start gap-2 py-3 sm:flex-row sm:gap-3">
-                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-7 text-slate-700">
-                        {item.text}
-                      </p>
-                      <span
-                        className={`mt-1 shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${masteryColors[item.mastery] ?? masteryColors.unassessed}`}
-                      >
-                        {masteryLabels[item.mastery] ?? "待评价"}
-                      </span>
-                    </div>
-                  ))}
+        {content.reportVersion !== "v2" && (
+          <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
+            <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
+              <BookOpenText className="h-5 w-5 text-indigo-600" />
+              {periodTitles[report.period]}学习内容
+              {!content.learningContents?.length || content.learningContents.some(showsLearningMastery) ? "与掌握" : ""}
+            </h2>
+            <div className="space-y-4">
+              {[...sections].map(([section, items]) => (
+                <div key={section} className="rounded-2xl border border-slate-100 bg-white p-3 sm:p-5">
+                  <h3 className="mb-3 font-semibold text-indigo-950">{section}</h3>
+                  <div className="divide-y divide-slate-100">
+                    {items.map(item => (
+                      <div key={item.id} className="flex flex-col items-start gap-2 py-3 sm:flex-row sm:gap-3">
+                        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-7 text-slate-700">
+                          {item.text}
+                        </p>
+                        {showsLearningMastery(item) && (
+                          <span
+                            className={`mt-1 shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${masteryColors[item.mastery] ?? masteryColors.unassessed}`}
+                          >
+                            {masteryLabels[item.mastery] ?? "待评价"}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
+              ))}
+              {!sections.size && <p className="text-sm text-slate-500">暂未整理逐项学习内容，请由老师补充。</p>}
+            </div>
+          </section>
+        )}
+        {content.reportVersion === "v2" && (
+          <>
+            <GrowthAssessmentView
+              value={content.growthAssessment}
+              periodTitle={periodTitles[report.period] ?? "本期"}
+            />
+            <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
+              <h2 className="mb-4 text-lg font-bold text-sky-900">{periodTitles[report.period]}学习表现</h2>
+              <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                {(content.reportSubjects ?? []).map(subject => (
+                  <section
+                    key={subject.subjectId}
+                    aria-label={`${subject.name}的课堂表现`}
+                    className="min-w-0 border-b border-slate-100 py-4"
+                  >
+                    <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
+                    <p className="mb-3 mt-1 text-sm font-semibold text-violet-700">课堂表现记录</p>
+                    {(content.classroomPerformance ?? [])
+                      .filter(item => item.subjectId === subject.subjectId)
+                      .map((item, index) => {
+                        const separator = item.text.indexOf(" · ");
+                        return (
+                          <p
+                            key={index}
+                            className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
+                          >
+                            {separator >= 0 ? (
+                              <>
+                                <span className="mr-2 font-semibold text-teal-700">
+                                  {item.text.slice(0, separator)}：
+                                </span>
+                                {item.text.slice(separator + 3)}
+                              </>
+                            ) : (
+                              item.text
+                            )}
+                          </p>
+                        );
+                      })}
+                    {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
+                      <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
+                    )}
+                  </section>
+                ))}
               </div>
-            ))}
-            {!sections.size && <p className="text-sm text-slate-500">暂未整理逐项学习内容，请由老师补充。</p>}
-          </div>
-        </section>
-        {content.reportVersion === "v2" &&
-          (content.reportSubjects ?? []).map(subject => (
-            <section key={subject.subjectId} className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-              <h3 className="mb-4 text-lg font-bold">{subject.name}的课堂表现</h3>
-              <Entries
-                entries={(content.classroomPerformance ?? []).filter(item => item.subjectId === subject.subjectId)}
-                empty="老师暂未填写具体课堂表现。"
-              />
             </section>
-          ))}
+          </>
+        )}
         {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.some(item => !item.subjectId))) && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             {content.reportVersion !== "v2" && (
@@ -218,12 +268,14 @@ export function LearningReportView({ report }: { report: LearningReportData; for
             />
           </section>
         </div>
-        <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-          <h2 className="mb-4 text-lg font-bold">回家可以这样练</h2>
-          <div className="text-slate-700">
-            <Entries entries={content.homeSuggestions} empty="老师暂未安排家庭练习。" />
-          </div>
-        </section>
+        {content.reportVersion !== "v2" && (
+          <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
+            <h2 className="mb-4 text-lg font-bold">回家可以这样练</h2>
+            <div className="text-slate-700">
+              <Entries entries={content.homeSuggestions} empty="老师暂未安排家庭练习。" />
+            </div>
+          </section>
+        )}
       </div>
       <footer className="flex items-center justify-center gap-2 border-t border-slate-100 px-5 py-5 text-xs text-slate-400">
         <Heart className="h-4 w-4 text-rose-400" />

@@ -3,8 +3,10 @@ import type { SemesterReportEntity } from './semester-report.entity';
 import { extractLearningContents, type LearningContent } from './course-scope';
 import {
   parseReportDetails,
+  parseGrowthAssessment,
   type ReportDetails,
   type StudentFeedback,
+  type CourseSelection,
 } from './report-input';
 
 export type ReportGenerationMode = 'template' | 'ai';
@@ -22,7 +24,7 @@ type Snapshot = {
   petHistoryStatus?: 'recorded' | 'unavailable';
   classroomPhoto?: string | null;
   subjectName?: string;
-  courseSelections?: Array<{ subjectId: string; courseScope: string }>;
+  courseSelections?: CourseSelection[];
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   student?: { name?: string };
   courseScope?: string;
@@ -155,11 +157,17 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
     ...(feedback?.highlight
       ? { strengths: teacherEntry(feedback.highlight) }
       : {}),
-    ...(snapshot.reportVersion === 'v2' ? { areasToImprove: [] } : {}),
+    ...(snapshot.reportVersion === 'v2'
+      ? {
+          areasToImprove: [],
+          homeSuggestions: [],
+          growthAssessment: feedback?.growthAssessment,
+        }
+      : {}),
     ...(feedback?.nextFocus
       ? { areasToImprove: teacherEntry(feedback.nextFocus) }
       : {}),
-    ...(feedback?.homePractice
+    ...(snapshot.reportVersion !== 'v2' && feedback?.homePractice
       ? { homeSuggestions: teacherEntry(feedback.homePractice) }
       : {}),
     reportDetails: snapshot.reportDetails,
@@ -202,12 +210,26 @@ export function generateTemplateReport(report: SemesterReportEntity) {
   const courses = (snapshot.courseDocuments ?? []).filter(
     (document) => document.pages?.length,
   );
-  const courseReferences = courses
-    .flatMap((document) =>
+  const courseReferences = [
+    ...(snapshot.courseSelections ?? [])
+      .filter((selection) => selection.manualContent)
+      .map((selection) => `teacher-course:${selection.subjectId}`),
+    ...courses.flatMap((document) =>
       document.pages.map((page) => `course:${document.id}:p${page.page}`),
+    ),
+  ].filter((reference) => allowed.has(reference));
+  if (
+    !courseReferences.length &&
+    !(
+      snapshot.reportVersion === 'v2' &&
+      snapshot.courseSelections?.length &&
+      snapshot.courseSelections.every(
+        (selection) =>
+          selection.manualContent !== undefined &&
+          !selection.manualContent.trim(),
+      )
     )
-    .filter((reference) => allowed.has(reference));
-  if (!courseReferences.length)
+  )
     throw new Error('报告缺少可追溯的课程页码依据，请重新选择课程资料生成');
   const scores = snapshot.scoreSummary ?? {};
   const records = (scores.records ?? []).filter(
@@ -253,7 +275,15 @@ export function generateTemplateReport(report: SemesterReportEntity) {
     const pages = document.pages.map((page) => page.page);
     return `${document.fileName.slice(0, 80)}（PDF 第 ${pages.slice(0, 10).join('、')} 页${pages.length > 10 ? '等' : ''}）`;
   });
-  const courseOverview = `${period}授课范围：${scope}。参考课程资料：${sourceNames.join('；')}${courses.length > 3 ? '等' : ''}。课程计划中的目标仅作为教学背景，不能据此认定学生已达成目标。具体课堂学习情况请由老师核对并补充。`;
+  sourceNames.push(
+    ...(snapshot.courseSelections ?? [])
+      .filter((selection) => selection.manualContent !== undefined)
+      .map(
+        (selection) =>
+          `${snapshot.reportSubjects?.find((subject) => subject.subjectId === selection.subjectId)?.name ?? '所选学科'}${selection.manualContent ? '（教师填写的教学内容）' : '（教学内容待补充）'}`,
+      ),
+  );
+  const courseOverview = `${period}授课范围：${scope}。参考课程资料：${sourceNames.slice(0, 3).join('；')}${sourceNames.length > 3 || courses.length > 3 ? '等' : ''}。课程计划中的目标仅作为教学背景，不能据此认定学生已达成目标。具体课堂学习情况请由老师核对并补充。`;
 
   const grouped = new Map<
     string,
@@ -317,6 +347,9 @@ export function generateTemplateReport(report: SemesterReportEntity) {
     teacherInput?.classroomPerformance.length ||
     teacherInput?.highlight ||
     teacherInput?.nextFocus ||
+    Object.values(teacherInput?.growthAssessment ?? {}).some((value) =>
+      value.trim(),
+    ) ||
     Object.values(teacherInput?.learningMastery ?? {}).some(
       (value) => value !== 'unassessed',
     ),
@@ -358,6 +391,8 @@ export function validateGeneratedReportContent(
     )
   )
     throw new Error('积分明细必须与报告生成时的周期记录一致');
+  if (content.growthAssessment !== undefined)
+    parseGrowthAssessment(content.growthAssessment);
   if (content.reportDetails !== undefined)
     parseReportDetails(content.reportDetails);
   const allowed = new Set(
