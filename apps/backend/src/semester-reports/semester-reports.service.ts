@@ -108,6 +108,7 @@ export class SemesterReportsService {
   }
 
   async createTerm(input: Record<string, string>) {
+    if (this.teacher.accountType === 'sub') this.teacher.requireMainAccount();
     if (
       !input.name?.trim() ||
       !this.validDate(input.startDate) ||
@@ -127,6 +128,7 @@ export class SemesterReportsService {
   }
 
   async createSubject(input: Record<string, string>) {
+    if (this.teacher.accountType === 'sub') this.teacher.requireMainAccount();
     if (!input.name?.trim()) throw new BadRequestException('请填写学科名称');
     return this.subjects.save(
       this.subjects.create({
@@ -140,6 +142,7 @@ export class SemesterReportsService {
   }
 
   async updateSubjectPerformance(id: string, input: Record<string, unknown>) {
+    if (this.teacher.accountType === 'sub') this.teacher.requireMainAccount();
     const subject = await this.requireSubject(id);
     const performanceConfig = parsePerformanceConfig(input.performanceConfig);
     return this.subjects.save({ ...subject, performanceConfig });
@@ -485,6 +488,10 @@ export class SemesterReportsService {
         reportSubjects: courseSubjects,
         classroomPhoto: classroomPhoto ?? null,
         ...(await this.petForPeriod(student, end)),
+        initiatedBy: {
+          id: this.teacher.actorAccountId ?? teacherId,
+          name: this.teacher.actorDisplayName ?? '教师',
+        },
         generationMode,
         learningContents: isV2
           ? learningContents.filter((item) =>
@@ -660,13 +667,23 @@ export class SemesterReportsService {
     await this.findReport(id);
     // Listing must not load every version's PDFs and photo bytes into memory.
     const events = await this.events.find({
-      select: ['id', 'action', 'createdAt'],
+      select: [
+        'id',
+        'action',
+        'createdAt',
+        'actorAccountId',
+        'actorNameSnapshot',
+        'actorType',
+      ],
       where: { teacherId: this.teacher.teacherId, reportId: id },
       order: { createdAt: 'ASC', id: 'ASC' },
     });
     return events.map((event) => {
-      const { id, action, label, createdAt } = historyEventDto(event, false);
-      return { id, action, label, createdAt };
+      const { id, action, label, createdAt, actor } = historyEventDto(
+        event,
+        false,
+      );
+      return { id, action, label, createdAt, actor };
     });
   }
 
@@ -740,8 +757,17 @@ export class SemesterReportsService {
     });
   }
 
-  async editDraft(id: string, content: Record<string, unknown>) {
+  async editDraft(
+    id: string,
+    content: Record<string, unknown>,
+    expectedVersion?: unknown,
+  ) {
     return this.withReportLock(id, async (row, manager) => {
+      if (
+        expectedVersion !== undefined &&
+        expectedVersion !== reportVersionToken(row)
+      )
+        throw new ConflictException('报告已被其他账号修改，请重新加载后编辑');
       const before = captureReportVersion(row);
       if (row.status !== 'draft')
         throw new BadRequestException('只有草稿可以编辑');
@@ -1443,6 +1469,13 @@ export class SemesterReportsService {
         ],
       };
     }
+    row.snapshot = {
+      ...row.snapshot,
+      initiatedBy: {
+        id: this.teacher.actorAccountId ?? this.teacher.teacherId,
+        name: this.teacher.actorDisplayName ?? '教师',
+      },
+    };
     row.status = 'queued';
     row.errorMessage = null;
     await this.reports.save(row);
@@ -1852,6 +1885,7 @@ export class SemesterReportsService {
       errorMessage: row.errorMessage,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt ?? null,
+      currentVersion: reportVersionToken(row),
       publishedAt: row.publishedAt,
       generationMode: row.snapshot?.generationMode ?? null,
     };
@@ -1912,6 +1946,9 @@ export class SemesterReportsService {
         teacherId: this.teacher.teacherId,
         reportId: input.reportId ?? null,
         documentId: input.documentId ?? null,
+        actorAccountId: this.teacher.actorAccountId ?? null,
+        actorNameSnapshot: this.teacher.actorDisplayName ?? null,
+        actorType: this.teacher.accountType ?? 'main',
         action,
         details,
       }),

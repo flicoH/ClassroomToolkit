@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Inject,
   Injectable,
   Scope,
@@ -12,11 +13,24 @@ export class TeacherContext {
   constructor(
     @Inject(REQUEST) private readonly request: AuthenticatedRequest,
   ) {}
-
-  /** 从请求上下文读取当前教师 ID，供持久层做数据隔离。 */
+  /** 业务表继续使用主账号 ID，避免迁移既有学生和报告归属。 */
   get teacherId() {
-    const teacherId = this.request.teacher?.id;
-    if (!teacherId) throw new UnauthorizedException('未登录');
-    return teacherId;
+    const id = this.request.teacher?.ownerAccountId || this.request.teacher?.id;
+    if (!id) throw new UnauthorizedException('未登录');
+    return id;
+  }
+  get actorAccountId() {
+    return this.request.teacher?.id || this.teacherId;
+  }
+  get actorDisplayName() {
+    return this.request.teacher?.name || '教师';
+  }
+  get accountType() {
+    return this.request.teacher?.accountType || 'main';
+  }
+  /** 基础配置共享，但仅主账号可维护。 */
+  requireMainAccount() {
+    if (this.accountType === 'sub')
+      throw new ForbiddenException('此操作仅限主账号');
   }
 }

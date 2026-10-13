@@ -21,7 +21,8 @@ import {
   X
 } from "lucide-react";
 import { CartoonSemesterReportIcon } from "@/components/icons/CartoonAppIcons";
-import request from "@/lib/request";
+import { useAuthStore } from "@/store/authStore";
+import sharedRequest from "@/lib/request";
 import { copyText } from "@/lib/clipboard";
 import { createUuid } from "@/lib/id";
 import {
@@ -63,6 +64,7 @@ type Report = {
   status: string;
   content: Record<string, unknown> | null;
   errorMessage?: string;
+  currentVersion?: string;
   updatedAt?: string | null;
   generationMode?: "template" | "ai" | null;
   share?: { id: string; url: string } | null;
@@ -156,6 +158,28 @@ function errorMessage(error: unknown) {
 }
 
 export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
+  const request = useMemo(
+    () => ({
+      get: sharedRequest.get,
+      post: ((url: string, data?: unknown, config?: object) =>
+        sharedRequest.post(url, data, {
+          ...config,
+          headers: { ...(config as { headers?: object })?.headers, "x-report-version": version }
+        })) as typeof sharedRequest.post,
+      patch: ((url: string, data?: unknown, config?: object) =>
+        sharedRequest.patch(url, data, {
+          ...config,
+          headers: { ...(config as { headers?: object })?.headers, "x-report-version": version }
+        })) as typeof sharedRequest.patch,
+      delete: ((url: string, config?: object) =>
+        sharedRequest.delete(url, {
+          ...config,
+          headers: { ...(config as { headers?: object })?.headers, "x-report-version": version }
+        })) as typeof sharedRequest.delete
+    }),
+    [version]
+  );
+  const canConfigure = useAuthStore(s => s.user?.accountType !== "sub");
   const isV2 = version === "v2";
   const initializedTerm = useRef(false);
   const reportTitle = isV2 ? "学期报告v2" : "学期报告";
@@ -892,7 +916,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       // Photos have their own multipart endpoint; avoid resending base64 in the JSON draft.
       const content = { ...draft };
       delete content.classroomPhoto;
-      await request.patch(`${base}/reports/${editing.id}/draft`, { content });
+      await request.patch(
+        `${base}/reports/${editing.id}/draft`,
+        { content, expectedVersion: editing.currentVersion },
+        { headers: { "x-report-version": version } }
+      );
       setEditing(null);
       await load();
     } catch (error) {
@@ -1012,7 +1040,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           <div>
             <h2 className="font-semibold">{isV2 ? "学期与学科" : "课程资料"}</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {isV2 ? "选择学期并维护学科，报告中直接勾选所需学科。" : "选择学期和学科，上传并核对课程 PDF。"}
+              {isV2
+                ? canConfigure
+                  ? "选择学期并维护学科，报告中直接勾选所需学科。"
+                  : "使用主账号配置的学期和学科，报告中直接勾选所需学科。"
+                : "选择学期和学科，上传并核对课程 PDF。"}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -1048,66 +1080,69 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               </select>
             )}
           </div>
-          <details
-            key={terms.length && subjects.length ? "ready" : "empty"}
-            data-course-setup
-            open={!terms.length || !subjects.length}
-            className="group rounded-xl border bg-muted/30 p-3"
-          >
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
-              新建学期 / 学科
-              <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-3 space-y-3">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input
-                  placeholder="学科名称（必填）"
-                  value={newSubject}
-                  onChange={e => setNewSubject(e.target.value)}
-                />
-                <Button disabled={busy || !newSubject.trim()} variant="outline" onClick={() => void createSubject()}>
-                  <Plus />
-                  添加学科
-                </Button>
+          {canConfigure && (
+            <details
+              key={terms.length && subjects.length ? "ready" : "empty"}
+              data-course-setup
+              open={!terms.length || !subjects.length}
+              className="group rounded-xl border bg-muted/30 p-3"
+            >
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                新建学期 / 学科
+                <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input
+                    placeholder="学科名称（必填）"
+                    value={newSubject}
+                    onChange={e => setNewSubject(e.target.value)}
+                  />
+                  <Button disabled={busy || !newSubject.trim()} variant="outline" onClick={() => void createSubject()}>
+                    <Plus />
+                    添加学科
+                  </Button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input
+                    placeholder="学期名称（必填）"
+                    value={newTermName}
+                    onChange={e => setNewTermName(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    aria-label="学期开始日期（必填）"
+                    value={newTermStart}
+                    onChange={e => setNewTermStart(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    aria-label="学期结束日期（必填）"
+                    value={newTermEnd}
+                    onChange={e => setNewTermEnd(e.target.value)}
+                  />
+                  <Button
+                    disabled={busy || !newTermName.trim() || !newTermStart || !newTermEnd || newTermEnd <= newTermStart}
+                    variant="outline"
+                    onClick={() => void createTerm()}
+                  >
+                    <Plus />
+                    新建学期
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  学科填写名称后点击“添加学科”；学期需同时填写名称、开始日期和结束日期，且结束日期晚于开始日期。
+                </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input
-                  placeholder="学期名称（必填）"
-                  value={newTermName}
-                  onChange={e => setNewTermName(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  aria-label="学期开始日期（必填）"
-                  value={newTermStart}
-                  onChange={e => setNewTermStart(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  aria-label="学期结束日期（必填）"
-                  value={newTermEnd}
-                  onChange={e => setNewTermEnd(e.target.value)}
-                />
-                <Button
-                  disabled={busy || !newTermName.trim() || !newTermStart || !newTermEnd || newTermEnd <= newTermStart}
-                  variant="outline"
-                  onClick={() => void createTerm()}
-                >
-                  <Plus />
-                  新建学期
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                学科填写名称后点击“添加学科”；学期需同时填写名称、开始日期和结束日期，且结束日期晚于开始日期。
-              </p>
-            </div>
-          </details>
+            </details>
+          )}
+          {!canConfigure && (!terms.length || !subjects.length) && <p>请联系主账号创建学期、学科及课堂表现配置。</p>}
           {term && (
             <p className="text-xs text-muted-foreground">
               当前学期：{term.startDate} 至 {term.endDate}
             </p>
           )}
-          {isV2 && subjects.length > 0 && (
+          {canConfigure && isV2 && subjects.length > 0 && (
             <details className="group rounded-xl border p-3">
               <summary className="min-h-11 cursor-pointer text-sm font-medium">配置学科课堂表现</summary>
               <div className="mt-3 space-y-3">

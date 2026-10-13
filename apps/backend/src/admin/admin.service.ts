@@ -1,3 +1,5 @@
+import { AccountManagementService } from '../account-management/account-management.service';
+import { Optional } from '@nestjs/common';
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
 import {
   BadRequestException,
@@ -13,7 +15,10 @@ import { FEATURES } from '../analytics/features';
 @Injectable()
 export class AdminService {
   /** 注入管理持久层，使业务校验与统计结果组装独立于具体数据库查询。 */
-  constructor(private readonly database: AdminDatabase) {}
+  constructor(
+    private readonly database: AdminDatabase,
+    @Optional() private readonly accounts?: AccountManagementService,
+  ) {}
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
     const password = body?.password;
@@ -49,6 +54,7 @@ export class AdminService {
       ...Object.fromEntries(
         Object.entries(row ?? {}).map(([k, v]) => [k, Number(v)]),
       ),
+      ...(await this.database.accountCounts()),
       ...(await this.metadata()),
     };
   }
@@ -199,6 +205,10 @@ export class AdminService {
   }
   /** 校验分页和日期范围，再委托持久层读取只读目录。 */
   async list(kind: AdminDirectory, q: AdminQueryDto) {
+    if (q.accountType && !['main', 'sub'].includes(q.accountType))
+      throw new BadRequestException('无效账号类型');
+    if (q.status && !['active', 'locked', 'deleted'].includes(q.status))
+      throw new BadRequestException('无效账号状态');
     const pagination = pageQuery(q);
     const range =
       kind === 'teachers' && (q.start || q.end) ? dateRange(q) : undefined;
@@ -216,6 +226,28 @@ export class AdminService {
     return {
       ...profile,
       ...stats,
+      ...(this.accounts
+        ? {
+            subaccounts: profile.parentAccountId
+              ? []
+              : await this.database.findSubaccounts(id),
+            teamUsage: profile.parentAccountId
+              ? null
+              : await this.accounts.usage(
+                  String(profile.ownerAccountId || id),
+                  id,
+                  q,
+                  true,
+                  true,
+                ),
+            usage: await this.accounts.usage(
+              String(profile.ownerAccountId || id),
+              id,
+              q,
+              true,
+            ),
+          }
+        : {}),
       logins: await this.logins({ ...q, teacherId: id }),
       features: await this.features({ ...q, teacherId: id, sort: 'uses' }),
     };

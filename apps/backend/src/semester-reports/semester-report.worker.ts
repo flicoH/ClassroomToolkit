@@ -93,6 +93,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     if (!claim.affected) return;
     await events.save(
       events.create({
+        actorType: 'system',
+        actorNameSnapshot: '系统生成',
         id: randomUUID(),
         teacherId: candidate.teacherId,
         reportId: candidate.id,
@@ -131,6 +133,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         await reports.save(current);
         await history.save(
           history.create({
+            actorType: 'system',
+            actorNameSnapshot: '系统生成',
             id: randomUUID(),
             teacherId: current.teacherId,
             reportId: current.id,
@@ -158,6 +162,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       );
       await events.save(
         events.create({
+          actorType: 'system',
+          actorNameSnapshot: '系统生成',
           id: randomUUID(),
           teacherId: candidate.teacherId,
           reportId: candidate.id,
@@ -250,6 +256,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       await docs.save(row);
       await events.save(
         events.create({
+          actorType: 'system',
+          actorNameSnapshot: '系统生成',
           id: randomUUID(),
           teacherId: row.teacherId,
           reportId: null,
@@ -271,6 +279,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       );
       await events.save(
         events.create({
+          actorType: 'system',
+          actorNameSnapshot: '系统生成',
           id: randomUUID(),
           teacherId: document.teacherId,
           reportId: null,

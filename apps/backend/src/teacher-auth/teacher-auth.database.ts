@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TeacherSessionEntity } from './entities/teacher-session.entity';
@@ -36,7 +36,10 @@ export class TeacherAuthDatabase {
   }
 
   /** 保存教师会话，数据库只存令牌摘要。 */
-  async saveSession(session: TeacherSession) {
+  async saveSession(
+    session: TeacherSession,
+    expected?: { passwordHash: string; sessionVersion: number },
+  ) {
     const entity = this.sessions.create({
       id: session.id,
       teacherId: session.teacherId,
@@ -44,7 +47,35 @@ export class TeacherAuthDatabase {
       createdAt: new Date(session.createdAt),
       expiresAt: new Date(session.expiresAt),
     });
-    await this.sessions.save(entity);
+    // 与主账号管理共用归属行锁，阻止密码校验后、锁定/重置期间才落库的旧登录。
+    await this.teachers.manager.transaction(async (manager) => {
+      const actor = await manager.findOne(TeacherEntity, {
+        where: { id: session.teacherId },
+      });
+      if (!actor) throw new UnauthorizedException('账号不可用');
+      const owner = await manager.findOne(TeacherEntity, {
+        where: { id: actor.parentAccountId || actor.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const current = actor.parentAccountId
+        ? await manager.findOne(TeacherEntity, {
+            where: { id: actor.id },
+            lock: { mode: 'pessimistic_write' },
+          })
+        : owner;
+      if (
+        !owner ||
+        owner.parentAccountId ||
+        owner.status !== 'active' ||
+        !current ||
+        current.status !== 'active' ||
+        (expected &&
+          (current.passwordHash !== expected.passwordHash ||
+            current.sessionVersion !== expected.sessionVersion))
+      )
+        throw new UnauthorizedException('账号状态已变化，请重新登录');
+      await manager.save(TeacherSessionEntity, entity);
+    });
     return session;
   }
 
@@ -65,6 +96,9 @@ export class TeacherAuthDatabase {
   /** 将教师实体转换为认证服务内部模型。 */
   private toTeacher(entity: TeacherEntity): Teacher {
     return {
+      sessionVersion: entity.sessionVersion,
+      parentAccountId: entity.parentAccountId,
+      status: entity.status,
       id: entity.id,
       username: entity.username,
       name: entity.name,

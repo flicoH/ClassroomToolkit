@@ -1,3 +1,4 @@
+import { AccountManagementModule } from '../account-management/account-management.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { StudentEntity } from '../students/entities/student.entity';
@@ -14,6 +15,7 @@ import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 @Module({
   imports: [
     AdminAuthModule,
+    AccountManagementModule,
     TypeOrmModule.forFeature([
       TeacherEntity,
       StudentEntity,

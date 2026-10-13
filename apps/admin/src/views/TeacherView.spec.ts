@@ -68,3 +68,63 @@ describe('Teacher password reset', () => {
     wrapper.unmount()
   })
 })
+
+describe('subaccount detail and usage', () => {
+  it('shows parent relationship, locked state and individual usage habits', async () => {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.startsWith('teachers/')
+        ? ({
+            id: 'child',
+            name: '子账号老师',
+            username: 'child-login',
+            accountType: 'sub',
+            parentAccountId: 'owner',
+            ownerAccountId: 'owner',
+            status: 'locked',
+            logins: { series: [] },
+            features: { items: [] },
+            usage: {
+              totals: { logins: 3, activeDays: 2, uses: 5 },
+              features: [{ name: '学期报告', reportVersion: 'v2', uses: 4, opens: 2 }],
+              hours: [{ hour: 9, uses: 4 }],
+              days: [],
+            },
+          } as never)
+        : ({ items: [], total: 0 } as never),
+    )
+    const wrapper = shallowMount(TeacherView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('子账号')
+    expect(wrapper.text()).toContain('已锁定')
+    expect(wrapper.text()).toContain('所属主账号')
+    expect(wrapper.text()).toContain('主动登录 3 次')
+    expect(wrapper.text()).toContain('9时：4次')
+    expect(wrapper.text()).toContain('v2')
+    wrapper.unmount()
+  })
+  it('shows retained subaccount history for main accounts and hides reset for deleted accounts', async () => {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.startsWith('teachers/')
+        ? ({
+            id: 'owner',
+            name: '主账号',
+            accountType: 'main',
+            status: 'deleted',
+            subaccounts: [{ id: 'child', name: '历史子账号', username: 'old', status: 'deleted' }],
+            logins: { series: [] },
+            features: { items: [] },
+          } as never)
+        : ({ items: [], total: 0 } as never),
+    )
+    const wrapper = shallowMount(TeacherView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('历史子账号')
+    expect(wrapper.text()).toContain('已删除')
+    expect(wrapper.findAll('button').some((button) => button.text() === '重置密码')).toBe(false)
+    wrapper.unmount()
+  })
+})

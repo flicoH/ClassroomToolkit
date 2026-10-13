@@ -314,6 +314,15 @@ export function historyEventDto(
   if (includeChanges && stateChanges[event.action])
     changes.push(stateChanges[event.action]!);
   return {
+    actor: {
+      id: event.actorAccountId ?? null,
+      name:
+        event.actorNameSnapshot ||
+        (event.actorType === 'system'
+          ? '系统生成'
+          : '历史记录（未记录操作人）'),
+      type: event.actorType || 'unknown',
+    },
     id: event.id,
     action: event.action,
     label: labels[event.action] ?? '其他报告操作',

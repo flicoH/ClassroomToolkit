@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAuthStore } from "@/store/authStore";
 import { SemesterReports } from "./SemesterReports";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }));
@@ -14,6 +15,7 @@ describe("SemesterReports mobile workflow", () => {
     vi.resetAllMocks();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     empty = false;
+    useAuthStore.setState({ user: null });
     api.get.mockImplementation(async (url: string) => {
       if (url.endsWith("report-terms"))
         return empty ? [] : [{ id: "term", name: "秋季", startDate: "2026-09-01", endDate: "2026-12-31" }];
@@ -89,6 +91,28 @@ describe("SemesterReports mobile workflow", () => {
     return [...container.querySelectorAll("button")].find(button => button.textContent?.includes("生成 1 份报告"))!;
   }
 
+  it.each(["v1", "v2"] as const)(
+    "%s hides all account setup from subaccounts while leaving reports accessible",
+    async version => {
+      useAuthStore.setState({
+        user: {
+          id: "child",
+          ownerAccountId: "owner",
+          name: "李老师",
+          email: "",
+          accountType: "sub",
+          capabilities: { accountManagement: false, reportConfiguration: false }
+        }
+      });
+      await act(async () => root.render(<SemesterReports version={version} />));
+      expect(container.textContent).not.toContain("新建学期 / 学科");
+      expect(container.textContent).not.toContain("配置学科课堂表现");
+      expect(container.querySelector("[data-course-setup]")).toBeNull();
+      expect(container.textContent).toContain("学期");
+      expect(api.get).toHaveBeenCalledWith(expect.stringContaining("report-terms"));
+    }
+  );
+
   it("saves per-subject configuration, keeps edits after failure and generates only chosen ratings", async () => {
     vi.useFakeTimers();
     try {
@@ -119,6 +143,9 @@ describe("SemesterReports mobile workflow", () => {
         "/api/semester-reports/report-subjects/subject/performance-config",
         expect.objectContaining({
           performanceConfig: expect.arrayContaining([{ label: "课程任务", options: ["完成挑战", "需要支持"] }])
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
         })
       );
       const task = container.querySelector<HTMLSelectElement>('[aria-label="阅读 课程任务"]')!;
@@ -136,6 +163,9 @@ describe("SemesterReports mobile workflow", () => {
               classroomPerformance: [{ subjectId: "subject", label: "课程任务", value: "完成挑战" }]
             })
           ]
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
         })
       );
     } finally {
@@ -201,6 +231,9 @@ describe("SemesterReports mobile workflow", () => {
             { label: "同伴协作", options: ["主动完成", "需要引导"] },
             { label: "课堂表达", options: ["主动完成", "需要引导"] }
           ])
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
         })
       );
       act(() => {
@@ -333,7 +366,10 @@ describe("SemesterReports mobile workflow", () => {
       await act(async () => vi.advanceTimersByTimeAsync(450));
       expect(api.post).toHaveBeenCalledWith(
         expect.stringContaining("preview-scope"),
-        expect.objectContaining({ courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }] })
+        expect.objectContaining({ courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }] }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+        })
       );
       expect(generate.disabled).toBe(false);
       expect(container.querySelector('[aria-label="阅读教学内容"]')).toBeNull();
@@ -355,6 +391,9 @@ describe("SemesterReports mobile workflow", () => {
               growthAssessment: expect.objectContaining({ learningReadiness: "能准备学习材料" })
             })
           ])
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
         })
       );
     } finally {
@@ -422,6 +461,9 @@ describe("SemesterReports mobile workflow", () => {
           period: "term",
           studentIds: ["student"],
           courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }]
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
         })
       );
       expect(container.querySelector('[role="status"]')?.textContent).toContain("已提交 1 份报告");
@@ -617,7 +659,10 @@ describe("SemesterReports mobile workflow", () => {
     });
     expect(api.post).toHaveBeenLastCalledWith(
       "/api/semester-reports/course-documents/preview-scope",
-      expect.objectContaining({ courseSelections: [{ subjectId: "english", courseScope: "", manualContent: "" }] })
+      expect.objectContaining({ courseSelections: [{ subjectId: "english", courseScope: "", manualContent: "" }] }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
     );
     act(() => math.click());
     act(() => english.click());
@@ -626,7 +671,10 @@ describe("SemesterReports mobile workflow", () => {
     });
     expect(api.post).toHaveBeenLastCalledWith(
       "/api/semester-reports/course-documents/preview-scope",
-      expect.objectContaining({ courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }] })
+      expect.objectContaining({ courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }] }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
     );
     expect(container.querySelector<HTMLTextAreaElement>('textarea[placeholder^="填写实际观察与鼓励话语"]')!.value).toBe(
       "保留的老师寄语"
@@ -671,7 +719,13 @@ describe("SemesterReports mobile workflow", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("云端连接失败");
     api.post.mockRejectedValueOnce(new Error("额度不足，请稍后重试"));
     await act(async () => button("重试").click());
-    expect(api.post).toHaveBeenCalledWith("/api/semester-reports/course-documents/doc/retry");
+    expect(api.post).toHaveBeenCalledWith(
+      "/api/semester-reports/course-documents/doc/retry",
+      undefined,
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(container.querySelector('[role="status"]')?.textContent).toContain("额度不足");
     expect(button("课程资料").getAttribute("aria-pressed")).toBe("true");
   });
@@ -936,7 +990,7 @@ describe("SemesterReports mobile workflow", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/api/semester-reports/reports/report/classroom-photo",
         expect.any(FormData),
-        expect.objectContaining({ headers: { "Content-Type": undefined } })
+        expect.objectContaining({ headers: { "Content-Type": undefined, "x-report-version": version } })
       );
       expect((api.post.mock.calls.at(-1)![1] as FormData).get("file")).toBe(boundaryFile);
       expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')?.src).toContain("base64,new");
@@ -1081,9 +1135,15 @@ describe("SemesterReports mobile workflow", () => {
       }
     });
     await act(async () => button("添加到当前报告").click());
-    expect(api.post).toHaveBeenLastCalledWith("/api/semester-reports/reports/report/course-subjects", {
-      courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }]
-    });
+    expect(api.post).toHaveBeenLastCalledWith(
+      "/api/semester-reports/reports/report/course-subjects",
+      {
+        courseSelections: [{ subjectId: "math", courseScope: "", manualContent: "" }]
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(modal.querySelector('[aria-label="选择数学课程"]')).toBeNull();
     expect(modal.textContent).toContain("所有学科均已添加到当前报告");
     expect(modal.textContent).not.toContain("新增数学内容");
@@ -1106,7 +1166,12 @@ describe("SemesterReports mobile workflow", () => {
       removedReferences: ["course:math-doc:p1"]
     });
     await act(async () => modal.querySelector<HTMLButtonElement>('[aria-label="删除数学学科"]')!.click());
-    expect(api.delete).toHaveBeenLastCalledWith("/api/semester-reports/reports/report/course-subjects/math");
+    expect(api.delete).toHaveBeenLastCalledWith(
+      "/api/semester-reports/reports/report/course-subjects/math",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(modal.textContent).not.toContain("新增数学内容");
     expect(modal.querySelector('[aria-label="选择数学课程"]')).not.toBeNull();
     expect(modal.querySelector<HTMLButtonElement>('[aria-label="删除英语学科"]')!.disabled).toBe(true);
@@ -1352,7 +1417,12 @@ describe("SemesterReports mobile workflow", () => {
     publishedReport();
     await render();
     await act(async () => button("撤销链接并编辑").click());
-    expect(api.delete).toHaveBeenCalledWith("/api/semester-reports/reports/report/shares/share");
+    expect(api.delete).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/report/shares/share",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("报告草稿");
     expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("分享链接已撤销");
     expect(container.querySelector('input[aria-label="示例学生 的家长链接"]')).toBeNull();
@@ -1363,9 +1433,15 @@ describe("SemesterReports mobile workflow", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => button("保存草稿").click());
-    expect(api.patch).toHaveBeenCalledWith("/api/semester-reports/reports/report/draft", {
-      content: expect.objectContaining({ summary: "修改后的老师寄语" })
-    });
+    expect(api.patch).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/report/draft",
+      {
+        content: expect.objectContaining({ summary: "修改后的老师寄语" })
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
@@ -1394,7 +1470,13 @@ describe("SemesterReports mobile workflow", () => {
     publishedReport(false);
     await render();
     await act(async () => button("重新编辑").click());
-    expect(api.post).toHaveBeenCalledWith("/api/semester-reports/reports/report/unpublish");
+    expect(api.post).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/report/unpublish",
+      undefined,
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-report-version": expect.stringMatching(/^v[12]$/) })
+      })
+    );
     expect(api.delete).not.toHaveBeenCalled();
     expect(button("保存草稿")).toBeTruthy();
   });

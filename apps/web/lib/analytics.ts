@@ -24,7 +24,14 @@ export function trackFeatureOpen(contentKey: string) {
     credentials: "same-origin",
     keepalive: true,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ feature, kind: "open", eventId })
+    body: JSON.stringify({
+      feature,
+      kind: "open",
+      eventId,
+      ...(contentKey === "semesterReports" || contentKey === "semesterReportsV2"
+        ? { reportVersion: contentKey === "semesterReportsV2" ? "v2" : "v1" }
+        : {})
+    })
   }).catch(() => {
     // 网络失败在此忽略，不中断课堂；到达后端后的写入失败由后端日志记录。
   });

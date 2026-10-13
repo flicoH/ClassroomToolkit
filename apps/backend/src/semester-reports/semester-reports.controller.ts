@@ -120,9 +120,12 @@ export class SemesterReportsController {
   @TrackFeature('semester-reports', 'save-draft')
   editDraft(
     @Param('id') id: string,
-    @Body() body: { content: Record<string, unknown> },
+    @Body()
+    body: { content: Record<string, unknown>; expectedVersion?: unknown },
   ) {
-    return this.reports.editDraft(id, body.content);
+    if (typeof body?.expectedVersion !== 'string' || !body.expectedVersion)
+      throw new BadRequestException('请重新加载报告后保存，缺少报告版本');
+    return this.reports.editDraft(id, body.content, body.expectedVersion);
   }
   @Post('reports/:id/course-subjects')
   addDraftSubjects(

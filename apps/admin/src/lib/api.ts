@@ -70,7 +70,22 @@ export interface Ranking extends Meta {
   items: Feature[]
   activeTeachers: number
 }
+export interface AccountUsage {
+  totals: Record<string, number>
+  features: Array<{ name: string; reportVersion: string | null; uses: number; opens: number }>
+  hours: Array<{ hour: number; uses: number }>
+  days: Array<{ date: string; uses: number }>
+  reportActions: Array<{ action: string; count: number }>
+}
 export interface Person {
+  accountType?: 'main' | 'sub'
+  ownerAccountId?: string
+  parentAccountId?: string
+  status?: string
+  subaccountCount?: number
+  subaccounts?: Person[]
+  usage?: AccountUsage
+  teamUsage?: AccountUsage | null
   id: string
   name: string
   username?: string

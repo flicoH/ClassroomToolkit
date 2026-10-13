@@ -12,6 +12,11 @@ USE classroom_toolkit;
 -- ==============================================================================================
 
 CREATE TABLE IF NOT EXISTS teacher_auth_teachers (
+  session_version INT NOT NULL DEFAULT 0,
+  parent_account_id VARCHAR(64) NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  deleted_at DATETIME NULL,
+  INDEX idx_account_parent (parent_account_id, status),
   id VARCHAR(64) PRIMARY KEY COMMENT '教师ID',
   username VARCHAR(64) NOT NULL UNIQUE COMMENT '登录用户名',
   name VARCHAR(64) NOT NULL COMMENT '教师显示名称',
@@ -380,6 +385,10 @@ CREATE TABLE IF NOT EXISTS semester_report_shares (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='免登录家长报告链接';
 
 CREATE TABLE IF NOT EXISTS semester_report_events (
+  actor_account_id VARCHAR(64) NULL,
+  actor_name_snapshot VARCHAR(64) NULL,
+  actor_type VARCHAR(16) NOT NULL DEFAULT 'unknown',
+  INDEX idx_report_actor_time (actor_account_id, created_at),
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
   report_id VARCHAR(64) NULL, document_id VARCHAR(64) NULL,
   action VARCHAR(40) NOT NULL, details JSON NULL,
@@ -388,3 +397,13 @@ CREATE TABLE IF NOT EXISTS semester_report_events (
   INDEX idx_sr_events_doc (teacher_id, document_id, created_at),
   INDEX idx_sr_events_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告流程记录';
+
+CREATE TABLE IF NOT EXISTS account_management_audit (
+  id VARCHAR(64) PRIMARY KEY,
+  owner_account_id VARCHAR(64) NOT NULL,
+  actor_account_id VARCHAR(64) NOT NULL,
+  target_account_id VARCHAR(64) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  INDEX idx_account_audit_owner (owner_account_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

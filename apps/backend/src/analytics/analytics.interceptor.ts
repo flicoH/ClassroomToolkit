@@ -55,6 +55,10 @@ export class AnalyticsInterceptor implements NestInterceptor {
           meta.feature,
           meta.action,
           eventId,
+          ...(meta.feature === 'semester-reports' &&
+          ['v1', 'v2'].includes(String(req.headers['x-report-version']))
+            ? [req.headers['x-report-version'] as 'v1' | 'v2']
+            : []),
         );
         return result;
       }),

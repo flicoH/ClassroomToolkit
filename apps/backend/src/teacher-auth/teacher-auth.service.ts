@@ -31,7 +31,20 @@ export class TeacherAuthService {
 
   /** 注册教师账号，创建会话并记录注册与自动登录事件。 */
   async register(dto: RegisterTeacherDto) {
+    if (typeof dto?.username !== 'string' || typeof dto?.password !== 'string')
+      throw new BadRequestException('请输入账号和密码');
     const username = dto.username.trim();
+    if (
+      !username ||
+      username.length > 64 ||
+      /\s/.test(username) ||
+      dto.password.length > 256 ||
+      (dto.name !== undefined &&
+        (typeof dto.name !== 'string' || dto.name.trim().length > 64))
+    )
+      throw new BadRequestException(
+        '账号和用户名最多 64 字，账号不能包含空白；密码最多 256 位',
+      );
     const password = dto.password;
     if (!username || !password)
       throw new BadRequestException('用户名和密码不能为空');
@@ -41,6 +54,8 @@ export class TeacherAuthService {
 
     const salt = randomBytes(16).toString('hex');
     const teacher: Teacher = {
+      parentAccountId: null,
+      status: 'active',
       id: createEntityId('teacher'),
       username,
       name: dto.name?.trim() || username,
@@ -60,6 +75,13 @@ export class TeacherAuthService {
 
   /** 校验教师账号密码，登录成功后创建会话。 */
   async login(dto: LoginTeacherDto) {
+    if (
+      typeof dto?.username !== 'string' ||
+      typeof dto?.password !== 'string' ||
+      dto.username.length > 64 ||
+      dto.password.length > 256
+    )
+      throw new UnauthorizedException('用户名或密码错误');
     const teacher = await this.database.findTeacherByUsername(
       dto.username.trim(),
     );
@@ -67,6 +89,7 @@ export class TeacherAuthService {
       await this.analytics?.record(teacher?.id ?? null, 'login_failed');
       throw new UnauthorizedException('用户名或密码错误');
     }
+    await this.assertActive(teacher);
     const result = await this.createAuthResult(teacher);
     await this.analytics?.record(teacher.id, 'login');
     return result;
@@ -107,7 +130,10 @@ export class TeacherAuthService {
         Date.now() + sessionDays * 24 * 60 * 60 * 1000,
       ).toISOString(),
     };
-    await this.database.saveSession(session);
+    await this.database.saveSession(session, {
+      passwordHash: teacher.passwordHash,
+      sessionVersion: teacher.sessionVersion ?? 0,
+    });
     return { ...this.toProfile(teacher), token };
   }
 
@@ -122,7 +148,25 @@ export class TeacherAuthService {
     }
     const teacher = await this.database.findTeacherById(session.teacherId);
     if (!teacher) throw new UnauthorizedException('教师账号不存在');
+    await this.assertActive(teacher);
     return teacher;
+  }
+
+  /** 每次认证查当前状态和父账号，锁定不能依赖客户端缓存。 */
+  private async assertActive(teacher: Teacher) {
+    if (teacher.status && teacher.status !== 'active')
+      throw new UnauthorizedException('账号已锁定或删除');
+    if (teacher.parentAccountId) {
+      const owner = await this.database.findTeacherById(
+        teacher.parentAccountId,
+      );
+      if (
+        !owner ||
+        owner.parentAccountId ||
+        (owner.status && owner.status !== 'active')
+      )
+        throw new UnauthorizedException('主账号不可用');
+    }
   }
 
   /** 使用 PBKDF2 对密码加盐哈希，避免以明文保存教师密码。 */
@@ -150,6 +194,12 @@ export class TeacherAuthService {
   /** 将教师账号转换为可返回给前端的公开资料。 */
   private toProfile(teacher: Teacher): TeacherProfile {
     return {
+      accountType: teacher.parentAccountId ? 'sub' : 'main',
+      ownerAccountId: teacher.parentAccountId || teacher.id,
+      capabilities: {
+        accountManagement: !teacher.parentAccountId,
+        reportConfiguration: !teacher.parentAccountId,
+      },
       id: teacher.id,
       username: teacher.username,
       name: teacher.name,

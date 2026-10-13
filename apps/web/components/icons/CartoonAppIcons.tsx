@@ -27,6 +27,23 @@ function IconShell({ className, children, from, to }: IconProps & { children: Re
   );
 }
 
+export function CartoonAccountManagementIcon(props: IconProps) {
+  return (
+    <IconShell {...props} from="#2DD4BF" to="#0D9488">
+      <circle cx="21" cy="31" r="5" fill="#CCFBF1" />
+      <circle cx="43" cy="31" r="5" fill="#CCFBF1" />
+      <path d="M13 46c1-8 14-8 16 0M35 46c1-8 14-8 16 0" fill="#99F6E4" />
+      <circle cx="32" cy="25" r="7" fill="white" fillOpacity=".95" />
+      <path d="M21 48c1-13 21-13 22 0" fill="white" fillOpacity=".95" />
+      <path d="M28 21c2-3 6-3 8 0" stroke="#0F766E" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="47" cy="46" r="9" fill="#FDE68A" />
+      <rect x="43" y="45" width="8" height="7" rx="2" fill="#B45309" />
+      <path d="M44 45v-2a3 3 0 0 1 6 0v2" stroke="#B45309" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="47" cy="48" r="1" fill="#FEF3C7" />
+    </IconShell>
+  );
+}
+
 export function CartoonCountdownIcon(props: IconProps) {
   return (
     <IconShell {...props} from="#38BDF8" to="#2563EB">

@@ -8,10 +8,25 @@ import {
 import type { EventKind } from '../analytics.types';
 /** 不对教师建立级联删除关联，保留账号删除后的历史统计。 */
 @Entity('analytics_events')
+@Index('idx_analytics_owner_time', ['ownerAccountId', 'createdAt'])
 @Index('idx_analytics_time', ['createdAt', 'kind'])
 @Index('idx_analytics_teacher', ['teacherId', 'createdAt'])
 @Index('idx_analytics_feature', ['feature', 'kind', 'createdAt'])
 export class AnalyticsEventEntity {
+  @Column({
+    name: 'owner_account_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  ownerAccountId!: string | null;
+  @Column({
+    name: 'report_version',
+    type: 'varchar',
+    length: 8,
+    nullable: true,
+  })
+  reportVersion!: string | null;
   @PrimaryColumn({ length: 64 }) id!: string;
   @Column({ name: 'teacher_id', type: 'varchar', length: 64, nullable: true })
   teacherId!: string | null;

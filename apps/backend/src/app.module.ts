@@ -1,3 +1,4 @@
+import { AccountManagementModule } from './account-management/account-management.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { Module } from '@nestjs/common';
@@ -38,6 +39,7 @@ import { SemesterReportsModule } from './semester-reports/semester-reports.modul
     }),
     AnalyticsModule,
     AdminModule,
+    AccountManagementModule,
     AuthModule,
     FeedbackModule,
     StudentsModule,

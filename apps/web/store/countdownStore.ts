@@ -79,9 +79,11 @@ export const useCountdownStore = create<CountdownStore>((set, get) => ({
   ...initialState,
 
   init: () => {
-    void request<CountdownApiState, CountdownApiState>("/api/countdown").then(state => {
-      set(normalizeApiState(state));
-    });
+    void request<CountdownApiState, CountdownApiState>("/api/countdown")
+      .then(state => {
+        set(normalizeApiState(state));
+      })
+      .catch(() => undefined);
   },
 
   setTotalSeconds: seconds => {

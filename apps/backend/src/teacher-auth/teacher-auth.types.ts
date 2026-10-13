@@ -4,6 +4,9 @@ export interface Teacher {
   name: string;
   email: string;
   avatar: string;
+  sessionVersion?: number;
+  parentAccountId?: string | null;
+  status?: 'active' | 'locked' | 'deleted';
   passwordHash: string;
   passwordSalt: string;
   createdAt: string;
@@ -18,6 +21,9 @@ export interface TeacherSession {
 }
 
 export interface TeacherProfile {
+  accountType?: 'main' | 'sub';
+  ownerAccountId?: string;
+  capabilities?: { accountManagement: boolean; reportConfiguration: boolean };
   id: string;
   username: string;
   name: string;

@@ -12,5 +12,6 @@ export interface AnalyticsEvent {
   kind: EventKind;
   feature: string | null;
   action: string | null;
+  reportVersion?: 'v1' | 'v2' | null;
   dedupeKey: string;
 }

@@ -10,6 +10,8 @@ const route = useRoute(),
   error = ref(''),
   loading = ref(false),
   page = ref(1)
+const accountType = ref(''),
+  status = ref('')
 const search = ref(''),
   teacherSearch = ref(''),
   classroomSearch = ref('')
@@ -22,6 +24,10 @@ async function load() {
   try {
     const result = await api<Page<Person>>(kind, {
       page: page.value,
+      accountType: accountType.value,
+      status: status.value,
+      ownerAccountId:
+        typeof route.query.ownerAccountId === 'string' ? route.query.ownerAccountId : undefined,
       search: search.value,
       teacherSearch: teacherSearch.value,
       classroomSearch: classroomSearch.value,
@@ -60,7 +66,9 @@ function searchRecords() {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">DIRECTORY</p>
+      <p class="eyebrow">
+        DIRECTORY
+      </p>
       <h1>{{ route.meta.title }}</h1>
       <p class="muted">
         {{
@@ -73,7 +81,43 @@ function searchRecords() {
       </p>
     </div>
   </div>
-  <form class="toolbar" @submit.prevent="searchRecords">
+  <form
+    class="toolbar"
+    @submit.prevent="searchRecords"
+  >
+    <template v-if="kind === 'teachers'">
+      <select
+        v-model="accountType"
+        aria-label="账号类型"
+      >
+        <option value="">
+          全部账号类型
+        </option>
+        <option value="main">
+          主账号
+        </option>
+        <option value="sub">
+          子账号
+        </option>
+      </select>
+      <select
+        v-model="status"
+        aria-label="账号状态"
+      >
+        <option value="">
+          全部状态
+        </option>
+        <option value="active">
+          正常
+        </option>
+        <option value="locked">
+          已锁定
+        </option>
+        <option value="deleted">
+          已删除
+        </option>
+      </select>
+    </template>
     <input
       v-model="search"
       type="search"
@@ -86,100 +130,151 @@ function searchRecords() {
       "
       aria-label="搜索"
       maxlength="100"
-    /><input
+    ><input
       v-if="kind !== 'teachers'"
       v-model="teacherSearch"
       placeholder="所属教师姓名或账号"
       aria-label="所属教师"
       maxlength="100"
-    /><input
+    ><input
       v-if="kind === 'students'"
       v-model="classroomSearch"
       placeholder="班级名称"
       aria-label="所属班级"
       maxlength="100"
-    /><button class="primary" :disabled="loading">查询</button
-    ><RouterLink
+    ><button
+      class="primary"
+      :disabled="loading"
+    >
+      查询
+    </button><RouterLink
       v-if="route.query.teacherId || route.query.classroomId"
       class="link"
       :to="route.path"
-      >清除归属筛选</RouterLink
     >
+      清除归属筛选
+    </RouterLink>
   </form>
-  <p v-if="error" class="error" role="alert">{{ error }} <button @click="load">重试</button></p>
-  <p v-if="loading" role="status" class="muted">正在加载…</p>
+  <p
+    v-if="error"
+    class="error"
+    role="alert"
+  >
+    {{ error }} <button @click="load">
+      重试
+    </button>
+  </p>
+  <p
+    v-if="loading"
+    role="status"
+    class="muted"
+  >
+    正在加载…
+  </p>
   <section class="panel">
     <div class="table-scroll">
       <table>
         <thead>
           <tr>
             <th>{{ kind === 'teachers' ? '教师' : kind === 'students' ? '学生' : '班级' }}</th>
-            <template v-if="kind === 'teachers'"
-              ><th>注册时间</th>
+            <template v-if="kind === 'teachers'">
+              <th>注册时间</th>
               <th>最近登录</th>
+              <th>账号类型 / 状态</th>
+              <th>所属主账号 / 子账号数</th>
               <th>班级数</th>
               <th>学生数</th>
-              <th>详情</th></template
-            ><template v-else
-              ><th>所属教师</th>
-              <template v-if="kind === 'students'"
-                ><th>学号</th>
+              <th>详情</th>
+            </template><template v-else>
+              <th>所属教师</th>
+              <template v-if="kind === 'students'">
+                <th>学号</th>
                 <th>性别</th>
-                <th>所属班级</th></template
-              ><template v-else
-                ><th>学生数</th>
-                <th>查看</th></template
-              ></template
-            >
+                <th>所属班级</th>
+              </template><template v-else>
+                <th>学生数</th>
+                <th>查看</th>
+              </template>
+            </template>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in data?.items" :key="row.id">
+          <tr
+            v-for="row in data?.items"
+            :key="row.id"
+          >
             <td>
-              <strong>{{ row.name }}</strong
-              ><small v-if="kind === 'teachers'">{{ row.username }}</small>
+              <strong>{{ row.name }}</strong><small v-if="kind === 'teachers'">{{ row.username }}</small>
             </td>
-            <template v-if="kind === 'teachers'"
-              ><td>{{ formatTime(row.createdAt) }}</td>
+            <template v-if="kind === 'teachers'">
+              <td>{{ formatTime(row.createdAt) }}</td>
               <td>{{ formatTime(row.lastLoginAt) }}</td>
               <td>
-                <RouterLink :to="{ path: '/classrooms', query: { teacherId: row.id } }">{{
-                  row.classrooms
-                }}</RouterLink>
+                {{ row.accountType === 'sub' ? '子账号' : '主账号' }} /
+                {{
+                  row.status === 'locked' ? '已锁定' : row.status === 'deleted' ? '已删除' : '正常'
+                }}
               </td>
               <td>
-                <RouterLink :to="{ path: '/students', query: { teacherId: row.id } }">{{
-                  row.students
-                }}</RouterLink>
+                <RouterLink
+                  v-if="row.parentAccountId"
+                  :to="`/teachers/${row.parentAccountId}`"
+                >
+                  所属主账号 →
+                </RouterLink><span v-else>{{ row.subaccountCount || 0 }} 个子账号</span>
               </td>
-              <td><RouterLink :to="`/teachers/${row.id}`">查看详情 →</RouterLink></td></template
-            ><template v-else
-              ><td>
-                <RouterLink :to="`/teachers/${row.teacherId}`">{{
-                  row.teacherName || '已删除教师'
-                }}</RouterLink>
+              <td>
+                <RouterLink
+                  :to="{ path: '/classrooms', query: { teacherId: row.ownerAccountId || row.id } }"
+                >
+                  {{ row.accountType === 'sub' ? '共享主账号数据' : row.classrooms }}
+                </RouterLink>
               </td>
-              <template v-if="kind === 'students'"
-                ><td>{{ row.studentNo }}</td>
+              <td>
+                <RouterLink
+                  :to="{ path: '/students', query: { teacherId: row.ownerAccountId || row.id } }"
+                >
+                  {{ row.accountType === 'sub' ? '共享主账号数据' : row.students }}
+                </RouterLink>
+              </td>
+              <td>
+                <RouterLink :to="`/teachers/${row.id}`">
+                  查看详情 →
+                </RouterLink>
+              </td>
+            </template><template v-else>
+              <td>
+                <RouterLink :to="`/teachers/${row.teacherId}`">
+                  {{ row.teacherName || '已删除教师' }}
+                </RouterLink>
+              </td>
+              <template v-if="kind === 'students'">
+                <td>{{ row.studentNo }}</td>
                 <td>{{ row.gender || '未填写' }}</td>
-                <td>{{ row.classroomName || '—' }}</td></template
-              ><template v-else
-                ><td>{{ row.students }}</td>
+                <td>{{ row.classroomName || '—' }}</td>
+              </template><template v-else>
+                <td>{{ row.students }}</td>
                 <td>
                   <RouterLink
                     :to="{
                       path: '/students',
                       query: { classroomId: row.id, teacherId: row.teacherId },
                     }"
-                    >查看学生 →</RouterLink
                   >
-                </td></template
-              ></template
-            >
+                    查看学生 →
+                  </RouterLink>
+                </td>
+              </template>
+            </template>
           </tr>
         </tbody>
       </table>
-      <p v-if="!data?.items.length && !loading" class="empty">暂无符合条件的记录</p>
+      <p
+        v-if="!data?.items.length && !loading"
+        class="empty"
+      >
+        暂无符合条件的记录
+      </p>
     </div>
     <PaginationBar
       v-if="data"

@@ -11,6 +11,8 @@
 "use client";
 
 import { useState } from "react";
+import { useAuthStore } from "@/store/authStore";
+import { AccountManagement } from "@/components/apps/AccountManagement";
 import { useWindowStore } from "@/store/windowStore";
 import { UserPanel } from "@/components/UserPanel";
 import { MenuBox } from "@/components/MenuBox";
@@ -30,6 +32,7 @@ import { Feedback } from "@/components/apps/Feedback";
 import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
 import { SemesterReports } from "@/components/apps/SemesterReports";
 import {
+  CartoonAccountManagementIcon,
   CartoonCountdownIcon,
   CartoonGachaIcon,
   CartoonPetPointsIcon,
@@ -42,6 +45,7 @@ import {
 } from "@/components/icons/CartoonAppIcons";
 
 const menuItems: MenuItemData[] = [
+  { name: "账号管理", icon: CartoonAccountManagementIcon, contentKey: "accountManagement" },
   { name: "倒计时", icon: CartoonCountdownIcon, contentKey: "countdown" },
   { name: "随机点名", icon: CartoonRandomPickerIcon, contentKey: "randomPicker" },
   { name: "学生管理", icon: CartoonStudentsIcon, contentKey: "studentManagement" },
@@ -58,6 +62,8 @@ const menuItems: MenuItemData[] = [
 /** 桌面窗口内容路由：菜单只保存 contentKey，实际组件在这里集中映射。 */
 function WindowContent({ contentKey }: { contentKey: string }) {
   switch (contentKey) {
+    case "accountManagement":
+      return <AccountManagement />;
     case "countdown":
       return <CountdownTimer />;
     case "randomPicker":
@@ -93,6 +99,10 @@ function WindowContent({ contentKey }: { contentKey: string }) {
 }
 
 export default function Home() {
+  const user = useAuthStore(s => s.user);
+  const availableItems = menuItems.filter(
+    item => item.contentKey !== "accountManagement" || user?.capabilities?.accountManagement === true
+  );
   const { windows, openWindow } = useWindowStore();
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -115,7 +125,7 @@ export default function Home() {
     <div className="fixed inset-0 flex flex-col overflow-hidden">
       {/* Function Menu Area */}
       <div className="absolute inset-x-0 bottom-12 top-4 overflow-y-auto px-4 pb-4 sm:bottom-auto sm:left-0 sm:right-auto sm:top-10 sm:flex sm:items-end sm:overflow-visible sm:px-6">
-        <MenuBox items={menuItems} onItemClick={handleMenuClick} />
+        <MenuBox items={availableItems} onItemClick={handleMenuClick} />
       </div>
 
       {/* 所有应用窗口都由 windowStore 驱动，保证层级、最小化、聚焦逻辑统一。 */}

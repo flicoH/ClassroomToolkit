@@ -73,8 +73,15 @@ describe('Admin teacher password reset', () => {
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(manager.update).toHaveBeenCalledWith(
       TeacherEntity,
-      { id: 'teacher' },
-      { passwordHash: 'hash', passwordSalt: 'salt' },
+      {
+        id: 'teacher',
+        status: expect.objectContaining({ _type: 'not', _value: 'deleted' }),
+      },
+      {
+        passwordHash: 'hash',
+        passwordSalt: 'salt',
+        sessionVersion: expect.any(Function),
+      },
     );
     expect(manager.delete).toHaveBeenCalledWith(TeacherSessionEntity, {
       teacherId: 'teacher',

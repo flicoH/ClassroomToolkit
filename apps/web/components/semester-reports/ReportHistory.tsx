@@ -7,7 +7,7 @@ import { createUuid } from "@/lib/id";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
-type HistoryEvent = { id: string; label?: string; createdAt: string };
+type HistoryEvent = { actor?: { name: string; type: string }; id: string; label?: string; createdAt: string };
 type HistoryDetail = HistoryEvent & {
   description: string;
   currentVersion: string;
@@ -146,7 +146,10 @@ export function ReportHistory<T>({
             className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2"
           >
             <div className="min-w-0 break-words">
-              <p>{event.label || "报告流程记录"}</p>
+              <p>
+                {event.label || "报告流程记录"} · {event.actor?.name || "历史记录（未记录操作人）"}
+                {event.actor?.type === "sub" ? "（子账号）" : ""}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {new Date(event.createdAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
               </p>

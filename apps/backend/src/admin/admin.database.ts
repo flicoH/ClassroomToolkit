@@ -3,6 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Repository,
+  IsNull,
+  Not,
   type ObjectLiteral,
   type SelectQueryBuilder,
 } from 'typeorm';
@@ -95,8 +97,12 @@ export class AdminDatabase {
     return this.teachers.manager.transaction(async (manager) => {
       const result = await manager.update(
         TeacherEntity,
-        { id },
-        { passwordHash, passwordSalt },
+        { id, status: Not('deleted') },
+        {
+          passwordHash,
+          passwordSalt,
+          sessionVersion: () => 'session_version + 1',
+        },
       );
       if (!result.affected) return false;
       await manager.delete(TeacherSessionEntity, { teacherId: id });
@@ -137,7 +143,7 @@ export class AdminDatabase {
       loginRows,
       activeRows,
     ] = await Promise.all([
-      this.teachers.count(),
+      this.teachers.count({ where: { parentAccountId: IsNull() } }),
       this.students.count(),
       this.classrooms.count(),
       this.teachers
@@ -146,6 +152,7 @@ export class AdminDatabase {
           from: teacherSqlTime(today.from),
           to: teacherSqlTime(today.to),
         })
+        .andWhere('t.parentAccountId IS NULL')
         .getCount(),
       this.eventQuery(today)
         .select('COUNT(DISTINCT e.teacherId)', 'count')
@@ -178,6 +185,7 @@ export class AdminDatabase {
         from: teacherSqlTime(range.from),
         to: teacherSqlTime(range.to),
       })
+      .andWhere('t.parentAccountId IS NULL')
       .groupBy('date')
       .orderBy('date', 'ASC')
       .getRawMany<AdminDatabaseRow>();
@@ -188,6 +196,7 @@ export class AdminDatabase {
       .createQueryBuilder('t')
       .select('COUNT(*)', 'count')
       .where('t.createdAt < :from', { from: teacherSqlTime(from) })
+      .andWhere('t.parentAccountId IS NULL')
       .getRawMany<AdminDatabaseRow>();
   }
   /** 按北京时间分日聚合登录和活跃指标，可限定单个教师。 */
@@ -273,6 +282,10 @@ export class AdminDatabase {
       .select('t.id', 'id')
       .addSelect('t.username', 'username')
       .addSelect('t.name', 'name')
+      .addSelect('t.parentAccountId', 'parentAccountId')
+      .addSelect('COALESCE(t.parentAccountId, t.id)', 'ownerAccountId')
+      .addSelect("IF(t.parentAccountId IS NULL, 'main', 'sub')", 'accountType')
+      .addSelect('t.status', 'status')
       .addSelect('t.email', 'email')
       .addSelect(
         isoDate("CONVERT_TZ(t.createdAt, :offset, '+00:00')"),
@@ -307,6 +320,16 @@ export class AdminDatabase {
             .where('e.teacherId = t.id')
             .andWhere("e.kind IN ('login', 'auto_login')"),
         'lastLoginAt',
+      )
+      .addSelect(
+        (sub) =>
+          sub
+            .select('COUNT(*)')
+            .from(TeacherEntity, 'child')
+            .where(
+              "child.parentAccountId = t.id AND child.status != 'deleted'",
+            ),
+        'subaccountCount',
       );
   }
   /** 按固定目录类型构建筛选与分页查询，关联查询不放大教师或班级数量。 */
@@ -319,6 +342,17 @@ export class AdminDatabase {
     let query: SelectQueryBuilder<ObjectLiteral>;
     if (kind === 'teachers') {
       query = this.addTeacherStats(this.teacherQuery());
+      if (q.accountType)
+        query.andWhere(
+          q.accountType === 'main'
+            ? 't.parentAccountId IS NULL'
+            : 't.parentAccountId IS NOT NULL',
+        );
+      if (q.status) query.andWhere('t.status = :status', { status: q.status });
+      if (q.ownerAccountId)
+        query.andWhere('COALESCE(t.parentAccountId, t.id) = :owner', {
+          owner: q.ownerAccountId,
+        });
       if (q.search)
         query.andWhere('(t.name LIKE :search OR t.username LIKE :search)', {
           search: `%${q.search.slice(0, 100)}%`,
@@ -391,6 +425,19 @@ export class AdminDatabase {
       .offset(page.offset)
       .getRawMany<AdminDatabaseRow>();
     return { items, total, page: page.page, pageSize: page.pageSize };
+  }
+  async findSubaccounts(ownerId: string) {
+    return this.teacherQuery()
+      .where('t.parentAccountId = :ownerId', { ownerId })
+      .getRawMany<AdminDatabaseRow>();
+  }
+  async accountCounts() {
+    return {
+      subaccounts: await this.teachers.count({
+        where: { parentAccountId: Not(IsNull()) },
+      }),
+      accounts: await this.teachers.count(),
+    };
   }
   /** 按唯一 ID 查询教师的可展示字段；不存在时返回空数组，由 Service 决定异常。 */
   findTeacherById(id: string) {

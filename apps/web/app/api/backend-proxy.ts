@@ -52,14 +52,17 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
         "content-type": request.headers.get("content-type") || "application/json",
         authorization: `Bearer ${token}`,
         "x-analytics-event-id": request.headers.get("x-analytics-event-id") || "",
+        "x-report-version": request.headers.get("x-report-version") || "",
         "x-countdown-start": request.headers.get("x-countdown-start") || ""
       },
-      body
+      body,
+      cache: "no-store"
     };
     if (isMultipart) init.duplex = "half";
     const response = await fetch(targetUrl, init);
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
+    result.headers.set("Cache-Control", "no-store, private");
     if (response.status === 401) clearAuthCookie(result, request);
     return result;
   } catch {

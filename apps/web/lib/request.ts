@@ -14,6 +14,7 @@ import toast from "react-hot-toast";
 import { useRequestLoadingStore } from "@/store/requestLoadingStore";
 import { createUuid } from "@/lib/id";
 
+const requestEpochs = new WeakMap<object, number>();
 const requestInstance = axios.create({
   // 认证 token 只存在于 HttpOnly Cookie，浏览器请求必须经过同源 Next BFF。
   baseURL: "",
@@ -24,6 +25,13 @@ const requestInstance = axios.create({
 });
 
 const DEDUPE_KEEP_ALIVE_MS = 600;
+let sessionEpoch = 0;
+/** 账号切换时隔离正在返回的请求，避免跨账号复用响应。 */
+export function resetRequestCache() {
+  sessionEpoch++;
+  for (const entry of dedupedRequests.values()) if (entry.timer) clearTimeout(entry.timer);
+  dedupedRequests.clear();
+}
 const dedupedRequests = new Map<string, { promise: Promise<unknown>; timer?: ReturnType<typeof setTimeout> }>();
 
 function isAuthSubmitUrl(url = "") {
@@ -55,6 +63,7 @@ function createRequestKey(config: AxiosRequestConfig) {
     method,
     config.baseURL || "",
     config.url || "",
+    stableStringify(config.headers),
     stableStringify(config.params),
     stableStringify(config.data)
   ].join("|");
@@ -69,13 +78,20 @@ function sendDedupedRequest<T = unknown, R = AxiosResponse<T>, D = unknown>(conf
   const cached = dedupedRequests.get(key);
   if (cached) return cached.promise as Promise<R>;
 
-  const promise = requestInstance.request<T, R, D>(config).finally(() => {
-    const entry = dedupedRequests.get(key);
-    if (entry?.promise !== promise) return;
-    entry.timer = setTimeout(() => {
-      if (dedupedRequests.get(key)?.promise === promise) dedupedRequests.delete(key);
-    }, DEDUPE_KEEP_ALIVE_MS);
-  });
+  const epoch = sessionEpoch;
+  const promise = requestInstance
+    .request<T, R, D>(config)
+    .then(result => {
+      if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新加载");
+      return result;
+    })
+    .finally(() => {
+      const entry = dedupedRequests.get(key);
+      if (entry?.promise !== promise) return;
+      entry.timer = setTimeout(() => {
+        if (dedupedRequests.get(key)?.promise === promise) dedupedRequests.delete(key);
+      }, DEDUPE_KEEP_ALIVE_MS);
+    });
   dedupedRequests.set(key, { promise });
   return promise;
 }
@@ -98,6 +114,7 @@ function createMethodWithData(method: string) {
 }
 
 function startGlobalLoading(config: InternalAxiosRequestConfig) {
+  requestEpochs.set(config, sessionEpoch);
   // Axios serializes FormData into JSON under the shared JSON default. Clear
   // it before transformation so the browser can send bytes with its boundary.
   if (typeof FormData !== "undefined" && config.data instanceof FormData) config.headers.delete("Content-Type");
@@ -121,10 +138,13 @@ requestInstance.interceptors.request.use(startGlobalLoading, error => {
 requestInstance.interceptors.response.use(
   (response: AxiosResponse) => {
     endGlobalLoading();
+    if (requestEpochs.get(response.config) !== sessionEpoch) return Promise.reject(new Error("账号已切换，请重新加载"));
     return response.data;
   },
   (error: AxiosError<{ message?: string }>) => {
     endGlobalLoading();
+    if (error.config && requestEpochs.get(error.config) !== sessionEpoch)
+      return Promise.reject(new Error("账号已切换，请重新加载"));
     const status = error.response?.status;
     const message = error.response?.data?.message || error.message || "请求失败";
 

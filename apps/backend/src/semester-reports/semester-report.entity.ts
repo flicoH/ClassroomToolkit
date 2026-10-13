@@ -3,6 +3,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -122,7 +123,25 @@ export class ReportShareEntity {
 }
 
 @Entity('semester_report_events')
+@Index('idx_report_actor_time', ['actorAccountId', 'createdAt'])
 export class ReportEventEntity {
+  @Column({
+    name: 'actor_account_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  actorAccountId!: string | null;
+  @Column({
+    name: 'actor_name_snapshot',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  actorNameSnapshot!: string | null;
+  @Column({ name: 'actor_type', length: 16, default: 'unknown' })
+  actorType!: string;
+
   @PrimaryColumn({ length: 64 }) id!: string;
   @Column({ name: 'teacher_id', length: 64 }) teacherId!: string;
   @Column({ name: 'report_id', type: 'varchar', length: 64, nullable: true })
