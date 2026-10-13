@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LearningReportView, type LearningReportData } from "./LearningReportView";
 const report: LearningReportData = {
   studentName: "小明",
@@ -115,7 +115,7 @@ describe("report pet presentation", () => {
       expect(html).not.toContain("课堂精彩瞬间");
       if (version === "v2") expect(html).not.toContain("本学期的课堂表现");
       expect(html).toContain("主动参与");
-      if (version === "v2") expect(html).toContain("预留位置");
+      if (version === "v2") expect(html).not.toContain("预留位置");
       expect(html).not.toContain("积分加减情况");
     }
   });
@@ -205,7 +205,7 @@ it("hides mastery for teacher-written content in preview, parent rendering and i
         report={{ ...report, content: { ...report.content, reportVersion: "v2", learningContents: [manual] } }}
       />
     );
-    expect(rendered.textContent).not.toContain("掌握");
+    expect(rendered.textContent).not.toContain("已掌握");
     expect(rendered.textContent).not.toContain("待评价");
   }
 });
@@ -274,4 +274,222 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
   expect(growth.textContent).toContain(observation);
   expect(growth.textContent).toContain("老师暂未填写。");
   for (const card of growth.children) expect(card.classList.contains("min-w-0")).toBe(true);
+});
+
+it.each([false, true])(
+  "shows the student's pet beside frozen period points and side-by-side teacher message and next focus (image: %s)",
+  forImage => {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            pet: { petId: "sprout-puff", petName: "团团", level: 4, stage: "第4形态", petHatched: true },
+            strengths: [{ text: "旧亮点", sourceRefs: [] }],
+            areasToImprove: [{ text: "练习表达", sourceRefs: [] }],
+            // Item counts include all records, even when saved details are capped.
+            scoreDetails: {
+              positive: 100,
+              negative: -120,
+              net: -20,
+              count: 100,
+              records: [],
+              positiveItems: [
+                { label: "认真听讲", count: 10 },
+                { label: "乐于助人", count: 5 }
+              ]
+            }
+          }
+        }}
+      />
+    );
+    expect(rendered.textContent).toContain("小明的宠物伙伴");
+    expect(rendered.textContent).not.toContain("我的宠物伙伴");
+    expect(rendered.textContent).toContain("本期最值肯定");
+    expect(rendered.textContent).not.toContain("本阶段积分");
+    expect(rendered.textContent).not.toContain("旧亮点");
+    const row = rendered.querySelector('[aria-label="宠物伙伴与阶段积分"]')!;
+    expect(row.classList.contains("sm:grid-cols-2")).toBe(true);
+    expect(row.classList.contains("grid-cols-1")).toBe(true);
+    const petSection = row.children[0]!;
+    expect(petSection.textContent).toContain("团团");
+    expect(petSection.classList.contains("flex")).toBe(true);
+    expect(petSection.classList.contains("flex-col")).toBe(true);
+    const petWrapper = petSection.querySelector(".my-auto")!;
+    expect(petWrapper.classList.contains("justify-center")).toBe(true);
+    const chart = row.querySelector('[role="img"]')!;
+    expect(chart.getAttribute("aria-label")).toContain("认真听讲 10 次，乐于助人 5 次");
+    expect(chart.querySelector('[aria-label="认真听讲 10 次"]')?.getAttribute("style")).toContain("width:100%");
+    expect(chart.querySelector('[aria-label="乐于助人 5 次"]')?.getAttribute("style")).toContain("width:50%");
+    expect(chart.textContent).not.toContain("净积分");
+    expect(chart.textContent).not.toContain("扣分");
+    const focus = [...rendered.querySelectorAll("section")].find(
+      section => section.textContent === "下一步重点练习表达"
+    )!;
+    const messageRow = rendered.querySelector('[aria-label="老师寄语与下一步重点"]')!;
+    expect(messageRow.classList.contains("sm:grid-cols-2")).toBe(true);
+    expect(messageRow.classList.contains("grid-cols-1")).toBe(true);
+    expect(messageRow.children).toHaveLength(2);
+    expect(messageRow.children[0]!.textContent).toBe("老师想对你说继续加油");
+    expect(messageRow.children[1]).toBe(focus);
+  }
+);
+
+it("distinguishes missing score snapshots from an empty period without fabricating points", () => {
+  const base = { ...report.content, reportVersion: "v2" as const, petHistoryStatus: "unavailable" as const };
+  const missing = renderToStaticMarkup(
+    <LearningReportView report={{ ...report, content: { ...base, scoreDetails: undefined } }} />
+  );
+  expect(missing).toContain("此报告未保存完整加分细项统计");
+  expect(missing).toContain("所选周期结束时的宠物形态尚无历史记录");
+  expect(missing).not.toContain('role="img"');
+  const empty = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...base,
+          scoreDetails: { positive: 0, negative: 0, net: 0, count: 0, records: [] }
+        }
+      }}
+    />
+  );
+  expect(empty).toContain("本周期暂无加分记录");
+  expect(empty).not.toContain("NaN");
+  expect(empty).not.toContain("Infinity");
+  expect(empty).not.toContain("此报告未保存完整加分细项统计");
+});
+
+it.each([false, true])("expands a long message when the empty next focus is hidden (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  const summary = "继续练习表达，积极参与课堂。".repeat(50);
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: { ...report.content, reportVersion: "v2", summary }
+      }}
+    />
+  );
+  const row = rendered.querySelector('[aria-label="老师寄语与下一步重点"]')!;
+  expect(row.children[0]!.textContent).toContain(summary);
+  expect(row.children).toHaveLength(1);
+  expect(row.classList.contains("grid-cols-1")).toBe(true);
+  expect(row.textContent).not.toContain("下一步重点");
+  for (const section of row.children) expect(section.classList.contains("min-w-0")).toBe(true);
+  expect(rendered.querySelectorAll("h2")).toHaveLength(
+    new Set([...rendered.querySelectorAll("h2")].map(heading => heading.textContent)).size
+  );
+});
+
+it.each([false, true])("hides blank v2 messages and focus in preview and export (image: %s)", forImage => {
+  for (const summary of ["", "  \n  "]) {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            summary,
+            areasToImprove: [{ text: " \n ", sourceRefs: ["teacher-review"] }]
+          }
+        }}
+      />
+    );
+    expect(rendered.textContent).not.toContain("老师想对你说");
+    expect(rendered.textContent).not.toContain("下一步重点");
+    expect(rendered.querySelector('[aria-label="老师寄语与下一步重点"]')).toBeNull();
+  }
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          summary: "",
+          areasToImprove: [
+            { text: " ", sourceRefs: [] },
+            { text: "练习表达", sourceRefs: ["teacher-review"] }
+          ]
+        }
+      }}
+    />
+  );
+  const row = rendered.querySelector('[aria-label="老师寄语与下一步重点"]')!;
+  expect(row.classList.contains("grid-cols-1")).toBe(true);
+  expect(row.children).toHaveLength(1);
+  expect(row.textContent).toBe("下一步重点练习表达");
+});
+
+it.each([false, true])("shows both saved classroom photos once in the header (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          classroomPhoto: "legacy-duplicate",
+          classroomPhotos: ["first-photo", "second-photo"]
+        }
+      }}
+    />
+  );
+  const photos = rendered.querySelectorAll("header img");
+  expect(photos).toHaveLength(2);
+  expect(photos[0]!.getAttribute("src")).toBe("first-photo");
+  expect(photos[1]!.getAttribute("src")).toBe("second-photo");
+  expect(rendered.querySelector('img[src="legacy-duplicate"]')).toBeNull();
+});
+
+it.each([false, true])(
+  "places each photo caption beneath its own image and renders text safely (image: %s)",
+  forImage => {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            classroomPhotos: ["first-photo", "second-photo"],
+            classroomPhotoCaptions: ["小组合作", "<b>手工</b>"]
+          }
+        }}
+      />
+    );
+    const figures = rendered.querySelectorAll("header figure");
+    expect(figures).toHaveLength(2);
+    expect(figures[0]!.querySelector("figcaption")!.textContent).toBe("小组合作");
+    expect(figures[1]!.querySelector("figcaption")!.textContent).toBe("<b>手工</b>");
+    expect(figures[1]!.querySelector("b")).toBeNull();
+    expect(figures[0]!.querySelector("img")!.nextElementSibling?.tagName).toBe("FIGCAPTION");
+  }
+);
+
+it("formats report dates deterministically even when browser locale date formatting differs", () => {
+  const locale = vi.spyOn(Date.prototype, "toLocaleDateString").mockReturnValue("客户端不同的日期格式");
+  try {
+    const html = renderToStaticMarkup(
+      <LearningReportView report={{ ...report, start: "2026-10-08T16:00:00Z", end: "2026-10-09T16:00:00Z" }} />
+    );
+    expect(html).toContain("2026/10/9");
+    expect(html).not.toContain("客户端不同的日期格式");
+  } finally {
+    locale.mockRestore();
+  }
 });

@@ -37,6 +37,7 @@ const report = {
       negative: -2,
       net: 4,
       count: 3,
+      positiveItems: [{ label: '主动参与', count: 2 }],
       records: [
         { id: 'one', label: '主动参与', delta: 3 },
         { id: 'two', label: '主动参与', delta: 3 },
@@ -64,6 +65,43 @@ describe('report generation modes', () => {
   afterEach(() => {
     process.env = { ...previous };
     jest.restoreAllMocks();
+  });
+
+  it('does not fill missing v2 teacher messages or next focus with template or AI prose', () => {
+    const source = {
+      ...report,
+      snapshot: { ...report.snapshot, reportVersion: 'v2' },
+    };
+    const template = generateTemplateReport(source);
+    expect(template.summary).toBe('');
+    expect(template.areasToImprove).toEqual([]);
+    const ai = addLearningReportSections(
+      {
+        summary: 'AI generated encouragement',
+        areasToImprove: [{ text: 'AI focus', sourceRefs: [] }],
+      },
+      source,
+    );
+    expect(ai.summary).toBe('');
+    expect(ai.areasToImprove).toEqual([]);
+    expect(() =>
+      validateGeneratedReportContent(template, source.snapshot),
+    ).not.toThrow();
+  });
+
+  it('hides unfilled legacy v2 automatic messages but preserves explicitly reviewed prose', () => {
+    expect(reportVisualsForSnapshot({ reportVersion: 'v2' })).toMatchObject({
+      summary: '',
+    });
+    expect(
+      reportVisualsForSnapshot({
+        reportVersion: 'v2',
+        teacherReviewedAt: '2026-10-13T00:00:00Z',
+      }),
+    ).not.toHaveProperty('summary');
+    expect(
+      reportVisualsForSnapshot({ reportVersion: 'v1' }),
+    ).not.toHaveProperty('summary');
   });
 
   it('copies original report pets from the snapshot instead of generated prose', () => {
@@ -266,6 +304,7 @@ describe('local template reports', () => {
       negative: -2,
       net: 4,
       count: 3,
+      positiveItems: [{ label: '主动参与', count: 2 }],
       records: [
         { label: '主动参与', delta: 3, createdAt: '2026-09-21T01:00:00.000Z' },
         { label: '主动参与', delta: 3, createdAt: null },

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { GrowthAssessmentFields, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ClassroomPerformanceFields, type PerformanceRating } from "./ClassroomPerformanceFields";
 import { showsLearningMastery, masteryLabels, type LearningContent } from "./LearningReportView";
@@ -31,21 +32,39 @@ export function StudentFeedbackForm({
   value,
   onChange,
   subjects,
+  companion,
   reserveNextFocus = false
 }: {
   subjects?: import("./performance-config").PerformanceSubject[];
   reserveNextFocus?: boolean;
+  companion?: ReactNode;
   student: { id: string; name: string; className: string };
   subject: string;
   learningContents: Array<Omit<LearningContent, "mastery">>;
   value: StudentReportFeedback;
   onChange: (patch: Partial<StudentReportFeedback>) => void;
 }) {
+  const teacherMessage = (
+    <label className="block min-w-0 space-y-2 text-sm font-semibold">
+      老师想对你说
+      <textarea
+        className="min-h-28 w-full rounded-md border bg-background p-3 text-sm font-normal"
+        maxLength={2500}
+        value={value.teacherMessage}
+        placeholder={
+          subjects !== undefined
+            ? "填写实际观察与鼓励话语；留空时报告不显示此区域。"
+            : "填写实际观察与鼓励话语；留空时由生成方式整理草稿。"
+        }
+        onChange={event => onChange({ teacherMessage: event.target.value })}
+      />
+    </label>
+  );
   return (
-    <div className="min-w-0 space-y-5 rounded-2xl border bg-background p-3 sm:p-5">
-      {reserveNextFocus && (
-        <p className="text-xs text-muted-foreground">下一步重点已预留：后续结合模板使用 AI 生成，目前可由老师填写。</p>
-      )}
+    <div
+      aria-label={`${student.name}的报告反馈`}
+      className="min-w-0 space-y-5 rounded-2xl border bg-background p-3 sm:p-5"
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold">{student.name}的课堂反馈</h3>
@@ -115,28 +134,29 @@ export function StudentFeedbackForm({
         value={value.classroomPerformance}
         onChange={classroomPerformance => onChange({ classroomPerformance })}
       />
-      <label className="block space-y-2 text-sm font-semibold">
-        老师想对你说
-        <textarea
-          className="min-h-28 w-full rounded-md border bg-background p-3 text-sm font-normal"
-          maxLength={2500}
-          value={value.teacherMessage}
-          placeholder="填写实际观察与鼓励话语；留空时由生成方式整理草稿。"
-          onChange={event => onChange({ teacherMessage: event.target.value })}
-        />
-      </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-2 text-sm font-semibold">
-          本期最值得肯定
-          <textarea
-            className="min-h-24 w-full rounded-md border bg-amber-50/40 p-3 text-sm font-normal"
-            maxLength={800}
-            value={value.highlight}
-            placeholder="例如：提醒后能主动调整状态并参与活动"
-            onChange={event => onChange({ highlight: event.target.value })}
-          />
-        </label>
-        <label className="space-y-2 text-sm font-semibold">
+      {companion}
+      {subjects === undefined && teacherMessage}
+      <div
+        aria-label={subjects !== undefined ? "老师寄语与下一步重点" : undefined}
+        className={
+          subjects !== undefined ? "grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4" : "grid gap-3 sm:grid-cols-2"
+        }
+      >
+        {subjects !== undefined ? (
+          teacherMessage
+        ) : (
+          <label className="space-y-2 text-sm font-semibold">
+            本期最值得肯定
+            <textarea
+              className="min-h-24 w-full rounded-md border bg-amber-50/40 p-3 text-sm font-normal"
+              maxLength={800}
+              value={value.highlight}
+              placeholder="例如：提醒后能主动调整状态并参与活动"
+              onChange={event => onChange({ highlight: event.target.value })}
+            />
+          </label>
+        )}
+        <label className="min-w-0 space-y-2 text-sm font-semibold">
           下一步重点
           <textarea
             className="min-h-24 w-full rounded-md border bg-violet-50/40 p-3 text-sm font-normal"
@@ -145,6 +165,9 @@ export function StudentFeedbackForm({
             placeholder="例如：加强听说读能力"
             onChange={event => onChange({ nextFocus: event.target.value })}
           />
+          {reserveNextFocus && (
+            <p className="text-xs font-normal text-muted-foreground">留空时报告不显示下一步重点。</p>
+          )}
         </label>
       </div>
       {subjects === undefined && (

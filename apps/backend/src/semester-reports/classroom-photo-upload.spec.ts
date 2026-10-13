@@ -45,8 +45,28 @@ describe('classroom photo multipart endpoint', () => {
       }),
     );
   });
-  it('accepts exactly 5MB and rejects one byte above before calling the service', async () => {
-    const maximum = Buffer.alloc(5 * 1024 * 1024);
+  it('routes the second photo by slot and rejects multiple files in one slot upload', async () => {
+    const buffer = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+    await request(app.getHttpServer())
+      .post(`${path}?slot=1`)
+      .attach('file', buffer, 'second.png')
+      .expect(201);
+    expect(save).toHaveBeenCalledWith(
+      'report',
+      expect.objectContaining({ buffer }),
+      '1',
+    );
+    save.mockClear();
+    await request(app.getHttpServer())
+      .post(path)
+      .attach('file', buffer, 'one.png')
+      .attach('file', buffer, 'two.png')
+      .expect(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 2MB and rejects one byte above before calling the service', async () => {
+    const maximum = Buffer.alloc(2 * 1024 * 1024);
     await request(app.getHttpServer())
       .post(path)
       .attach('file', maximum, 'photo.png')

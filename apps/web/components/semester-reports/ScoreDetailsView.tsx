@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 export type ScoreDetails = {
+  positiveItems?: Array<{ label: string; count: number }>;
   positive: number;
   negative: number;
   net: number;

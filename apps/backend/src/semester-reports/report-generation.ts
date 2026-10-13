@@ -23,13 +23,17 @@ type Snapshot = {
   petAsOf?: string;
   petHistoryStatus?: 'recorded' | 'unavailable';
   classroomPhoto?: string | null;
+  classroomPhotos?: Array<string | null>;
+  classroomPhotoCaptions?: string[];
   subjectName?: string;
   courseSelections?: CourseSelection[];
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   student?: { name?: string };
   courseScope?: string;
   allowedReferences?: string[];
+  reportScoreSummary?: Snapshot['scoreSummary'];
   scoreSummary?: {
+    positiveItems?: Array<{ label: string; count: number }>;
     positive?: number;
     negative?: number;
     net?: number;
@@ -49,19 +53,58 @@ type Snapshot = {
   }>;
   learningContents?: LearningContent[];
   teacherInput?: StudentFeedback;
+  teacherReviewedAt?: string;
   reportDetails?: ReportDetails;
 };
 
+/** Two fixed slots preserve identity when either photo is removed; legacy photos occupy slot 0. */
+export function classroomPhotosForSnapshot(snapshot: {
+  classroomPhoto?: unknown;
+  classroomPhotos?: unknown;
+}) {
+  const photos = snapshot.classroomPhotos;
+  if (Array.isArray(photos))
+    return [0, 1].map((index) =>
+      typeof photos[index] === 'string' ? photos[index] : null,
+    );
+  return [
+    typeof snapshot.classroomPhoto === 'string'
+      ? snapshot.classroomPhoto
+      : null,
+    null,
+  ];
+}
+
+/** Missing legacy captions stay blank; captions share the same fixed photo positions. */
+export function classroomPhotoCaptionsForSnapshot(snapshot: {
+  classroomPhotoCaptions?: unknown;
+}) {
+  const captions = snapshot.classroomPhotoCaptions;
+  return [0, 1].map((index) =>
+    Array.isArray(captions) && typeof captions[index] === 'string'
+      ? captions[index]
+      : '',
+  );
+}
+
 // Snapshot-derived presentation data cannot be replaced by generated or edited prose.
 export function reportVisualsForSnapshot(snapshot: Snapshot) {
+  const classroomPhotos = classroomPhotosForSnapshot(snapshot);
   return {
     pet: snapshot.pet,
     petAsOf: snapshot.petAsOf,
     petHistoryStatus: snapshot.petHistoryStatus,
-    classroomPhoto: snapshot.classroomPhoto ?? null,
+    classroomPhoto: classroomPhotos[0] ?? null,
+    classroomPhotos,
+    classroomPhotoCaptions: classroomPhotoCaptionsForSnapshot(snapshot),
     ...(snapshot.reportVersion === 'v2'
       ? {
           reportVersion: 'v2' as const,
+          // Before a teacher saves the draft, older generated summaries are not entered messages.
+          // Keep reviewed prose intact; hiding an automatic message must not rewrite stored history.
+          ...(!snapshot.teacherReviewedAt
+            ? { summary: snapshot.teacherInput?.teacherMessage?.trim() ?? '' }
+            : {}),
           reportSubjects:
             snapshot.reportSubjects ??
             (
@@ -78,18 +121,52 @@ export function reportVisualsForSnapshot(snapshot: Snapshot) {
               name: snapshot.subjectName?.split('、')[index] || '已选学科',
             })),
           pet: snapshot.pet ?? null,
-          classroomPhoto: snapshot.classroomPhoto ?? null,
+          classroomPhoto: classroomPhotos[0] ?? null,
         }
       : {}),
   };
 }
 
+/** Count positive evaluation events, regardless of the number of points per event. */
+export function positiveScoreItems(
+  records: Array<{ label: string; delta: number }>,
+) {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    if (!Number.isFinite(record.delta) || record.delta <= 0) continue;
+    const label = record.label.trim() || '课堂评价';
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([label, count]) => ({ label, count }))
+    .sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh-CN'),
+    );
+}
+
 /** Point figures are copied from the saved period snapshot, never from editable prose. */
 export function scoreDetailsForSnapshot(snapshot: Snapshot) {
-  const summary = snapshot.scoreSummary;
+  const summary = snapshot.reportScoreSummary ?? snapshot.scoreSummary;
   if (!summary) return undefined;
-  const allowed = new Set(snapshot.allowedReferences ?? []);
+  // reportScoreSummary is server-derived live/publication data; original references stay
+  // attached to generated prose, even if an old evaluation was subsequently deleted.
+  const allowed = new Set(
+    snapshot.reportScoreSummary
+      ? (summary.records ?? []).map((record) => `score:${record.id}`)
+      : (snapshot.allowedReferences ?? []),
+  );
+  const records = (summary.records ?? []).filter(
+    (record) =>
+      Number.isFinite(record.delta) && allowed.has(`score:${record.id}`),
+  );
+  // Old snapshots may retain only 80 details; do not present partial counts as period totals.
+  const positiveItems =
+    summary.positiveItems ??
+    (summary.count === records.length
+      ? positiveScoreItems(records)
+      : undefined);
   return {
+    ...(positiveItems !== undefined ? { positiveItems } : {}),
     positive: summary.positive ?? 0,
     negative: summary.negative ?? 0,
     net: summary.net ?? 0,
@@ -159,12 +236,14 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
       : {}),
     ...(snapshot.reportVersion === 'v2'
       ? {
+          // Optional teacher sections stay empty unless explicitly filled, including AI mode.
+          summary: feedback?.teacherMessage?.trim() ?? '',
           areasToImprove: [],
           homeSuggestions: [],
           growthAssessment: feedback?.growthAssessment,
         }
       : {}),
-    ...(feedback?.nextFocus
+    ...(feedback?.nextFocus?.trim()
       ? { areasToImprove: teacherEntry(feedback.nextFocus) }
       : {}),
     ...(snapshot.reportVersion !== 'v2' && feedback?.homePractice

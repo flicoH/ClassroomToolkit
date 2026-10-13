@@ -30,8 +30,8 @@ export default function ParentReportPage({ params }: { params: Promise<{ token: 
   }, [params]);
   if (!data)
     return (
-      <main className="fixed inset-0 z-[100] overflow-x-hidden overflow-y-auto bg-gradient-to-b from-indigo-50 to-white px-4 py-12 text-slate-800">
-        <div className="mx-auto mt-20 max-w-xl rounded-2xl bg-white p-8 text-center shadow-sm">
+      <main className="fixed inset-0 z-[100] overflow-x-hidden overflow-y-auto bg-gradient-to-b from-indigo-50 to-white px-3 py-6 text-slate-800 sm:px-4 sm:py-12">
+        <div className="mx-auto mt-20 min-w-0 max-w-xl rounded-2xl bg-white p-4 [overflow-wrap:anywhere] sm:p-8 text-center shadow-sm">
           {error ? (
             <>
               <h1 className="text-xl font-semibold">暂时无法查看报告</h1>

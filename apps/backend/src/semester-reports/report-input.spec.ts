@@ -323,7 +323,43 @@ describe('report generation input', () => {
       negative: -2,
       net: 3,
       count: 2,
+      positiveItems: [{ label: '参与', count: 1 }],
     });
+  });
+  it('counts all positive items before retaining only 80 evaluation details', async () => {
+    const { internals } = setup();
+    internals.scoreSummary.mockRestore();
+    const query = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(
+        Array.from({ length: 105 }, (_, index) => ({
+          id: String(index),
+          label: index < 100 ? '认真听讲' : '乐于助人',
+          delta: 5,
+        })),
+      ),
+    };
+    internals.records.createQueryBuilder = jest.fn().mockReturnValue(query);
+    const result = await internals.scoreSummary(
+      { id: 'teacher:one' },
+      new Date('2026-09-01'),
+      new Date('2026-10-01'),
+    );
+    expect(result.records).toHaveLength(80);
+    expect(result.positiveItems).toEqual([
+      { label: '认真听讲', count: 100 },
+      { label: '乐于助人', count: 5 },
+    ]);
+    query.getMany.mockRejectedValueOnce(new Error('读取失败'));
+    await expect(
+      internals.scoreSummary(
+        { id: 'teacher:one' },
+        new Date('2026-09-01'),
+        new Date('2026-10-01'),
+      ),
+    ).rejects.toThrow('读取失败');
   });
   it('requires explicit course choices and bounds per-subject scopes', () => {
     for (const value of [
@@ -490,8 +526,16 @@ describe('report generation input', () => {
         new Date('2026-09-26T16:00:00Z'),
       );
       expect(generateTemplateReport(original).pet).toEqual(pet);
+      original.snapshot.classroomPhotos = ['saved-photo', 'second-photo'];
+      original.snapshot.classroomPhotoCaptions = ['学习记录', '课堂游戏'];
       jest.spyOn(internals, 'findReport').mockResolvedValue(original);
       await service.regenerate(original.id);
+      expect(
+        reports.save.mock.calls.at(-1)![0].snapshot.classroomPhotoCaptions,
+      ).toEqual(['学习记录', '课堂游戏']);
+      expect(
+        reports.save.mock.calls.at(-1)![0].snapshot.classroomPhotos,
+      ).toEqual(['saved-photo', 'second-photo']);
       expect(reports.save.mock.calls.at(-1)![0].snapshot.pet).toEqual(pet);
       expect(reports.save.mock.calls.at(-1)![0].snapshot.classroomPhoto).toBe(
         'saved-photo',

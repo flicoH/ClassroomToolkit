@@ -261,14 +261,27 @@ describe("SemesterReports mobile workflow", () => {
   });
 
   it.each(["v1", "v2"] as const)(
-    "previews the period-end pet instead of points or the live pet in %s feedback",
+    "shows the historical pet and version-appropriate affirmation fields in %s creation",
     async version => {
       vi.useFakeTimers();
       try {
         api.post.mockImplementation(async (url: string) =>
           url.endsWith("preview-input")
             ? {
-                scoreSummaries: [{ studentId: "student", positive: 99, records: [] }],
+                scoreSummaries: [
+                  {
+                    studentId: "student",
+                    positive: 99,
+                    negative: 0,
+                    net: 99,
+                    count: 15,
+                    records: [],
+                    positiveItems: [
+                      { label: "认真听讲", count: 10 },
+                      { label: "乐于助人", count: 5 }
+                    ]
+                  }
+                ],
                 petPreviews: [
                   {
                     studentId: "student",
@@ -287,6 +300,26 @@ describe("SemesterReports mobile workflow", () => {
         expect(container.textContent).not.toContain("积分加减情况");
         expect(container.textContent).not.toContain("生成时保存当前宠物形态");
         expect(container.textContent).not.toContain("当前火狐");
+        if (version === "v2") {
+          expect(container.textContent).not.toContain("本期最值得肯定");
+          const feedback = container.querySelector('[aria-label="小明的报告反馈"]')!;
+          const companion = feedback.querySelector('[aria-label="宠物伙伴与阶段积分"]')!;
+          expect(companion.classList.contains("sm:grid-cols-2")).toBe(true);
+          expect(companion.children[0]!.textContent).toContain("历史团团");
+          expect(companion.children[1]!.textContent).toContain("本期最值肯定");
+          expect(
+            companion.querySelector('[aria-label="加分细项次数柱状图：认真听讲 10 次，乐于助人 5 次"]')
+          ).not.toBeNull();
+          const messages = feedback.querySelector('[aria-label="老师寄语与下一步重点"]')!;
+          expect(companion.nextElementSibling).toBe(messages);
+          expect(messages.classList.contains("sm:grid-cols-2")).toBe(true);
+          expect(messages.children[0]!.textContent).toContain("老师想对你说");
+          expect(messages.children[1]!.textContent).toContain("下一步重点");
+          expect(feedback.textContent!.indexOf("课堂表现")).toBeLessThan(feedback.textContent!.indexOf("历史团团"));
+        } else {
+          expect(container.textContent).toContain("本期最值得肯定");
+          expect(container.querySelector('[aria-label="宠物伙伴与阶段积分"]')).toBeNull();
+        }
       } finally {
         vi.useRealTimers();
       }
@@ -467,6 +500,11 @@ describe("SemesterReports mobile workflow", () => {
         });
         await act(async () => vi.advanceTimersByTimeAsync(450));
         expect(container.textContent).toContain("宠物形态预览失败");
+        if (version === "v2") {
+          expect(container.textContent).toContain("加分细项预览失败");
+          expect(container.querySelector('[aria-label="宠物伙伴与阶段积分"] [role="img"]')).toBeNull();
+          expect(container.textContent).not.toContain("本期最值得肯定");
+        }
         expect(container.textContent).not.toContain("当前火狐");
         expect([...container.querySelectorAll("button")].some(button => button.textContent === "重试")).toBe(true);
       } finally {
@@ -919,9 +957,9 @@ describe("SemesterReports mobile workflow", () => {
         await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
       };
       await upload(new File(["svg"], "photo.svg", { type: "image/svg+xml" }));
-      expect(document.body.textContent).toContain("最大 5MB");
+      expect(document.body.textContent).toContain("最大 2MB");
       const callsBeforeOversize = api.post.mock.calls.length;
-      await upload(new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.png", { type: "image/png" }));
+      await upload(new File([new Uint8Array(2 * 1024 * 1024 + 1)], "large.png", { type: "image/png" }));
       expect(api.post.mock.calls).toHaveLength(callsBeforeOversize);
       api.post.mockRejectedValueOnce(new Error("上传失败"));
       await upload(new File(["png"], "photo.png", { type: "image/png" }));
@@ -931,7 +969,7 @@ describe("SemesterReports mobile workflow", () => {
         ...report,
         content: { ...report.content, classroomPhoto: "data:image/png;base64,new" }
       });
-      const boundaryFile = new File([new Uint8Array(5 * 1024 * 1024)], "photo.png", { type: "image/png" });
+      const boundaryFile = new File([new Uint8Array(2 * 1024 * 1024)], "photo.png", { type: "image/png" });
       await upload(boundaryFile);
       expect(api.post).toHaveBeenCalledWith(
         "/api/semester-reports/reports/report/classroom-photo",
@@ -963,6 +1001,7 @@ describe("SemesterReports mobile workflow", () => {
     Object.assign(report, { reportVersion: "v2" });
     Object.assign(report.content, {
       reportVersion: "v2",
+      strengths: [{ text: "保留的旧亮点", sourceRefs: ["teacher-input"] }],
       learningContents: [
         {
           id: "manual-one",
@@ -985,9 +1024,13 @@ describe("SemesterReports mobile workflow", () => {
     const modal = document.querySelector('[role="dialog"]')!;
     expect(modal.querySelector('[aria-label="科学 · 教师填写 学习内容 1 掌握情况"]')).toBeNull();
     expect(modal.querySelector('[aria-label="英语 · Unit1 学习内容 2 掌握情况"]')).toBeNull();
+    expect(modal.textContent).not.toContain("本期最值得肯定");
+    expect(modal.textContent).not.toContain("保留的旧亮点");
+    expect(modal.textContent).toContain("下一步重点");
     api.patch.mockRejectedValueOnce(new Error("保存失败"));
     await act(async () => button("保存草稿").click());
     expect(modal.textContent).not.toContain("观察叶子");
+    expect(api.patch.mock.calls.at(-1)![1].content.strengths).toEqual(report.content.strengths);
     expect(api.patch.mock.calls.at(-1)![1].content.learningContents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "manual-one", text: "观察叶子", mastery: "mastered" }),
@@ -1308,6 +1351,231 @@ describe("SemesterReports mobile workflow", () => {
       expect(container.querySelector("article time")!.getAttribute("datetime")).toBe(report.updatedAt);
     }
   );
+
+  it("refreshes draft item counts without replacing unsaved prose, and keeps old counts on errors", async () => {
+    vi.useFakeTimers();
+    try {
+      const report = publishedReport(false);
+      report.status = "draft";
+      Object.assign(report, { reportVersion: "v2" });
+      Object.assign(report.content, {
+        reportVersion: "v2",
+        scoreDetails: {
+          positive: 1,
+          negative: 0,
+          net: 1,
+          count: 1,
+          records: [],
+          positiveItems: [{ label: "认真听讲", count: 1 }]
+        }
+      });
+      await act(async () => root.render(<SemesterReports version="v2" />));
+      await act(async () => button("预览 / 编辑").click());
+      const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "未保存寄语");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      Object.assign(report.content, {
+        summary: "服务端旧寄语",
+        scoreDetails: {
+          positive: 10,
+          negative: 0,
+          net: 10,
+          count: 2,
+          records: [],
+          positiveItems: [{ label: "乐于助人", count: 2 }]
+        }
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      expect(input.value).toBe("未保存寄语");
+      act(() => button("查看报告模板").click());
+      expect(document.querySelector('[aria-label="加分细项次数柱状图：乐于助人 2 次"]')).not.toBeNull();
+      const originalGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string, config: unknown) => {
+        if (url.endsWith("/reports/report")) throw new Error("读取积分失败");
+        return originalGet(url, config);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      expect(document.querySelector('[role="dialog"]')!.textContent).toContain("积分统计刷新失败");
+      expect(document.querySelector('[aria-label="加分细项次数柱状图：乐于助人 2 次"]')).not.toBeNull();
+      api.get.mockImplementation(originalGet);
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      expect(document.querySelector('[role="dialog"]')!.textContent).not.toContain("积分统计刷新失败");
+      await act(async () => button("保存草稿").click());
+      expect(api.patch.mock.calls.at(-1)![1].content.summary).toBe("未保存寄语");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores late draft score responses after closing and never polls a published report", async () => {
+    vi.useFakeTimers();
+    try {
+      const report = publishedReport(false);
+      report.status = "draft";
+      Object.assign(report, { reportVersion: "v2" });
+      Object.assign(report.content, { reportVersion: "v2" });
+      const originalGet = api.get.getMockImplementation()!;
+      let complete: ((value: unknown) => void) | undefined;
+      let polling = false;
+      api.get.mockImplementation((url: string, config?: { params?: { refresh?: string } }) => {
+        if (polling && url.endsWith("/reports/report") && config?.params?.refresh)
+          return new Promise(resolve => {
+            complete = resolve;
+          });
+        return originalGet(url, config);
+      });
+      await act(async () => root.render(<SemesterReports version="v2" />));
+      await act(async () => button("预览 / 编辑").click());
+      polling = true;
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      expect(complete).toBeDefined();
+      act(() => button("关闭").click());
+      await act(async () => complete!({ ...report, content: { ...report.content, summary: "迟到寄语" } }));
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      const calls = api.get.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      expect(api.get.mock.calls).toHaveLength(calls);
+      polling = false;
+      report.status = "published";
+      await act(async () => button("预览 / 编辑").click());
+      const publishedCalls = api.get.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(10000));
+      expect(api.get.mock.calls).toHaveLength(publishedCalls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("saves cleared v2 message and focus as empty values and hides both in preview", async () => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    Object.assign(report, { reportVersion: "v2" });
+    Object.assign(report.content, {
+      reportVersion: "v2",
+      areasToImprove: [{ text: "练习表达", sourceRefs: ["teacher-review"] }]
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    await act(async () => button("预览 / 编辑").click());
+    const modal = document.querySelector('[role="dialog"]')!;
+    const focus = [...modal.querySelectorAll("section")]
+      .find(section => section.querySelector("h3")?.textContent === "下一步重点")!
+      .querySelector("textarea")!;
+    const message = modal.querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')!;
+    act(() => {
+      for (const input of [focus, message]) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    act(() => button("查看报告模板").click());
+    expect(modal.querySelector("article")!.textContent).not.toContain("老师想对你说");
+    expect(modal.querySelector("article")!.textContent).not.toContain("下一步重点");
+    api.patch.mockRejectedValueOnce(new Error("保存失败"));
+    await act(async () => button("保存草稿").click());
+    expect(api.patch.mock.calls.at(-1)![1].content).toMatchObject({ summary: "", areasToImprove: [] });
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => button("保存草稿").click());
+    expect(api.patch.mock.calls.at(-1)![1].content).toMatchObject({ summary: "", areasToImprove: [] });
+  });
+
+  it("uploads and removes the second photo independently while preserving the first and unsaved text", async () => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    Object.assign(report, { reportVersion: "v2" });
+    Object.assign(report.content, {
+      reportVersion: "v2",
+      classroomPhoto: "first-photo",
+      classroomPhotos: ["first-photo", null]
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    await act(async () => button("预览 / 编辑").click());
+    const message = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="老师想对你说"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(message, "未保存寄语");
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="上传第二张课堂照片"]')!;
+    const upload = async (file: File) => {
+      Object.defineProperty(input, "files", { configurable: true, value: [file] });
+      await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    };
+    const before = api.post.mock.calls.length;
+    await upload(new File([new Uint8Array(2 * 1024 * 1024 + 1)], "large.png", { type: "image/png" }));
+    expect(api.post).toHaveBeenCalledTimes(before);
+    api.post.mockResolvedValueOnce({
+      ...report,
+      content: { ...report.content, classroomPhotos: ["first-photo", "second-photo"] }
+    });
+    const file = new File(["png"], "second.png", { type: "image/png" });
+    await upload(file);
+    expect(api.post).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/report/classroom-photo?slot=1",
+      expect.any(FormData),
+      expect.anything()
+    );
+    expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')!.getAttribute("src")).toBe(
+      "first-photo"
+    );
+    expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的第二张课堂照片"]')!.getAttribute("src")).toBe(
+      "second-photo"
+    );
+    api.delete.mockResolvedValueOnce({
+      ...report,
+      content: { ...report.content, classroomPhotos: ["first-photo", null] }
+    });
+    await act(async () => button("移除第二张课堂照片").click());
+    expect(api.delete).toHaveBeenCalledWith("/api/semester-reports/reports/report/classroom-photo?slot=1");
+    expect(document.querySelector('img[alt="示例学生的第二张课堂照片"]')).toBeNull();
+    expect(document.querySelector<HTMLImageElement>('img[alt="示例学生的课堂照片"]')!.getAttribute("src")).toBe(
+      "first-photo"
+    );
+    await act(async () => button("保存草稿").click());
+    expect(api.patch.mock.calls.at(-1)![1].content).not.toHaveProperty("classroomPhotos");
+    expect(api.patch.mock.calls.at(-1)![1].content.summary).toBe("未保存寄语");
+  });
+
+  it("limits each photo caption to ten characters and preserves edits on failure and independent removal", async () => {
+    const report = publishedReport(false);
+    report.status = "draft";
+    Object.assign(report, { reportVersion: "v2" });
+    Object.assign(report.content, {
+      reportVersion: "v2",
+      classroomPhoto: "first-photo",
+      classroomPhotos: ["first-photo", "second-photo"],
+      classroomPhotoCaptions: ["", ""]
+    });
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    await act(async () => button("预览 / 编辑").click());
+    const first = document.querySelector<HTMLInputElement>('[aria-label="照片 1说明"]')!;
+    const second = document.querySelector<HTMLInputElement>('[aria-label="照片 2说明"]')!;
+    const type = (input: HTMLInputElement, value: string) =>
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    type(first, "字".repeat(11));
+    type(second, "课堂游戏");
+    expect(first.value).toBe("字".repeat(10));
+    act(() => button("查看报告模板").click());
+    expect(document.querySelectorAll("article figcaption")[0]!.textContent).toBe(first.value);
+    expect(document.querySelectorAll("article figcaption")[1]!.textContent).toBe("课堂游戏");
+    api.patch.mockRejectedValueOnce(new Error("保存失败"));
+    await act(async () => button("保存草稿").click());
+    expect(first.value).toBe("字".repeat(10));
+    expect(second.value).toBe("课堂游戏");
+    expect(api.patch.mock.calls.at(-1)![1].content.classroomPhotoCaptions).toEqual(["字".repeat(10), "课堂游戏"]);
+    api.delete.mockResolvedValueOnce({
+      ...report,
+      content: { ...report.content, classroomPhotos: ["first-photo", null], classroomPhotoCaptions: ["", ""] }
+    });
+    await act(async () => button("移除第二张课堂照片").click());
+    expect(document.querySelector('[aria-label="照片 2说明"]')).toBeNull();
+    expect(first.value).toBe("字".repeat(10));
+    await act(async () => button("保存草稿").click());
+    expect(api.patch.mock.calls.at(-1)![1].content.classroomPhotoCaptions).toEqual(["字".repeat(10), ""]);
+  });
 
   function publishedReport(hasShare = true) {
     const originalGet = api.get.getMockImplementation()!;

@@ -1,4 +1,5 @@
 import { reportVersionToken } from './report-history';
+import { scoreDetailsForSnapshot } from './report-generation';
 import { randomBytes } from 'node:crypto';
 import { SemesterReportEntity } from './semester-report.entity';
 import { SemesterReportsService } from './semester-reports.service';
@@ -57,6 +58,7 @@ describe('report publishing', () => {
     });
     row.snapshot = {
       reportVersion: 'v2',
+      teacherReviewedAt: '2026-10-12T00:00:00Z',
       courseSelections: [{ subjectId: 'english', courseScope: '' }],
       subjectName: '英语',
       allowedReferences: ['course:old:p1'],
@@ -206,6 +208,7 @@ describe('report publishing', () => {
     });
     state.row.snapshot = {
       reportVersion: 'v2',
+      teacherReviewedAt: '2026-10-12T00:00:00Z',
       subjectName: '英语、数学',
       courseSelections: [
         { subjectId: 'english', courseScope: '' },
@@ -490,7 +493,10 @@ describe('report publishing', () => {
     'records and restores %s edits without reviving published links',
     async (version) => {
       const { service, row, events } = setup();
-      row.snapshot = { reportVersion: version };
+      row.snapshot = {
+        reportVersion: version,
+        teacherReviewedAt: '2026-10-12T00:00:00Z',
+      };
       await service.editDraft('report', { ...content, summary: '第一次修改' });
       const event = events.save.mock.calls[0]![0];
       expect(event.details.revision.before.content.summary).toBe(
@@ -526,7 +532,10 @@ describe('report publishing', () => {
     'restores a published %s history version directly as a draft and revokes every link',
     async (version) => {
       const { service, row, shares, events } = setup();
-      row.snapshot = { reportVersion: version };
+      row.snapshot = {
+        reportVersion: version,
+        teacherReviewedAt: '2026-10-12T00:00:00Z',
+      };
       await service.editDraft('report', { ...content, summary: '历史寄语' });
       const edit = events.save.mock.calls[0]![0];
       const publication = await service.publish('report');
@@ -666,10 +675,113 @@ describe('report publishing', () => {
     ).rejects.toThrow('草稿');
     expect(row.content?.summary).toBe('修改');
   });
-  it('accepts a photo of exactly 5MB', async () => {
+  it('supports two independent photo slots, protects both from draft edits and restores their history', async () => {
+    const { service, row, events } = setup();
+    row.snapshot = { classroomPhoto: 'legacy-photo' };
+    const second = {
+      ...photo,
+      buffer: Buffer.concat([photo.buffer.subarray(0, 11), Buffer.from([2])]),
+    };
+    const secondResult = await service.setClassroomPhoto('report', second, 1);
+    const photos = secondResult.content!.classroomPhotos as string[];
+    expect(photos[0]).toBe('legacy-photo');
+    expect(photos[1]).toContain('data:image/png;base64,');
+    const addition = events.save.mock.calls.at(-1)![0];
+    await service.editDraft('report', {
+      ...content,
+      classroomPhotos: ['forged', 'forged'],
+    });
+    expect(row.content!.classroomPhotos).toEqual(photos);
+    await expect(service.setClassroomPhoto('report', photo, 2)).rejects.toThrow(
+      '照片位置',
+    );
+    await service.setClassroomPhoto('report', undefined, 0);
+    expect(row.content!.classroomPhotos).toEqual([null, photos[1]]);
+    const detail = await service.getEvent('report', addition.id);
+    expect(
+      detail.changes.some((change) => change.field.includes('课堂照片')),
+    ).toBe(true);
+    await service.restoreEvent('report', addition.id, {
+      side: 'after',
+      expectedVersion: detail.currentVersion,
+    });
+    expect(row.content!.classroomPhotos).toEqual(photos);
+    const published = await service.publish('report');
+    const parent = await service.publicReport(
+      new URL(published.url).pathname.split('/').pop()!,
+    );
+    expect(parent.content.classroomPhotos).toEqual(photos);
+    await expect(service.setClassroomPhoto('report', photo, 1)).rejects.toThrow(
+      '草稿',
+    );
+  });
+
+  it('validates and preserves independent 10-character photo captions through publishing, deletion and restoration', async () => {
+    const { service, row, events } = setup();
+    row.snapshot = {
+      classroomPhotos: ['first', 'second'],
+      classroomPhoto: 'first',
+    };
+    const captions = ['课堂小组合作', '😀'.repeat(10)];
+    await service.editDraft('report', {
+      ...content,
+      classroomPhotoCaptions: captions,
+    });
+    expect(row.snapshot.classroomPhotoCaptions).toEqual(captions);
+    const edit = events.save.mock.calls.at(-1)![0];
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        classroomPhotoCaptions: ['字'.repeat(11), ''],
+      }),
+    ).rejects.toThrow('10');
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        classroomPhotoCaptions: ['a'],
+      }),
+    ).rejects.toThrow('说明');
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        classroomPhotoCaptions: [1, ''],
+      }),
+    ).rejects.toThrow('说明');
+    await service.setClassroomPhoto('report', photo, 0);
+    expect(row.snapshot.classroomPhotoCaptions).toEqual(captions);
+    await service.setClassroomPhoto('report', undefined, 1);
+    expect(row.snapshot.classroomPhotoCaptions).toEqual([captions[0], '']);
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        classroomPhotoCaptions: ['', '无照片说明'],
+      }),
+    ).rejects.toThrow('没有照片');
+    const detail = await service.getEvent('report', edit.id);
+    expect(detail.changes.some((change) => change.field.includes('说明'))).toBe(
+      true,
+    );
+    await service.restoreEvent('report', edit.id, {
+      side: 'after',
+      expectedVersion: detail.currentVersion,
+    });
+    const publication = await service.publish('report');
+    const parent = await service.publicReport(
+      new URL(publication.url).pathname.split('/').pop()!,
+    );
+    expect(parent.content.classroomPhotoCaptions).toEqual(captions);
+    await expect(
+      service.editDraft('report', {
+        ...content,
+        classroomPhotoCaptions: ['', ''],
+      }),
+    ).rejects.toThrow('草稿');
+  });
+
+  it('accepts a photo of exactly 2MB', async () => {
     const { service, row } = setup();
     row.snapshot = { reportVersion: 'v2' };
-    const buffer = Buffer.alloc(5 * 1024 * 1024);
+    const buffer = Buffer.alloc(2 * 1024 * 1024);
     photo.buffer.copy(buffer);
     await service.setClassroomPhoto('report', {
       ...photo,
@@ -734,7 +846,10 @@ describe('report publishing', () => {
     'rejects invalid files, foreign teachers and published uploads for %s',
     async (version) => {
       const { service, row, reports } = setup();
-      row.snapshot = { reportVersion: version };
+      row.snapshot = {
+        reportVersion: version,
+        teacherReviewedAt: '2026-10-12T00:00:00Z',
+      };
       await expect(
         service.setClassroomPhoto('report', {
           ...photo,
@@ -750,9 +865,9 @@ describe('report publishing', () => {
       await expect(
         service.setClassroomPhoto('report', {
           ...photo,
-          size: 5 * 1024 * 1024 + 1,
+          size: 2 * 1024 * 1024 + 1,
         }),
-      ).rejects.toThrow('5MB');
+      ).rejects.toThrow('2MB');
       expect(reports.save).not.toHaveBeenCalled();
       row.status = 'published';
       await expect(service.setClassroomPhoto('report', photo)).rejects.toThrow(
@@ -764,6 +879,178 @@ describe('report publishing', () => {
       );
     },
   );
+  it.each([false, true])(
+    'exposes legacy automatic messages only when teacher-reviewed (reviewed: %s)',
+    async (reviewed) => {
+      const { service, row } = setup('published');
+      row.snapshot = {
+        reportVersion: 'v2',
+        ...(reviewed ? { teacherReviewedAt: '2026-10-12T00:00:00Z' } : {}),
+      };
+      const original = structuredClone(row.content);
+      const share = await service.createShare('report');
+      const parent = await service.publicReport(
+        new URL(share.url).pathname.split('/').pop()!,
+      );
+      expect(parent.content.summary).toBe(reviewed ? content.summary : '');
+      expect(row.content).toEqual(original);
+    },
+  );
+
+  it('allows clearing both optional v2 sections and publishes the empty values without replacements', async () => {
+    const { service, row } = setup();
+    row.snapshot = { reportVersion: 'v2' };
+    await service.editDraft('report', {
+      ...content,
+      summary: '',
+      areasToImprove: [{ text: '   ', sourceRefs: ['teacher-review'] }],
+    });
+    expect(row.content?.areasToImprove).toEqual([]);
+    const publication = await service.publish('report');
+    const parent = await service.publicReport(
+      new URL(publication.url).pathname.split('/').pop()!,
+    );
+    expect(parent.content.summary).toBe('');
+    expect(parent.content.areasToImprove).toEqual([]);
+  });
+
+  function liveDraft() {
+    const state = setup();
+    Object.assign(state.row, {
+      studentId: 'one',
+      periodStart: new Date('2026-09-01T00:00:00+08:00'),
+      periodEnd: new Date('2026-10-01T00:00:00+08:00'),
+      snapshot: {
+        reportVersion: 'v2',
+        student: { id: 'teacher:one' },
+        allowedReferences: ['score:old'],
+        scoreSummary: {
+          count: 1,
+          positive: 1,
+          negative: 0,
+          net: 1,
+          records: [{ id: 'old', label: '认真听讲', delta: 1 }],
+          positiveItems: [{ label: '认真听讲', count: 1 }],
+        },
+      },
+    });
+    state.row.content = {
+      ...state.row.content,
+      scoreDetails: scoreDetailsForSnapshot(state.row.snapshot!),
+    };
+    const internals = state.service as unknown as {
+      currentReportScoreSummary: jest.Mock;
+      scoreSummary: jest.Mock;
+    };
+    internals.currentReportScoreSummary.mockRestore();
+    const summary = {
+      positive: 10,
+      negative: -1,
+      net: 9,
+      count: 3,
+      positiveItems: [{ label: '乐于助人', count: 2 }],
+      records: [{ id: 'new', label: '乐于助人', delta: 5 }],
+    };
+    const scores = jest
+      .spyOn(internals, 'scoreSummary')
+      .mockResolvedValue(summary);
+    return { ...state, scores, summary };
+  }
+
+  it('reads current draft points without changing teacher prose, provenance or stored history', async () => {
+    const { service, row, scores, summary, reports } = liveDraft();
+    const original = structuredClone(row);
+    const draft = await service.getReport('report');
+    expect(draft.content!.scoreDetails).toMatchObject({
+      positiveItems: summary.positiveItems,
+      net: 9,
+    });
+    expect(scores).toHaveBeenCalledWith(
+      { id: 'teacher:one' },
+      row.periodStart,
+      row.periodEnd,
+      undefined,
+    );
+    expect(row).toEqual(original);
+    expect(reports.save).not.toHaveBeenCalled();
+    scores.mockResolvedValueOnce({
+      ...summary,
+      positiveItems: [],
+      records: [],
+      count: 0,
+      positive: 0,
+      net: 0,
+      negative: 0,
+    });
+    expect(
+      (await service.getReport('report')).content!.scoreDetails,
+    ).toMatchObject({ positiveItems: [], count: 0 });
+    const edited = await service.editDraft('report', {
+      ...content,
+      summary: '老师未保存的寄语',
+      scoreDetails: { positive: 999 },
+    });
+    expect(edited.content!.scoreDetails).toMatchObject({
+      positiveItems: summary.positiveItems,
+    });
+    expect(edited.content!.summary).toBe('老师未保存的寄语');
+    expect(row.snapshot!.scoreSummary).toEqual(original.snapshot!.scoreSummary);
+  });
+
+  it('freezes the latest points atomically at publishing, resumes live counts after withdrawal', async () => {
+    const { service, row, scores, summary } = liveDraft();
+    const published = await service.publish('report');
+    expect(published.report.content!.scoreDetails).toMatchObject({
+      positiveItems: summary.positiveItems,
+    });
+    expect(row.snapshot!.reportScoreSummary).toEqual(summary);
+    const calls = scores.mock.calls.length;
+    scores.mockResolvedValue({
+      ...summary,
+      positiveItems: [{ label: '认真听讲', count: 20 }],
+    });
+    expect(
+      (await service.getReport('report')).content!.scoreDetails,
+    ).toMatchObject({ positiveItems: summary.positiveItems });
+    const parent = await service.publicReport(
+      new URL(published.url).pathname.split('/').pop()!,
+    );
+    expect(parent.content.scoreDetails).toMatchObject({
+      positiveItems: summary.positiveItems,
+    });
+    await service.publish('report');
+    expect(scores.mock.calls).toHaveLength(calls);
+    await service.unpublish('report');
+    expect(
+      (await service.getReport('report')).content!.scoreDetails,
+    ).toMatchObject({ positiveItems: [{ label: '认真听讲', count: 20 }] });
+  });
+
+  it('rolls back refreshed publication counts when saving the report fails', async () => {
+    const { service, row, reports, shares } = liveDraft();
+    const original = structuredClone(row);
+    reports.save.mockRejectedValueOnce(new Error('保存失败'));
+    await expect(service.publish('report')).rejects.toThrow('保存失败');
+    expect(row).toEqual(original);
+    expect(shares.save).not.toHaveBeenCalled();
+  });
+
+  it('fails current-score reads and publishing explicitly, without publishing stale counts or querying unauthorized reports', async () => {
+    const { service, row, scores, reports, shares } = liveDraft();
+    const original = structuredClone(row);
+    scores.mockRejectedValue(new Error('积分读取失败'));
+    await expect(service.getReport('report')).rejects.toThrow('积分读取失败');
+    await expect(service.publish('report')).rejects.toThrow('积分读取失败');
+    expect(row).toEqual(original);
+    expect(reports.save).not.toHaveBeenCalled();
+    expect(shares.save).not.toHaveBeenCalled();
+    scores.mockClear();
+    row.teacherId = 'other';
+    await expect(service.getReport('report')).rejects.toThrow('报告不存在');
+    await expect(service.publish('report')).rejects.toThrow('报告不存在');
+    expect(scores).not.toHaveBeenCalled();
+  });
+
   function setup(status = 'draft') {
     const row = {
       id: 'report',
@@ -861,6 +1148,19 @@ describe('report publishing', () => {
       { teacherId: 'teacher' },
     ] as unknown as ConstructorParameters<typeof SemesterReportsService>;
     const service = new SemesterReportsService(...dependencies);
+    jest
+      .spyOn(
+        service as unknown as { currentReportScoreSummary: jest.Mock },
+        'currentReportScoreSummary',
+      )
+      .mockImplementation(
+        async (report: SemesterReportEntity) =>
+          report.snapshot?.scoreSummary ?? {
+            count: 0,
+            records: [],
+            positiveItems: [],
+          },
+      );
     return { service, row, reports, shares, events };
   }
 

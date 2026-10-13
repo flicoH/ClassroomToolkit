@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  classroomPhotosForSnapshot,
+  classroomPhotoCaptionsForSnapshot,
+} from './report-generation';
 import { isDeepStrictEqual } from 'node:util';
 import type {
   ReportEventEntity,
@@ -42,6 +46,8 @@ export function captureReportVersion(row: SemesterReportEntity): ReportVersion {
   if (content)
     for (const field of [
       'classroomPhoto',
+      'classroomPhotos',
+      'classroomPhotoCaptions',
       'pet',
       'petAsOf',
       'petHistoryStatus',
@@ -230,23 +236,31 @@ function changesFor(revision: ReportRevision | null) {
     );
   add('报告学科', before?.snapshot.subjectName, after.snapshot.subjectName);
   add('授课范围', before?.courseScope, after.courseScope);
-  if (
-    before?.snapshot.classroomPhoto &&
-    after.snapshot.classroomPhoto &&
-    before.snapshot.classroomPhoto !== after.snapshot.classroomPhoto
-  ) {
-    changes.push({
-      field: '课堂照片',
-      before: '修改前的课堂照片',
-      after: '替换后的课堂照片',
-    });
-  } else
+  const beforePhotos = classroomPhotosForSnapshot(before?.snapshot ?? {});
+  const afterPhotos = classroomPhotosForSnapshot(after.snapshot);
+  const beforeCaptions = classroomPhotoCaptionsForSnapshot(
+    before?.snapshot ?? {},
+  );
+  const afterCaptions = classroomPhotoCaptionsForSnapshot(after.snapshot);
+  for (const index of [0, 1]) {
     add(
-      '课堂照片',
-      before?.snapshot.classroomPhoto,
-      after.snapshot.classroomPhoto,
-      (value) => (value ? '已保存课堂照片' : '无课堂照片'),
+      `课堂照片${index + 1}说明`,
+      beforeCaptions[index],
+      afterCaptions[index],
     );
+    const oldPhoto = beforePhotos[index];
+    const newPhoto = afterPhotos[index];
+    if (oldPhoto && newPhoto && oldPhoto !== newPhoto)
+      changes.push({
+        field: `课堂照片${index + 1}`,
+        before: '修改前的课堂照片',
+        after: '替换后的课堂照片',
+      });
+    else
+      add(`课堂照片${index + 1}`, oldPhoto, newPhoto, (value) =>
+        value ? '已保存课堂照片' : '无课堂照片',
+      );
+  }
   for (const [key, label] of Object.entries({
     institutionName: '报告抬头',
     courseTheme: '课程主题',

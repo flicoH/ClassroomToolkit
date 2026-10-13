@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Header,
   UploadedFile,
   UseInterceptors,
@@ -141,21 +142,26 @@ export class SemesterReportsController {
   @Post('reports/:id/classroom-photo')
   @UseInterceptors(
     FileInterceptor('file', {
-      // Multer rejects at the threshold; allow exactly 5MB and let the service
+      // Multer rejects at the threshold; allow exactly 2MB and let the service
       // enforce the inclusive business limit before persisting anything.
-      limits: { fileSize: 5 * 1024 * 1024 + 1, files: 1, fields: 0 },
+      limits: { fileSize: 2 * 1024 * 1024 + 1, files: 1, fields: 0 },
     }),
   )
   uploadClassroomPhoto(
     @Param('id') id: string,
     @UploadedFile() file?: { buffer: Buffer; size: number; mimetype: string },
+    @Query('slot') slot?: string,
   ) {
     if (!file) throw new BadRequestException('请选择课堂照片');
-    return this.reports.setClassroomPhoto(id, file);
+    return slot === undefined
+      ? this.reports.setClassroomPhoto(id, file)
+      : this.reports.setClassroomPhoto(id, file, slot);
   }
   @Delete('reports/:id/classroom-photo')
-  removeClassroomPhoto(@Param('id') id: string) {
-    return this.reports.setClassroomPhoto(id);
+  removeClassroomPhoto(@Param('id') id: string, @Query('slot') slot?: string) {
+    return slot === undefined
+      ? this.reports.setClassroomPhoto(id)
+      : this.reports.setClassroomPhoto(id, undefined, slot);
   }
 
   @Post('reports/:id/publish')

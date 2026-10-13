@@ -29,8 +29,11 @@ import {
   resolveReportGenerationMode,
   learningContentsForReport,
   scoreDetailsForSnapshot,
+  positiveScoreItems,
   validateGeneratedReportContent,
   reportVisualsForSnapshot,
+  classroomPhotosForSnapshot,
+  classroomPhotoCaptionsForSnapshot,
 } from './report-generation';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import {
@@ -355,6 +358,8 @@ export class SemesterReportsService {
   async generate(
     input: Record<string, unknown>,
     classroomPhoto?: string | null,
+    classroomPhotos?: Array<string | null>,
+    classroomPhotoCaptions?: string[],
   ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
@@ -484,6 +489,8 @@ export class SemesterReportsService {
         courseSelections: selections,
         reportSubjects: courseSubjects,
         classroomPhoto: classroomPhoto ?? null,
+        ...(classroomPhotos ? { classroomPhotos } : {}),
+        ...(classroomPhotoCaptions ? { classroomPhotoCaptions } : {}),
         ...(await this.petForPeriod(student, end)),
         generationMode,
         learningContents: isV2
@@ -653,7 +660,7 @@ export class SemesterReportsService {
   }
 
   async getReport(id: string) {
-    return this.reportDto(await this.findReport(id));
+    return this.currentReportDto(await this.findReport(id));
   }
 
   async getEvents(id: string) {
@@ -736,7 +743,7 @@ export class SemesterReportsService {
         },
         manager,
       );
-      return this.reportDto(row);
+      return this.currentReportDto(row);
     });
   }
 
@@ -745,8 +752,32 @@ export class SemesterReportsService {
       const before = captureReportVersion(row);
       if (row.status !== 'draft')
         throw new BadRequestException('只有草稿可以编辑');
+      const captions = content.classroomPhotoCaptions;
+      let classroomPhotoCaptions = classroomPhotoCaptionsForSnapshot(
+        row.snapshot ?? {},
+      );
+      if (captions !== undefined) {
+        if (
+          !Array.isArray(captions) ||
+          captions.length !== 2 ||
+          captions.some((caption) => typeof caption !== 'string')
+        )
+          throw new BadRequestException('照片说明必须为两个位置的文字');
+        classroomPhotoCaptions = captions.map((caption) =>
+          (caption as string).trim(),
+        );
+        const photos = classroomPhotosForSnapshot(row.snapshot ?? {});
+        for (const [index, caption] of classroomPhotoCaptions.entries()) {
+          // Count Unicode code points so one emoji counts as one character, like a Chinese character.
+          if (Array.from(caption).length > 10)
+            throw new BadRequestException('每张照片说明最多 10 个字');
+          if (caption && !photos[index])
+            throw new BadRequestException('该位置没有照片，不能保存说明');
+        }
+      }
       const reviewedSnapshot = {
         ...row.snapshot,
+        classroomPhotoCaptions,
         allowedReferences: [
           ...new Set([
             ...((row.snapshot?.allowedReferences as string[]) ?? []),
@@ -755,7 +786,26 @@ export class SemesterReportsService {
         ],
         teacherReviewedAt: new Date().toISOString(),
       };
-      content = { ...content, ...reportVisualsForSnapshot(reviewedSnapshot) };
+      content = {
+        ...content,
+        ...reportVisualsForSnapshot(reviewedSnapshot),
+        // v2 clients may submit live counts from a newer read; only server data is trusted.
+        ...(row.snapshot?.reportVersion === 'v2'
+          ? {
+              scoreDetails: scoreDetailsForSnapshot(reviewedSnapshot),
+              ...(Array.isArray(content.areasToImprove)
+                ? {
+                    areasToImprove: (
+                      content.areasToImprove as Array<Record<string, unknown>>
+                    ).filter(
+                      (entry) =>
+                        typeof entry?.text === 'string' && entry.text.trim(),
+                    ),
+                  }
+                : {}),
+            }
+          : {}),
+      };
       this.validateContent(content, reviewedSnapshot);
       row.snapshot = reviewedSnapshot;
       row.content = content;
@@ -770,7 +820,7 @@ export class SemesterReportsService {
         },
         manager,
       );
-      return this.reportDto(row);
+      return this.currentReportDto(row);
     });
   }
 
@@ -903,7 +953,7 @@ export class SemesterReportsService {
         },
         manager,
       );
-      return this.reportDto(row);
+      return this.currentReportDto(row);
     });
   }
 
@@ -1046,7 +1096,7 @@ export class SemesterReportsService {
         manager,
       );
       // The browser uses these references to clean unsaved edits without replacing other prose.
-      return { report: this.reportDto(row), removedReferences };
+      return { report: await this.currentReportDto(row), removedReferences };
     });
   }
 
@@ -1070,11 +1120,14 @@ export class SemesterReportsService {
   async setClassroomPhoto(
     id: string,
     file?: { buffer: Buffer; size: number; mimetype: string },
+    slot: unknown = 0,
   ) {
     return this.withReportLock(id, async (row, manager) => {
       const before = captureReportVersion(row);
       if (row.status !== 'draft')
         throw new BadRequestException('只有草稿可以修改课堂照片');
+      if (![0, 1, '0', '1'].includes(slot as string | number))
+        throw new BadRequestException('课堂照片位置必须为 0 或 1');
       let classroomPhoto: string | null = null;
       if (file) {
         const png = file.buffer
@@ -1086,7 +1139,7 @@ export class SemesterReportsService {
           file.buffer[2] === 255;
         if (
           file.size < 12 ||
-          file.size > 5 * 1024 * 1024 ||
+          file.size > 2 * 1024 * 1024 ||
           file.size !== file.buffer.length ||
           !(
             (png && file.mimetype === 'image/png') ||
@@ -1094,14 +1147,27 @@ export class SemesterReportsService {
           )
         )
           throw new BadRequestException(
-            '请上传 JPG 或 PNG 课堂照片（最大 5MB）',
+            '请上传 JPG 或 PNG 课堂照片（每张最大 2MB）',
           );
         classroomPhoto = `data:${png ? 'image/png' : 'image/jpeg'};base64,${file.buffer.toString('base64')}`;
       }
-      row.snapshot = { ...row.snapshot, classroomPhoto };
+      const classroomPhotos = classroomPhotosForSnapshot(row.snapshot ?? {});
+      classroomPhotos[Number(slot)] = classroomPhoto;
+      const classroomPhotoCaptions = classroomPhotoCaptionsForSnapshot(
+        row.snapshot ?? {},
+      );
+      if (!file) classroomPhotoCaptions[Number(slot)] = '';
+      row.snapshot = {
+        ...row.snapshot,
+        classroomPhotos,
+        classroomPhotoCaptions,
+        classroomPhoto: classroomPhotos[0] ?? null,
+      };
       row.content = {
         ...row.content,
-        ...reportVisualsForSnapshot(row.snapshot),
+        classroomPhoto: classroomPhotos[0] ?? null,
+        classroomPhotos,
+        classroomPhotoCaptions,
       };
       await manager.getRepository(SemesterReportEntity).save(row);
       await this.log(
@@ -1114,7 +1180,7 @@ export class SemesterReportsService {
         },
         manager,
       );
-      return this.reportDto(row);
+      return this.currentReportDto(row);
     });
   }
 
@@ -1130,6 +1196,21 @@ export class SemesterReportsService {
         throw new BadRequestException('仅可发布已生成并校验的草稿');
       this.key();
       readReportPublicBaseUrl();
+      if (row.snapshot?.reportVersion === 'v2') {
+        row.snapshot = {
+          ...row.snapshot,
+          reportScoreSummary: await this.currentReportScoreSummary(
+            row,
+            manager,
+          ),
+        };
+      }
+      if (row.snapshot?.reportVersion === 'v2') {
+        row.content = {
+          ...row.content,
+          scoreDetails: scoreDetailsForSnapshot(row.snapshot),
+        };
+      }
       this.validateContent(row.content, row.snapshot ?? {});
       row.status = 'published';
       row.publishedAt = new Date();
@@ -1174,9 +1255,14 @@ export class SemesterReportsService {
         ),
       ].map((subjectId) => ({ subjectId, courseScope: old.courseScope ?? '' }));
     }
-    const photo = old.snapshot?.classroomPhoto;
-    return typeof photo === 'string'
-      ? this.generate(input, photo)
+    const photos = classroomPhotosForSnapshot(old.snapshot ?? {});
+    return photos.some(Boolean)
+      ? this.generate(
+          input,
+          photos[0],
+          photos,
+          classroomPhotoCaptionsForSnapshot(old.snapshot ?? {}),
+        )
       : this.generate(input);
   }
 
@@ -1457,7 +1543,7 @@ export class SemesterReportsService {
         ).filter((reference) => reference.startsWith('course:')),
       },
     });
-    return this.reportDto(row);
+    return this.currentReportDto(row);
   }
 
   private validateContent(
@@ -1522,12 +1608,48 @@ export class SemesterReportsService {
     );
   }
 
+  /** Refresh only score presentation; original generation references and teacher prose
+   * remain intact. Publication reads through its transaction before freezing the result. */
+  private async currentReportScoreSummary(
+    row: SemesterReportEntity,
+    manager?: EntityManager,
+  ) {
+    const savedStudent = row.snapshot?.student as { id?: string } | undefined;
+    const student = savedStudent?.id
+      ? { id: savedStudent.id }
+      : (await this.findStudents([row.studentId]))[0]!;
+    return this.scoreSummary(
+      student,
+      row.periodStart,
+      row.periodEnd,
+      manager?.getRepository(PetEvaluationRecordEntity),
+    );
+  }
+
+  /** Draft reads are current but never rewrite the saved report or its edit timestamp. */
+  private async currentReportDto(row: SemesterReportEntity) {
+    if (
+      row.status !== 'draft' ||
+      row.snapshot?.reportVersion !== 'v2' ||
+      !row.content
+    )
+      return this.reportDto(row);
+    return this.reportDto({
+      ...row,
+      snapshot: {
+        ...row.snapshot,
+        reportScoreSummary: await this.currentReportScoreSummary(row),
+      },
+    });
+  }
+
   private async scoreSummary(
-    student: PetStudentEntity,
+    student: Pick<PetStudentEntity, 'id'>,
     start: Date,
     end: Date,
+    records = this.records,
   ) {
-    const included = await this.records
+    const included = await records
       .createQueryBuilder('record')
       .where('record.teacher_id = :teacherId', {
         teacherId: this.teacher.teacherId,
@@ -1541,6 +1663,8 @@ export class SemesterReportsService {
       .getMany();
     return {
       scope: 'overall',
+      // Aggregate before capping saved details so every period event is counted.
+      positiveItems: positiveScoreItems(included),
       positive: included
         .filter((r) => r.delta > 0)
         .reduce((n, r) => n + r.delta, 0),

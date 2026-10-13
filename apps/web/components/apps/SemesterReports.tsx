@@ -26,6 +26,7 @@ import { copyText } from "@/lib/clipboard";
 import { createUuid } from "@/lib/id";
 import {
   LearningReportView,
+  reportClassroomPhotos,
   showsLearningMastery,
   masteryLabels,
   type LearningContent,
@@ -37,7 +38,9 @@ import { SubjectCoursePicker, courseSelectionsFromScopes } from "@/components/se
 import { SubjectPerformanceConfig } from "@/components/semester-reports/SubjectPerformanceConfig";
 import type { PerformanceField } from "@/components/semester-reports/performance-config";
 import { GrowthAssessmentFields } from "@/components/semester-reports/GrowthAssessmentFields";
+import { localReportShareUrl } from "@/lib/report-share-url";
 import { ReportHistory } from "@/components/semester-reports/ReportHistory";
+import { PeriodScoreChart } from "@/components/semester-reports/PeriodScoreChart";
 import { ReportPetView, type ReportPet } from "@/components/semester-reports/ReportPetView";
 import type { ScoreDetails } from "@/components/semester-reports/ScoreDetailsView";
 import { Button } from "@/components/ui/button";
@@ -178,7 +181,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [subjectId, setSubjectId] = useState("");
   const subjectRevision = useRef(0);
   const [period, setPeriod] = useState(isV2 ? "term" : "month");
-  const [generationMode, setGenerationMode] = useState("template");
+  const [generationMode] = useState("template");
   const [start, setStart] = useState(localDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
   const [end, setEnd] = useState(localDateString(new Date()));
   const [selected, setSelected] = useState<string[]>([]);
@@ -245,12 +248,49 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   );
   const [draft, setDraft] = useState<ReportContent | null>(null);
   const [previewingDraft, setPreviewingDraft] = useState(false);
+  const [scoreRefreshError, setScoreRefreshError] = useState("");
+  useEffect(() => {
+    setScoreRefreshError("");
+    if (!isV2 || !editing?.id || editing.status !== "draft") return;
+    const id = editing.id;
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const full = await request.get<Report, Report>(`${base}/reports/${id}`, { params: { refresh: createUuid() } });
+        if (cancelled || activeEditingId.current !== id || !full.content) return;
+        // Refresh only derived statistics, preserving every unsaved teacher edit.
+        const scoreDetails = (full.content as ReportContent).scoreDetails;
+        setDraft(current => (current ? { ...current, scoreDetails } : current));
+        if (full.status !== "draft")
+          setEditing(current => (current?.id === id ? { ...current, status: full.status } : current));
+        setScoreRefreshError("");
+      } catch (error) {
+        if (!cancelled && activeEditingId.current === id)
+          setScoreRefreshError(`积分统计刷新失败：${errorMessage(error)}，将自动重试。`);
+      } finally {
+        inFlight = false;
+      }
+    };
+    const onFocus = () => {
+      void refresh();
+    };
+    const timer = setInterval(onFocus, 5000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [isV2, editing?.id, editing?.status]);
   const [loadingReportId, setLoadingReportId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actingReportId, setActingReportId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const uploadInFlight = useRef(false);
-  const classroomPhotoInputRef = useRef<HTMLInputElement>(null);
+  const classroomPhotoInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const [uploadState, setUploadState] = useState<{ fileName: string; progress: number | null; error?: string } | null>(
     null
   );
@@ -292,7 +332,18 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       // Ignore lists requested before a subject mutation completed; polling must not undo a successful save.
       if (loadedSubjectRevision === subjectRevision.current) setSubjects(s);
       setStudents(p.students);
-      setReports(r.filter(report => (report.reportVersion ?? "v1") === version));
+      setReports(
+        r
+          .filter(report => (report.reportVersion ?? "v1") === version)
+          .map(report =>
+            report.share
+              ? {
+                  ...report,
+                  share: { ...report.share, url: localReportShareUrl(report.share.url, window.location.origin) }
+                }
+              : report
+          )
+      );
       setDocuments(d);
       setDocumentRefreshFailed(false);
       setTermId(current => current || t[0]?.id || "");
@@ -440,6 +491,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const selectedPet =
     scorePreview?.key === scorePreviewKey
       ? scorePreview.data.petPreviews?.find(preview => preview.studentId === feedbackStudent?.id)
+      : undefined;
+
+  const selectedScore =
+    scorePreview?.key === scorePreviewKey
+      ? scorePreview.data.scoreSummaries?.find(summary => summary.studentId === feedbackStudent?.id)
       : undefined;
 
   function changePeriod(nextPeriod: string, nextTermId = termId) {
@@ -636,6 +692,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           const allowed = new Set(scopePreview?.learningContents.map(item => item.id) ?? []);
           return {
             ...value,
+            // v2 affirmation comes from positive evaluation counts, not free-text input.
+            ...(isV2 ? { highlight: "" } : {}),
             studentId,
             learningMastery: Object.fromEntries(
               Object.entries(value.learningMastery).filter(([id]) => !isV2 && allowed.has(id))
@@ -669,13 +727,14 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             : await request.post<{ url: string; shareId: string }, { url: string; shareId: string }>(
                 `${base}/reports/${report.id}/${action === "publish" ? "publish" : "shares"}`
               );
+        const shareUrl = localReportShareUrl(result.url, window.location.origin);
         // Reflect successful publishing before attempting the optional clipboard operation.
         setReports(old =>
           old.map(row =>
-            row.id === report.id ? { ...row, status: "published", share: { id: result.shareId, url: result.url } } : row
+            row.id === report.id ? { ...row, status: "published", share: { id: result.shareId, url: shareUrl } } : row
           )
         );
-        const copied = await copyText(result.url);
+        const copied = await copyText(shareUrl);
         setMessage(
           copied
             ? action === "publish"
@@ -745,9 +804,10 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     setLoadingReportId(report.id);
     setMessage("");
     try {
+      const detailRefresh = refreshToken ?? (isV2 ? createUuid() : undefined);
       const full = await request.get<Report, Report>(
         `${base}/reports/${report.id}`,
-        refreshToken ? { params: { refresh: refreshToken } } : undefined
+        detailRefresh ? { params: { refresh: detailRefresh } } : undefined
       );
       if (!full.content) throw new Error("报告正文尚未生成，请稍后重试。");
       setEditing(full);
@@ -762,26 +822,15 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setLoadingReportId(null);
     }
   }
-  function sourceLabel(reference: string) {
-    const match = /^course:(.+):p(\d+)$/.exec(reference);
-    if (match)
-      return `${documents.find(document => document.id === match[1])?.fileName ?? "课程 PDF"} 第 ${match[2]} 页`;
-    if (reference.startsWith("teacher-course:")) return "教师填写的教学内容";
-    if (reference === "teacher-review") return "教师核对与评价";
-    if (reference === "teacher-input") return "教师填写的学习评价";
-    if (reference === "teacher-observation") return "教师观察";
-    if (reference.startsWith("score:")) return "综合课堂评价记录";
-    return reference;
-  }
-  async function changeClassroomPhoto(file?: File) {
+  async function changeClassroomPhoto(file?: File, slot = 0) {
     if (!editing || busy) return;
-    if (file && (!["image/jpeg", "image/png"].includes(file.type) || file.size > 5 * 1024 * 1024)) {
-      setMessage("请上传 JPG 或 PNG 课堂照片（最大 5MB）");
+    if (file && (!["image/jpeg", "image/png"].includes(file.type) || file.size > 2 * 1024 * 1024)) {
+      setMessage("请上传 JPG 或 PNG 课堂照片（每张最大 2MB）");
       return;
     }
     setBusy(true);
     try {
-      const url = `${base}/reports/${editing.id}/classroom-photo`;
+      const url = `${base}/reports/${editing.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`;
       const form = new FormData();
       if (file) form.append("file", file);
       // JSON defaults serialize FormData without a file; the browser must set
@@ -792,8 +841,22 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             timeout: 120000
           })
         : await request.delete<Report, Report>(url);
+      if (activeEditingId.current !== editing.id) return;
       const visuals = updated.content as ReportContent;
-      setDraft(current => (current ? { ...current, classroomPhoto: visuals.classroomPhoto } : current));
+      setDraft(current =>
+        current
+          ? {
+              ...current,
+              classroomPhoto: visuals.classroomPhoto,
+              classroomPhotos: reportClassroomPhotos(visuals),
+              classroomPhotoCaptions: [0, 1].map(index =>
+                index === slot && !file
+                  ? ""
+                  : (current.classroomPhotoCaptions?.[index] ?? visuals.classroomPhotoCaptions?.[index] ?? "")
+              )
+            }
+          : current
+      );
       setEditing(current => (current?.id === updated.id ? updated : current));
       setMessage(file ? "课堂照片已保存" : "课堂照片已移除");
       await load();
@@ -890,8 +953,13 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     setMessage("");
     try {
       // Photos have their own multipart endpoint; avoid resending base64 in the JSON draft.
-      const content = { ...draft };
+      const content = {
+        ...draft,
+        // Clearing every focus entry means omitting the optional report section.
+        ...(isV2 ? { areasToImprove: draft.areasToImprove.filter(entry => entry.text.trim()) } : {})
+      };
       delete content.classroomPhoto;
+      delete content.classroomPhotos;
       await request.patch(`${base}/reports/${editing.id}/draft`, { content });
       setEditing(null);
       await load();
@@ -901,6 +969,38 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setBusy(false);
     }
   }
+
+  const feedbackPetPreview = feedbackStudent && (
+    <section className="flex min-w-0 flex-col rounded-xl border bg-slate-50 p-3" aria-live="polite">
+      <h4 className="mb-2 font-semibold">{feedbackStudent.name}的宠物伙伴</h4>
+      <div className="my-auto flex flex-1 flex-col items-center justify-center py-2">
+        {selectedPet ? (
+          selectedPet.petHistoryStatus === "unavailable" ? (
+            <p className="text-sm text-muted-foreground">所选周期结束时的宠物形态尚无历史记录。</p>
+          ) : (
+            <ReportPetView pet={selectedPet.pet} />
+          )
+        ) : scorePreviewError ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-destructive">宠物形态预览失败：{scorePreviewError}</p>
+            <Button size="sm" variant="outline" onClick={() => setScorePreviewAttempt(value => value + 1)}>
+              重试
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">正在读取所选周期的宠物形态…</p>
+        )}
+      </div>
+      {selectedPet && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          形态记录截至 {new Date(selectedPet.petAsOf).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}
+        </p>
+      )}
+      <p className="mt-2 text-xs text-muted-foreground">
+        报告使用所选周期结束时的历史形态；今天尚未结束时以生成时间为准。 课堂照片可在生成后的草稿中上传。
+      </p>
+    </section>
+  );
 
   return (
     <div
@@ -1615,34 +1715,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   </Button>
                 ))}
               </div>
-              <section className="rounded-xl border bg-slate-50 p-3" aria-live="polite">
-                <h4 className="mb-2 font-semibold">{feedbackStudent.name}的宠物伙伴</h4>
-                {selectedPet ? (
-                  selectedPet.petHistoryStatus === "unavailable" ? (
-                    <p className="text-sm text-muted-foreground">所选周期结束时的宠物形态尚无历史记录。</p>
-                  ) : (
-                    <ReportPetView pet={selectedPet.pet} />
-                  )
-                ) : scorePreviewError ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm text-destructive">宠物形态预览失败：{scorePreviewError}</p>
-                    <Button size="sm" variant="outline" onClick={() => setScorePreviewAttempt(value => value + 1)}>
-                      重试
-                    </Button>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">正在读取所选周期的宠物形态…</p>
-                )}
-                {selectedPet && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    形态记录截至{" "}
-                    {new Date(selectedPet.petAsOf).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}
-                  </p>
-                )}
-                <p className="mt-2 text-xs text-muted-foreground">
-                  报告使用所选周期结束时的历史形态；今天尚未结束时以生成时间为准。 课堂照片可在生成后的草稿中上传。
-                </p>
-              </section>
+              {!isV2 && feedbackPetPreview}
               <StudentFeedbackForm
                 key={feedbackKey}
                 student={feedbackStudent}
@@ -1665,6 +1738,28 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                           performanceConfig: subject.performanceConfig
                         }))
                     : undefined
+                }
+                companion={
+                  isV2 ? (
+                    <div aria-label="宠物伙伴与阶段积分" className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+                      {feedbackPetPreview}
+                      <section
+                        className="flex min-w-0 flex-col rounded-xl border border-amber-100 bg-amber-50/70 p-3"
+                        aria-live="polite"
+                      >
+                        <h4 className="mb-2 font-semibold">本期最值肯定</h4>
+                        <div className="my-auto flex flex-1 flex-col justify-center">
+                          {scorePreviewError ? (
+                            <p className="text-sm text-destructive">加分细项预览失败：{scorePreviewError}</p>
+                          ) : selectedScore ? (
+                            <PeriodScoreChart details={selectedScore} />
+                          ) : (
+                            <p className="text-sm text-muted-foreground">正在读取所选周期的加分细项…</p>
+                          )}
+                        </div>
+                      </section>
+                    </div>
+                  ) : undefined
                 }
                 reserveNextFocus={isV2}
                 value={studentFeedback[feedbackKey] ?? emptyStudentFeedback()}
@@ -1990,45 +2085,102 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 )}
                 {editing.status === "draft" && (
                   <section className="space-y-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-4">
-                    <h3 className="font-semibold">课堂照片（每位学生一张）</h3>
+                    <h3 className="font-semibold">课堂照片（最多两张）</h3>
                     <p className="text-xs text-muted-foreground">
-                      照片显示在报告顶部、班级名称下方。支持 JPG / PNG，最大 5MB；每位学生一张。
+                      照片显示在报告顶部、班级名称下方。支持 JPG / PNG，每张最大 2MB，最多两张。 照片说明最多 10
+                      个字，填写后点击“保存草稿”。
                     </p>
-                    {draft.classroomPhoto && (
-                      <img
-                        src={draft.classroomPhoto}
-                        alt={`${editing.studentName}的课堂照片`}
-                        className="max-h-48 w-full rounded-lg object-contain"
-                      />
-                    )}
-                    <input
-                      ref={classroomPhotoInputRef}
-                      className="hidden"
-                      aria-label="上传课堂照片"
-                      type="file"
-                      accept="image/jpeg,image/png"
-                      disabled={busy}
-                      onChange={event => {
-                        const file = event.target.files?.[0];
-                        if (file) void changeClassroomPhoto(file);
-                        event.target.value = "";
-                      }}
-                    />
-                    <Button
-                      size="lg"
-                      className="min-h-12 w-full bg-indigo-600 text-white hover:bg-indigo-700 sm:w-auto"
-                      disabled={busy}
-                      onClick={() => classroomPhotoInputRef.current?.click()}
-                    >
-                      <Upload className="h-5 w-5" />
-                      {busy ? "处理中…" : draft.classroomPhoto ? "更换课堂照片" : "上传课堂照片"}
-                    </Button>
-                    {draft.classroomPhoto && (
-                      <Button disabled={busy} variant="outline" onClick={() => void changeClassroomPhoto()}>
-                        移除课堂照片
-                      </Button>
-                    )}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {reportClassroomPhotos(draft).map((photo, slot) => (
+                        <section key={slot} className="min-w-0 space-y-3 rounded-xl border bg-background p-3">
+                          <h4 className="text-sm font-semibold">照片 {slot + 1}</h4>
+                          {photo && (
+                            <img
+                              src={photo}
+                              alt={
+                                slot === 0
+                                  ? `${editing.studentName}的课堂照片`
+                                  : `${editing.studentName}的第二张课堂照片`
+                              }
+                              className="max-h-48 w-full rounded-lg object-contain"
+                            />
+                          )}
+                          <input
+                            ref={element => {
+                              classroomPhotoInputRefs.current[slot] = element;
+                            }}
+                            className="hidden"
+                            aria-label={slot === 0 ? "上传课堂照片" : "上传第二张课堂照片"}
+                            type="file"
+                            accept="image/jpeg,image/png"
+                            disabled={busy}
+                            onChange={event => {
+                              const file = event.target.files?.[0];
+                              if (file) void changeClassroomPhoto(file, slot);
+                              event.target.value = "";
+                            }}
+                          />
+                          <Button
+                            size="lg"
+                            className="min-h-12 w-full bg-indigo-600 text-white hover:bg-indigo-700"
+                            disabled={busy}
+                            onClick={() => classroomPhotoInputRefs.current[slot]?.click()}
+                          >
+                            <Upload className="h-5 w-5" />
+                            {busy
+                              ? "处理中…"
+                              : slot === 0
+                                ? photo
+                                  ? "更换课堂照片"
+                                  : "上传课堂照片"
+                                : photo
+                                  ? "更换第二张课堂照片"
+                                  : "上传第二张课堂照片"}
+                          </Button>
+                          {photo && (
+                            <label className="block space-y-1 text-sm">
+                              照片说明（最多 10 个字）
+                              <Input
+                                aria-label={`照片 ${slot + 1}说明`}
+                                value={draft.classroomPhotoCaptions?.[slot] ?? ""}
+                                disabled={busy}
+                                placeholder="例如：课堂小组合作"
+                                onChange={event => {
+                                  const caption = Array.from(event.target.value).slice(0, 10).join("");
+                                  setDraft(current => {
+                                    if (!current) return current;
+                                    const captions = [
+                                      current.classroomPhotoCaptions?.[0] ?? "",
+                                      current.classroomPhotoCaptions?.[1] ?? ""
+                                    ];
+                                    captions[slot] = caption;
+                                    return { ...current, classroomPhotoCaptions: captions };
+                                  });
+                                }}
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                {Array.from(draft.classroomPhotoCaptions?.[slot] ?? "").length}/10
+                              </span>
+                            </label>
+                          )}
+                          {photo && (
+                            <Button
+                              disabled={busy}
+                              variant="outline"
+                              onClick={() => void changeClassroomPhoto(undefined, slot)}
+                            >
+                              {slot === 0 ? "移除课堂照片" : "移除第二张课堂照片"}
+                            </Button>
+                          )}
+                        </section>
+                      ))}
+                    </div>
                   </section>
+                )}
+                {scoreRefreshError && (
+                  <p role="status" className="text-sm text-amber-700">
+                    {scoreRefreshError}
+                  </p>
                 )}
                 {previewingDraft ? (
                   <LearningReportView
@@ -2165,7 +2317,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                         ["回家可以这样练", "homeSuggestions"]
                       ] as const
                     )
-                      .filter(([, key]) => !isV2 || key !== "homeSuggestions")
+                      .filter(([, key]) => !isV2 || key === "areasToImprove")
                       .map(([title, key]) => (
                         <section key={key} className="space-y-2">
                           <h3 className="text-sm font-semibold">{title}</h3>

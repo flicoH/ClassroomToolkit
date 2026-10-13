@@ -216,11 +216,15 @@ export function ReportPetView({ pet }: { pet?: ReportPet | null }) {
         formStages.findIndex(stage => stage === pet.stage)
       );
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="my-auto flex flex-col items-center justify-center gap-2">
       {pet.petHatched ? (
-        <PetSprite pet={option} stageIndex={stageIndex} className="h-40 w-40" />
+        <PetSprite pet={option} stageIndex={stageIndex} className="w-40 max-w-full" />
       ) : (
-        <img src="/pets/stone-monkey.png" alt={`${option.name}宠物蛋`} className="h-40 w-40 object-contain" />
+        <img
+          src="/pets/stone-monkey.png"
+          alt={`${option.name}宠物蛋`}
+          className="aspect-square w-40 max-w-full object-contain"
+        />
       )}
       <p className="font-semibold">{pet.petName || option.name}</p>
       <p className="text-sm text-slate-600">
