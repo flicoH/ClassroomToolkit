@@ -13,6 +13,7 @@ export type ReportGenerationMode = 'template' | 'ai';
 type Entry = { text: string; sourceRefs: string[] };
 type Snapshot = {
   reportVersion?: string;
+  studentPhoto?: string | null;
   pet?: {
     petId: string | null;
     petName: string | null;
@@ -100,6 +101,7 @@ export function reportVisualsForSnapshot(snapshot: Snapshot) {
     ...(snapshot.reportVersion === 'v2'
       ? {
           reportVersion: 'v2' as const,
+          studentPhoto: snapshot.studentPhoto ?? null,
           // Before a teacher saves the draft, older generated summaries are not entered messages.
           // Keep reviewed prose intact; hiding an automatic message must not rewrite stored history.
           ...(!snapshot.teacherReviewedAt

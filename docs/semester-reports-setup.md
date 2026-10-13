@@ -253,3 +253,8 @@ CI 中 `Deploy Backend` 默认不构建可选 Docling 镜像；仅仓库 Actions
 新版本在 `semester_report_subjects` 增加可空 JSON 字段 `performance_config`。更新后端前执行 `pnpm --filter ClassRoomToolkitBackend migration:run`（生产环境沿用 Compose 迁移步骤），再同步更新 Backend、Worker 与 Web。已有学科的空配置由接口提供四项默认值，已有报告及历史评价不修改。迁移回退保留配置字段，禁止以删库重建代替升级。
 
 教师在 v2“学期与学科 → 配置学科课堂表现”选择学科，修改各项下拉选项后点击保存；添加新项目时会立即保存，可连续添加多个项目。保存失败会保留新增输入用于重试。学生反馈只显示勾选学科的项目，各项初始为“暂不评价”，留空不会进入生成报告；旧报告的旧选项仍可显示和清空。
+
+
+## 学生照片与 v2 报告头像迁移（2026-10-13）
+
+本次增加 `student_students.photo` 可空列，需要执行 `20261013000000-add-student-photo` 数据库迁移，并同步部署 Backend、Worker 与 Web。依赖新增 `sharp@0.34.5`，需安装部署平台对应的原生可选依赖。已有学生默认无照片，旧报告无头像；旧报告照片快照不会因学生资料更新而变化。迁移回退保留照片列与数据；部署前备份，不重建数据库。完整操作与接口说明见 [学生照片设计](student-photos.md)。

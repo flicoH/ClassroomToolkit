@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
+import { StudentEntity } from '../students/entities/student.entity';
 import {
   ReportDocumentEntity,
   ReportEventEntity,
@@ -24,6 +25,7 @@ import { SemesterReportWorker } from './semester-report.worker';
       ReportShareEntity,
       ReportEventEntity,
       PetStudentEntity,
+      StudentEntity,
       PetEvaluationRecordEntity,
     ]),
   ],

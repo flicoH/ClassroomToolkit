@@ -12,6 +12,7 @@ export type LearningContent = ReportEntry & {
 };
 export type LearningReportContent = {
   reportVersion?: "v2";
+  studentPhoto?: string | null;
   growthAssessment?: GrowthAssessment;
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
@@ -127,10 +128,39 @@ export function LearningReportView({ report }: { report: LearningReportData; for
       <p className="whitespace-pre-wrap break-words leading-8 text-slate-700">{content.summary}</p>
     </section>
   );
+  // v2 places photo evidence in the white body; legacy reports keep their original header layout.
+  const classroomPhotoSection = photoCount > 0 && (
+    <section aria-label="课堂照片" className={isV2 ? "min-w-0" : "mt-5"}>
+      <div className={`grid w-full gap-3 ${photoCount > 1 ? "max-w-xl grid-cols-2" : "max-w-sm grid-cols-1"}`}>
+        {classroomPhotos.map(
+          (photo, index) =>
+            photo && (
+              <figure
+                key={index}
+                className={`min-w-0 rounded-2xl p-1 ${isV2 ? "border border-slate-100 bg-slate-50" : "bg-white/10"}`}
+              >
+                <img
+                  src={photo}
+                  alt={index === 0 ? `${report.studentName}的课堂照片` : `${report.studentName}的第二张课堂照片`}
+                  className="max-h-64 w-full rounded-xl object-contain"
+                />
+                {content.classroomPhotoCaptions?.[index]?.trim() && (
+                  <figcaption
+                    className={`px-2 py-2 text-center text-sm [overflow-wrap:anywhere] ${isV2 ? "text-slate-600" : "text-indigo-100"}`}
+                  >
+                    {content.classroomPhotoCaptions[index]}
+                  </figcaption>
+                )}
+              </figure>
+            )
+        )}
+      </div>
+    </section>
+  );
   return (
     <article className="mx-auto w-full min-w-0 max-w-4xl [overflow-wrap:anywhere] overflow-hidden rounded-3xl bg-white text-slate-900 shadow-xl shadow-violet-900/5">
       <header className="flex items-center justify-between gap-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 px-4 py-7 text-white sm:px-10 sm:py-12">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
           <h1 className="text-2xl font-bold leading-snug sm:text-4xl">
             {report.studentName} ·{" "}
@@ -144,32 +174,18 @@ export function LearningReportView({ report }: { report: LearningReportData; for
             {/* {details?.courseTheme || report.subject} */}
           </p>
           {/* <p className="mt-2 break-words text-sm text-indigo-100">{report.className}</p> */}
-          {photoCount > 0 && (
-            <div
-              className={`mt-5 grid w-full gap-3 ${photoCount > 1 ? "max-w-xl grid-cols-2" : "max-w-sm grid-cols-1"}`}
-            >
-              {classroomPhotos.map(
-                (photo, index) =>
-                  photo && (
-                    <figure key={index} className="min-w-0 rounded-2xl bg-white/10 p-1">
-                      <img
-                        src={photo}
-                        alt={index === 0 ? `${report.studentName}的课堂照片` : `${report.studentName}的第二张课堂照片`}
-                        className="max-h-64 w-full rounded-xl object-contain"
-                      />
-                      {content.classroomPhotoCaptions?.[index]?.trim() && (
-                        <figcaption className="px-2 py-2 text-center text-sm text-indigo-100 [overflow-wrap:anywhere]">
-                          {content.classroomPhotoCaptions[index]}
-                        </figcaption>
-                      )}
-                    </figure>
-                  )
-              )}
-            </div>
-          )}
+          {!isV2 && classroomPhotoSection}
         </div>
+        {isV2 && content.studentPhoto && (
+          <img
+            src={content.studentPhoto}
+            alt={`${report.studentName}的头像`}
+            className="h-18 w-18 shrink-0 rounded-full border-4 border-white/80 object-cover shadow-lg sm:h-32 sm:w-32"
+          />
+        )}
       </header>
       <div className="space-y-4 p-3 sm:space-y-8 sm:p-9">
+        {isV2 && classroomPhotoSection}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
@@ -205,58 +221,71 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         )}
         {content.reportVersion === "v2" && (
           <>
+            {/* Classroom photos enable this section; a student portrait alone must not reveal evaluations. */}
+            {photoCount > 0 && (
+              <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
+                <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>
+                <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                  {(content.reportSubjects ?? []).map(subject => (
+                    <section
+                      key={subject.subjectId}
+                      aria-label={`${subject.name}的课堂表现`}
+                      className="min-w-0 border-b border-slate-100 py-4"
+                    >
+                      <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
+                      {(content.classroomPerformance ?? [])
+                        .filter(item => item.subjectId === subject.subjectId)
+                        .map((item, index) => {
+                          const separator = item.text.indexOf(" · ");
+                          return (
+                            <p
+                              key={index}
+                              className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
+                            >
+                              {separator >= 0 ? (
+                                <>
+                                  <span className="mr-2 font-semibold text-teal-700">
+                                    {item.text.slice(0, separator)}：
+                                  </span>
+                                  {item.text.slice(separator + 3)}
+                                </>
+                              ) : (
+                                item.text
+                              )}
+                            </p>
+                          );
+                        })}
+                      {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
+                        <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+                {content.classroomPerformance?.some(item => !item.subjectId) && (
+                  <section className="mt-4 border-t border-slate-100 pt-4">
+                    <h3 className="mb-3 font-bold">未分学科的原课堂表现</h3>
+                    <Entries
+                      entries={content.classroomPerformance.filter(item => !item.subjectId)}
+                      empty="老师暂未填写具体课堂表现。"
+                    />
+                  </section>
+                )}
+                {!content.reportSubjects?.length && !content.classroomPerformance?.length && (
+                  <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
+                )}
+              </section>
+            )}
             <GrowthAssessmentView
               value={content.growthAssessment}
               periodTitle={periodTitles[report.period] ?? "本期"}
             />
-            <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
-              <h2 className="mb-4 text-lg font-bold text-sky-900">{periodTitles[report.period]}学习表现</h2>
-              <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                {(content.reportSubjects ?? []).map(subject => (
-                  <section
-                    key={subject.subjectId}
-                    aria-label={`${subject.name}的课堂表现`}
-                    className="min-w-0 border-b border-slate-100 py-4"
-                  >
-                    <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
-                    <p className="mb-3 mt-1 text-sm font-semibold text-violet-700">课堂表现记录</p>
-                    {(content.classroomPerformance ?? [])
-                      .filter(item => item.subjectId === subject.subjectId)
-                      .map((item, index) => {
-                        const separator = item.text.indexOf(" · ");
-                        return (
-                          <p
-                            key={index}
-                            className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
-                          >
-                            {separator >= 0 ? (
-                              <>
-                                <span className="mr-2 font-semibold text-teal-700">
-                                  {item.text.slice(0, separator)}：
-                                </span>
-                                {item.text.slice(separator + 3)}
-                              </>
-                            ) : (
-                              item.text
-                            )}
-                          </p>
-                        );
-                      })}
-                    {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
-                      <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            </section>
           </>
         )}
-        {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.some(item => !item.subjectId))) && (
+        {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             {content.reportVersion !== "v2" && (
               <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
             )}
-            {content.reportVersion === "v2" && <h3 className="mb-4 font-bold">未分学科的原课堂表现</h3>}
             {content.classroomPerformance?.length ? (
               <div className="flex flex-wrap gap-2">
                 {content.classroomPerformance

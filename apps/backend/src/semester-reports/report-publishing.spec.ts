@@ -22,6 +22,38 @@ describe('report publishing', () => {
     size: 12,
     buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]),
   };
+  it('protects the v2 portrait from edited prose, publishes it and restores the historical snapshot', async () => {
+    const { service, row, events } = setup();
+    row.snapshot = {
+      reportVersion: 'v2',
+      studentPhoto: 'data:image/jpeg;base64,saved',
+    };
+    await service.editDraft('report', {
+      ...content,
+      studentPhoto: 'https://untrusted.test',
+    });
+    expect(row.content?.studentPhoto).toBe('data:image/jpeg;base64,saved');
+    const revision = events.save.mock.calls.find(
+      ([event]) => event.action === 'draft-edited',
+    )![0];
+    expect(revision.details.revision.after.content).not.toHaveProperty(
+      'studentPhoto',
+    );
+    const published = await service.publish('report');
+    const parent = await service.publicReport(
+      new URL(published.url).pathname.split('/').pop()!,
+    );
+    expect(parent.content.studentPhoto).toBe('data:image/jpeg;base64,saved');
+    row.snapshot.studentPhoto = 'changed-photo';
+    const restored = await service.restoreEvent('report', revision.id, {
+      side: 'after',
+      expectedVersion: reportVersionToken(row),
+    });
+    expect(restored.content?.studentPhoto).toBe('data:image/jpeg;base64,saved');
+    await expect(
+      service.publicReport(new URL(published.url).pathname.split('/').pop()!),
+    ).rejects.toThrow();
+  });
   it.each(['v1', 'v2'])(
     'protects the period-end pet and timestamp when editing and publishing %s',
     async (version) => {

@@ -32,4 +32,24 @@ describe("full report rasterization", () => {
     raster.toBlob.mockResolvedValue(new Blob([]));
     await expect(renderReportImage(element(2400))).rejects.toThrow("图片生成失败");
   });
+  it("waits for the student portrait and refuses failed images instead of exporting an empty slot", async () => {
+    raster.toBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    const node = element(2400);
+    const portrait = document.createElement("img");
+    portrait.src = "data:image/jpeg;base64,portrait";
+    node.append(portrait);
+    const capturing = renderReportImage(node);
+    await Promise.resolve();
+    expect(raster.toBlob).not.toHaveBeenCalled();
+    Object.defineProperty(portrait, "naturalWidth", { value: 128 });
+    portrait.dispatchEvent(new Event("load"));
+    await expect(capturing).resolves.toBeInstanceOf(Blob);
+    raster.toBlob.mockClear();
+    Object.defineProperty(portrait, "complete", { value: true });
+    const broken = document.createElement("img");
+    Object.defineProperty(broken, "complete", { value: true });
+    node.append(broken);
+    await expect(renderReportImage(node)).rejects.toThrow("加载失败");
+    expect(raster.toBlob).not.toHaveBeenCalled();
+  });
 });

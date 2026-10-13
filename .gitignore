@@ -32,3 +32,6 @@ docs/development-standards.md
 docs/deployment-2c2g.md
 # Keep local Nest watch artifacts separate from production builds.
 .dev-dist/
+
+docs/student-photos.md
+docs/student-photos-report-v2-plan.md

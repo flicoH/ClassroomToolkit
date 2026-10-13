@@ -199,6 +199,7 @@ describe('report generation input', () => {
       {},
       {},
       { teacherId: 'teacher' },
+      { findOne: jest.fn().mockResolvedValue(null) },
     ] as unknown as ConstructorParameters<typeof SemesterReportsService>;
     const service = new SemesterReportsService(...dependencies);
     const internals = service as unknown as ServiceInternals;
@@ -225,6 +226,69 @@ describe('report generation input', () => {
     });
     return { service, internals, reports };
   }
+
+  it('snapshots each owned student portrait and preserves it on regeneration, including absence', async () => {
+    const { service, internals, reports } = setup();
+    internals.findStudents.mockResolvedValue([
+      {
+        id: 'teacher:class:one',
+        name: '学生一',
+        studentNo: '1',
+        classId: 'class',
+        className: '一班',
+      },
+      {
+        id: 'teacher:legacy',
+        name: '学生二',
+        studentNo: '2',
+        classId: 'class',
+        className: '一班',
+      },
+    ]);
+    const profiles = (
+      service as unknown as { studentProfiles: { findOne: jest.Mock } }
+    ).studentProfiles;
+    profiles.findOne.mockImplementation(async ({ where }) =>
+      where.id === 'class:one'
+        ? { photo: 'data:image/jpeg;base64,first' }
+        : where.studentNo === '2'
+          ? { photo: 'data:image/jpeg;base64,second' }
+          : null,
+    );
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      studentIds: ['one', 'two'],
+      studentFeedback: [],
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '学习内容' },
+      ],
+      studentPhoto: 'https://untrusted.test/photo',
+    });
+    const rows = reports.save.mock.calls.map(([row]) => row);
+    expect(rows.map((row) => row.snapshot.studentPhoto)).toEqual([
+      'data:image/jpeg;base64,first',
+      'data:image/jpeg;base64,second',
+    ]);
+    expect(generateTemplateReport(rows[0]).studentPhoto).toBe(
+      'data:image/jpeg;base64,first',
+    );
+    expect(profiles.findOne).toHaveBeenCalledWith({
+      where: { teacherId: 'teacher', classroomId: 'class', id: 'class:one' },
+    });
+    expect(profiles.findOne).toHaveBeenCalledWith({
+      where: { teacherId: 'teacher', classroomId: 'class', studentNo: '2' },
+    });
+    profiles.findOne.mockResolvedValue({ photo: 'new-photo' });
+    jest.spyOn(internals, 'findReport').mockResolvedValue(rows[0]);
+    await service.regenerate(rows[0].id);
+    expect(reports.save.mock.calls.at(-1)![0].snapshot.studentPhoto).toBe(
+      'data:image/jpeg;base64,first',
+    );
+    delete rows[0].snapshot.studentPhoto;
+    await service.regenerate(rows[0].id);
+    expect(reports.save.mock.calls.at(-1)![0].snapshot.studentPhoto).toBeNull();
+  });
   const request = {
     period: 'week',
     generationMode: 'template',
@@ -456,6 +520,10 @@ describe('report generation input', () => {
       await service.regenerate(reports.save.mock.calls[0]![0].id);
       expect(regenerate).toHaveBeenLastCalledWith(
         expect.objectContaining({ courseSelections: input.courseSelections }),
+        null,
+        [null, null],
+        ['', ''],
+        null,
       );
       await expect(
         service.generate({ ...input, courseSelections: [] }),
@@ -990,6 +1058,10 @@ describe('report generation input', () => {
         studentIds: ['teacher:one'],
         studentFeedback: [rows[1].snapshot.teacherInput],
       }),
+      null,
+      [null, null],
+      ['', ''],
+      null,
     );
   });
   it('validates the whole batch before queuing any report', async () => {

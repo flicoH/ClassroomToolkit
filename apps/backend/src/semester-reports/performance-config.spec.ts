@@ -25,6 +25,7 @@ describe('subject classroom performance configuration', () => {
       undefined!,
       undefined!,
       { teacherId: 'teacher' } as TeacherContext,
+      undefined!,
     );
     return { service, subjects };
   }

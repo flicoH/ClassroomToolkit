@@ -12,6 +12,8 @@ const report = {
   period: "term",
   content: {
     reportVersion: "v2",
+    studentPhoto: "data:image/jpeg;base64,saved",
+    classroomPhoto: "data:image/png;base64,classroom",
     summary: "继续加油",
     strengths: [],
     areasToImprove: [{ text: "练习表达", sourceRefs: [] }],
@@ -44,6 +46,15 @@ describe("public report initial rendering", () => {
     expect(recover).not.toHaveBeenCalled();
     expect(error.mock.calls.some(call => String(call[0]).includes("hydrated"))).toBe(false);
     expect(container.textContent).toContain("小明");
+    expect(container.querySelector('header img[alt="小明的头像"]')?.getAttribute("src")).toBe(
+      report.content.studentPhoto
+    );
+    expect(
+      container.querySelector("article header")?.nextElementSibling?.children[1]?.querySelector("h2")?.textContent
+    ).toBe("课堂表现");
+    expect(
+      container.querySelector("article header")?.nextElementSibling?.firstElementChild?.getAttribute("aria-label")
+    ).toBe("课堂照片");
     expect(container.querySelector('[aria-label="宠物伙伴与阶段积分"]')!.classList.contains("grid-cols-1")).toBe(true);
     act(() => root!.unmount());
     container.remove();
@@ -58,6 +69,22 @@ describe("public report initial rendering", () => {
     await act(async () => root.render(<ParentReportPage params={Promise.resolve({ token: "expired" })} />));
     expect(container.textContent).toContain("报告链接无效或已失效");
     expect(container.querySelector("article")).toBeNull();
+    act(() => root.unmount());
+  });
+  it("hides classroom performance on the parent page without classroom photos while keeping the portrait", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ...report, content: { ...report.content, classroomPhoto: null } })
+      })
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => root.render(<ParentReportPage params={Promise.resolve({ token: "sample-token" })} />));
+    expect(container.querySelector('header img[alt="小明的头像"]')).not.toBeNull();
+    expect([...container.querySelectorAll("h2")].some(node => node.textContent === "课堂表现")).toBe(false);
+    expect(container.textContent).not.toContain("老师暂未填写具体课堂表现");
     act(() => root.unmount());
   });
 });

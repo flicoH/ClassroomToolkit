@@ -45,6 +45,7 @@ export function captureReportVersion(row: SemesterReportEntity): ReportVersion {
   const content = row.content ? structuredClone(row.content) : null;
   if (content)
     for (const field of [
+      'studentPhoto',
       'classroomPhoto',
       'classroomPhotos',
       'classroomPhotoCaptions',

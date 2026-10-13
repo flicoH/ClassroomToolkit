@@ -8,7 +8,12 @@ import {
   Patch,
   Post,
   Query,
+  BadRequestException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { studentPhotoMaxBytes, type StudentPhotoFile } from './student-photo';
 import {
   CreateClassroomDto,
   CreateGroupDto,
@@ -23,6 +28,31 @@ import { StudentsService } from './students.service';
 @Controller('classes')
 export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
+
+  /** Upload is scoped to an owned classroom and student, with bounded binary input. */
+  @Post(':classroomId/students/:studentId/photo')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      // Multer rejects at its threshold; allow the inclusive business limit and validate decoded bytes below.
+      limits: { fileSize: studentPhotoMaxBytes + 1, files: 1 },
+    }),
+  )
+  uploadStudentPhoto(
+    @Param('classroomId') classroomId: string,
+    @Param('studentId') studentId: string,
+    @UploadedFile() file?: StudentPhotoFile,
+  ) {
+    if (!file) throw new BadRequestException('请选择学生照片');
+    return this.studentsService.setStudentPhoto(classroomId, studentId, file);
+  }
+
+  @Delete(':classroomId/students/:studentId/photo')
+  removeStudentPhoto(
+    @Param('classroomId') classroomId: string,
+    @Param('studentId') studentId: string,
+  ) {
+    return this.studentsService.setStudentPhoto(classroomId, studentId);
+  }
 
   /** 获取当前教师的全部班级列表。 */
   @Get()

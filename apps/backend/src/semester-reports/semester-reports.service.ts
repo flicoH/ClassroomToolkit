@@ -45,6 +45,7 @@ import {
   type StudentFeedback,
 } from './report-input';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
+import { StudentEntity } from '../students/entities/student.entity';
 import { PetStateHistoryEntity } from '../pet-points/entities/pet-state-history.entity';
 import { petAppearanceAtReportEnd } from '../pet-points/pet-state-history';
 import {
@@ -90,6 +91,8 @@ export class SemesterReportsService {
     @InjectRepository(PetEvaluationRecordEntity)
     private readonly records: Repository<PetEvaluationRecordEntity>,
     private readonly teacher: TeacherContext,
+    @InjectRepository(StudentEntity)
+    private readonly studentProfiles: Repository<StudentEntity>,
   ) {}
 
   async listTerms() {
@@ -360,6 +363,7 @@ export class SemesterReportsService {
     classroomPhoto?: string | null,
     classroomPhotos?: Array<string | null>,
     classroomPhotoCaptions?: string[],
+    studentPhoto?: string | null,
   ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
@@ -486,6 +490,14 @@ export class SemesterReportsService {
       const scores = await this.scoreSummary(student, start, end);
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
+        ...(isV2
+          ? {
+              studentPhoto:
+                studentPhoto === undefined
+                  ? await this.photoForStudent(student)
+                  : studentPhoto,
+            }
+          : {}),
         courseSelections: selections,
         reportSubjects: courseSubjects,
         classroomPhoto: classroomPhoto ?? null,
@@ -1256,14 +1268,16 @@ export class SemesterReportsService {
       ].map((subjectId) => ({ subjectId, courseScope: old.courseScope ?? '' }));
     }
     const photos = classroomPhotosForSnapshot(old.snapshot ?? {});
-    return photos.some(Boolean)
-      ? this.generate(
-          input,
-          photos[0],
-          photos,
-          classroomPhotoCaptionsForSnapshot(old.snapshot ?? {}),
-        )
-      : this.generate(input);
+    // Regeneration preserves the original portrait, including explicit or legacy absence.
+    return this.generate(
+      input,
+      photos[0],
+      photos,
+      classroomPhotoCaptionsForSnapshot(old.snapshot ?? {}),
+      typeof old.snapshot?.studentPhoto === 'string'
+        ? old.snapshot.studentPhoto
+        : null,
+    );
   }
 
   async createShare(id: string) {
@@ -1702,6 +1716,24 @@ export class SemesterReportsService {
       if (!student) throw new NotFoundException(`学生不存在：${id}`);
       return student;
     });
+  }
+
+  /** Pet IDs may have a teacher prefix or legacy IDs; class + teacher constrain every fallback. */
+  private async photoForStudent(student: PetStudentEntity) {
+    if (!student.classId) return null;
+    const teacherId = this.teacher.teacherId;
+    const id = student.id.startsWith(`${teacherId}:`)
+      ? student.id.slice(teacherId.length + 1)
+      : student.id;
+    const scope = { teacherId, classroomId: student.classId };
+    const profile =
+      (await this.studentProfiles.findOne({ where: { ...scope, id } })) ??
+      (student.studentNo
+        ? await this.studentProfiles.findOne({
+            where: { ...scope, studentNo: student.studentNo },
+          })
+        : null);
+    return profile?.photo ?? null;
   }
 
   private async selectedCourses(

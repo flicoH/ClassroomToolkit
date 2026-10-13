@@ -17,6 +17,126 @@ const report: LearningReportData = {
     scoreDetails: { positive: 5, negative: -2, net: 3, count: 2, records: [] }
   }
 };
+it.each([false, true])(
+  "places v2 classroom photos with captions below the header and before performance (image: %s)",
+  forImage => {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            studentPhoto: "portrait",
+            classroomPhotos: ["first-photo", "second-photo"],
+            classroomPhotoCaptions: ["课堂活动", "合作练习"]
+          }
+        }}
+      />
+    );
+    const header = rendered.querySelector("header")!;
+    expect(header.querySelectorAll("img")).toHaveLength(1);
+    expect(header.querySelector("img")?.getAttribute("alt")).toBe("小明的头像");
+    const body = header.nextElementSibling!;
+    const photoSection = body.firstElementChild!;
+    expect(photoSection.getAttribute("aria-label")).toBe("课堂照片");
+    expect(photoSection.querySelectorAll("figure")).toHaveLength(2);
+    expect(photoSection.textContent).toContain("课堂活动");
+    expect(photoSection.textContent).toContain("合作练习");
+    expect(body.children[1]?.querySelector("h2")?.textContent).toBe("课堂表现");
+    expect(body.children[2]?.textContent).toContain("学习准备与课堂能力");
+  }
+);
+it("hides the entire v2 classroom performance section without classroom photos even when a student portrait exists", () => {
+  for (const forImage of [false, true]) {
+    for (const photos of [{}, { classroomPhotos: [null, null], classroomPhoto: "stale-legacy-photo" }]) {
+      const rendered = document.createElement("div");
+      rendered.innerHTML = renderToStaticMarkup(
+        <LearningReportView
+          forImage={forImage}
+          report={{
+            ...report,
+            content: {
+              ...report.content,
+              ...photos,
+              reportVersion: "v2",
+              studentPhoto: "data:image/jpeg;base64,portrait",
+              reportSubjects: [{ subjectId: "english", name: "英语" }],
+              classroomPerformance: [
+                { subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] },
+                { text: "旧课堂评价", sourceRefs: ["teacher-input"] }
+              ]
+            }
+          }}
+        />
+      );
+      expect([...rendered.querySelectorAll("h2")].map(node => node.textContent)).not.toContain("课堂表现");
+      expect(rendered.textContent).not.toContain("主动参与");
+      expect(rendered.textContent).not.toContain("旧课堂评价");
+      expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
+      expect(rendered.querySelector('header img[alt="小明的头像"]')).not.toBeNull();
+      expect(rendered.querySelector("header")?.nextElementSibling?.firstElementChild?.textContent).toContain(
+        "学习准备与课堂能力"
+      );
+    }
+  }
+});
+it.each([
+  { classroomPhoto: "data:image/png;base64,legacy" },
+  { classroomPhotos: ["data:image/png;base64,first", null] },
+  { classroomPhotos: [null, "data:image/png;base64,second"] }
+])("shows classroom performance with a legacy photo or either occupied slot: %j", photos => {
+  for (const forImage of [false, true]) {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            ...photos,
+            reportVersion: "v2",
+            classroomPerformance: [{ text: "保留旧评价", sourceRefs: [] }]
+          }
+        }}
+      />
+    );
+    expect(rendered.querySelector("header")?.nextElementSibling?.children[1]?.querySelector("h2")?.textContent).toBe(
+      "课堂表现"
+    );
+    expect(rendered.textContent).toContain("保留旧评价");
+  }
+});
+it("places the v2 student portrait in the header and classroom performance before growth assessment", () => {
+  for (const forImage of [false, true]) {
+    const container = document.createElement("div");
+    const content = {
+      ...report.content,
+      reportVersion: "v2" as const,
+      classroomPhoto: "data:image/png;base64,classroom",
+      studentPhoto: "data:image/jpeg;base64,portrait",
+      reportSubjects: [{ subjectId: "english", name: "英语" }],
+      classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }]
+    };
+    container.innerHTML = renderToStaticMarkup(
+      <LearningReportView report={{ ...report, content }} forImage={forImage} />
+    );
+    const header = container.querySelector("header")!;
+    const portrait = header.querySelector('img[alt="小明的头像"]');
+    expect(portrait).not.toBeNull();
+    expect(portrait?.className).toContain("rounded-full");
+    expect(portrait?.className).toContain("object-cover");
+    const body = header.nextElementSibling!;
+    expect(body.children[1]?.querySelector("h2")?.textContent).toBe("课堂表现");
+    expect(body.children[1]?.textContent).toContain("主动参与");
+    expect(body.children[2]?.textContent).toContain("学习准备与课堂能力");
+    expect(container.querySelectorAll('[aria-label="英语的课堂表现"]')).toHaveLength(1);
+    expect(container.textContent).not.toContain("课堂表现记录");
+  }
+});
 describe("report pet presentation", () => {
   it.each(["v1", "v2"] as const)("shows the historic cutoff and missing-history state for %s", version => {
     const base = {
@@ -85,40 +205,48 @@ describe("report pet presentation", () => {
     expect(egg).toContain("/pets/stone-monkey.png");
     expect(egg).not.toContain("积分加减情况");
   });
-  it.each(["v1", "v2"] as const)("shows one classroom photo in the header for %s preview and export", version => {
-    for (const forImage of [false, true]) {
-      const html = renderToStaticMarkup(
-        <LearningReportView
-          forImage={forImage}
-          report={{
-            ...report,
-            content: {
-              ...report.content,
-              ...(version === "v2" ? { reportVersion: "v2" as const } : {}),
-              classroomPhoto: "data:image/png;base64,example",
-              classroomPerformance: [{ text: "主动参与", sourceRefs: ["teacher-input"] }],
-              pet: { petId: "sprout-puff", petName: "团团", level: 4, stage: "第4形态", petHatched: true }
-            }
-          }}
-        />
-      );
-      expect(html).toContain("/pets/starling/sprout-puff-2.png");
-      expect(html).toContain("团团");
-      expect(html).toContain("生成时保存的形态，尚无周期结束时的历史记录");
-      expect(html).toContain("小明的课堂照片");
-      const rendered = document.createElement("div");
-      rendered.innerHTML = html;
-      const photo = rendered.querySelector('img[alt="小明的课堂照片"]')!;
-      expect(photo.closest("header")).toBe(rendered.querySelector("header"));
-      expect(rendered.querySelector("header")!.textContent).toContain("一班");
-      expect(rendered.querySelectorAll('img[alt="小明的课堂照片"]')).toHaveLength(1);
-      expect(html).not.toContain("课堂精彩瞬间");
-      if (version === "v2") expect(html).not.toContain("本学期的课堂表现");
-      expect(html).toContain("主动参与");
-      if (version === "v2") expect(html).not.toContain("预留位置");
-      expect(html).not.toContain("积分加减情况");
+  it.each(["v1", "v2"] as const)(
+    "shows one classroom photo in the version-specific location for %s preview and export",
+    version => {
+      for (const forImage of [false, true]) {
+        const html = renderToStaticMarkup(
+          <LearningReportView
+            forImage={forImage}
+            report={{
+              ...report,
+              content: {
+                ...report.content,
+                ...(version === "v2" ? { reportVersion: "v2" as const } : {}),
+                classroomPhoto: "data:image/png;base64,example",
+                classroomPerformance: [{ text: "主动参与", sourceRefs: ["teacher-input"] }],
+                pet: { petId: "sprout-puff", petName: "团团", level: 4, stage: "第4形态", petHatched: true }
+              }
+            }}
+          />
+        );
+        expect(html).toContain("/pets/starling/sprout-puff-2.png");
+        expect(html).toContain("团团");
+        expect(html).toContain("生成时保存的形态，尚无周期结束时的历史记录");
+        expect(html).toContain("小明的课堂照片");
+        const rendered = document.createElement("div");
+        rendered.innerHTML = html;
+        const photo = rendered.querySelector('img[alt="小明的课堂照片"]')!;
+        if (version === "v2") {
+          expect(photo.closest("header")).toBeNull();
+          expect(photo.closest('[aria-label="课堂照片"]')).toBe(
+            rendered.querySelector("header")!.nextElementSibling!.firstElementChild
+          );
+        } else expect(photo.closest("header")).toBe(rendered.querySelector("header"));
+        expect(rendered.querySelector("header")!.textContent).toContain("一班");
+        expect(rendered.querySelectorAll('img[alt="小明的课堂照片"]')).toHaveLength(1);
+        expect(html).not.toContain("课堂精彩瞬间");
+        if (version === "v2") expect(html).not.toContain("本学期的课堂表现");
+        expect(html).toContain("主动参与");
+        if (version === "v2") expect(html).not.toContain("预留位置");
+        expect(html).not.toContain("积分加减情况");
+      }
     }
-  });
+  );
   it("handles missing pets, eggs and a teacher-entered next focus", () => {
     const content = {
       ...report.content,
@@ -151,6 +279,7 @@ it("shows separate v2 classroom performance for every subject without copying le
   const content = {
     ...report.content,
     reportVersion: "v2" as const,
+    classroomPhoto: "data:image/png;base64,classroom",
     reportSubjects: [
       { subjectId: "english", name: "英语" },
       { subjectId: "math", name: "数学" }
@@ -214,6 +343,7 @@ it("renders v2 growth dimensions and two-column subject performance without home
   const content = {
     ...report.content,
     reportVersion: "v2" as const,
+    classroomPhoto: "data:image/png;base64,classroom",
     growthAssessment: {
       learningReadiness: "能整理学习材料",
       communicationCooperation: "主动与同伴合作",
@@ -255,6 +385,7 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
         content: {
           ...report.content,
           reportVersion: "v2",
+          classroomPhoto: "data:image/png;base64,classroom",
           growthAssessment: {
             learningReadiness: observation,
             communicationCooperation: "",
@@ -432,7 +563,7 @@ it.each([false, true])("hides blank v2 messages and focus in preview and export 
   expect(row.textContent).toBe("下一步重点练习表达");
 });
 
-it.each([false, true])("shows both saved classroom photos once in the header (image: %s)", forImage => {
+it.each([false, true])("shows both saved v2 classroom photos once below the header (image: %s)", forImage => {
   const rendered = document.createElement("div");
   rendered.innerHTML = renderToStaticMarkup(
     <LearningReportView
@@ -448,7 +579,7 @@ it.each([false, true])("shows both saved classroom photos once in the header (im
       }}
     />
   );
-  const photos = rendered.querySelectorAll("header img");
+  const photos = rendered.querySelectorAll('[aria-label="课堂照片"] img');
   expect(photos).toHaveLength(2);
   expect(photos[0]!.getAttribute("src")).toBe("first-photo");
   expect(photos[1]!.getAttribute("src")).toBe("second-photo");

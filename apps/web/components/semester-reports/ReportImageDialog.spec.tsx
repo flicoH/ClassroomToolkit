@@ -61,6 +61,9 @@ describe("published report image", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeUrl });
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2400);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 720 } as DOMRect);
+    // jsdom does not load images; this suite exercises the dialog after assets are ready.
+    vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(128);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);

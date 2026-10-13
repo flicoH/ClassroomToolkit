@@ -6,24 +6,14 @@
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowDownUp,
-  CircleUserRound,
-  MoreVertical,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-  UserPlus,
-  Users,
-  X
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownUp, MoreVertical, Pencil, Plus, Search, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import request from "@/lib/request";
+import { StudentAvatar } from "@/components/students/StudentAvatar";
+import { StudentPhotoEditor } from "@/components/students/StudentPhotoEditor";
 import { cn } from "@/lib/utils";
 
 type Gender = "男" | "女" | "";
@@ -35,6 +25,7 @@ interface Student {
   studentNo: string;
   gender: Gender;
   group?: string;
+  photo?: string | null;
 }
 
 interface ClassRoom {
@@ -78,11 +69,6 @@ const defaultClasses: ClassRoom[] = [
 ];
 
 const defaultClass = defaultClasses[0]!;
-
-/** 获取姓名首字作为学生头像占位。 */
-function getInitial(name: string) {
-  return name.slice(0, 1) || "学";
-}
 
 /** 将批量导入文本解析为学生草稿列表。 */
 function parseImportRows(text: string): Student[] {
@@ -176,6 +162,8 @@ export function StudentManagement() {
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [studentDeleteTarget, setStudentDeleteTarget] = useState<{ classId: string; studentId: string } | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [groupDeleteTarget, setGroupDeleteTarget] = useState<string | null>(null);
 
   const displayClasses = classes.length ? classes : defaultClasses;
@@ -241,7 +229,8 @@ export function StudentManagement() {
   };
 
   /** 关闭弹窗时清空草稿，避免下次打开沿用旧输入。 */
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
+    setPhotoBusy(false);
     setModal(null);
     setStudentName("");
     setStudentNo("");
@@ -254,7 +243,7 @@ export function StudentManagement() {
     setImportMessage("");
     setGroupName("");
     setGroupDeleteTarget(null);
-  };
+  }, []);
 
   /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
   const addStudent = async () => {
@@ -443,6 +432,39 @@ export function StudentManagement() {
       .find(classRoom => classRoom.id === studentDeleteTarget?.classId)
       ?.students.find(student => student.id === studentDeleteTarget?.studentId)?.name ?? "未命名学生";
 
+  useEffect(() => {
+    if (!modal) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    modalRef.current?.querySelector<HTMLElement>("input, button")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      // A nested removal confirmation manages its own focus and Escape key.
+      if (document.querySelectorAll('[role="dialog"]').length > 1) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeModal();
+      }
+      if (event.key === "Tab") {
+        const controls = modalRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]'
+        );
+        const first = controls?.[0];
+        const last = controls?.[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [modal, closeModal]);
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:flex-row">
@@ -570,10 +592,7 @@ export function StudentManagement() {
                 className="flex min-h-[58px] items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 shadow-sm transition hover:shadow-md dark:bg-slate-900"
               >
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                    {getInitial(student.name)}
-                    <CircleUserRound className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full bg-white text-blue-500 dark:bg-slate-900" />
-                  </div>
+                  <StudentAvatar name={student.name} photo={student.photo} />
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-bold">{student.name}</h3>
                     <p className="text-xs font-semibold text-slate-400">{student.studentNo}</p>
@@ -614,8 +633,12 @@ export function StudentManagement() {
         {modal && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-3 backdrop-blur-sm sm:p-6">
             <div
+              ref={modalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={modal === "editStudent" ? "编辑学生" : modal === "student" ? "添加学生" : "班级与学生管理"}
               className={cn(
-                "max-h-[calc(100dvh-72px)] w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900",
+                "max-h-[calc(100dvh-72px)] w-full overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-slate-900",
                 modal === "groups" ? "max-w-[920px]" : "max-w-[640px]"
               )}
             >
@@ -642,6 +665,32 @@ export function StudentManagement() {
               {modal === "editStudent" && (
                 <StudentModal
                   title="编辑学生"
+                  busy={photoBusy}
+                  photoEditor={
+                    activeBackendClass && editingStudentId ? (
+                      <StudentPhotoEditor
+                        key={editingStudentId}
+                        classId={activeBackendClass.id}
+                        student={activeBackendClass.students.find(student => student.id === editingStudentId)!}
+                        onBusyChange={setPhotoBusy}
+                        onUpdated={updated => {
+                          const classId = activeBackendClass.id;
+                          setClasses(current =>
+                            current.map(classRoom =>
+                              classRoom.id === classId
+                                ? {
+                                    ...classRoom,
+                                    students: classRoom.students.map(student =>
+                                      student.id === updated.id ? { ...student, photo: updated.photo ?? null } : student
+                                    )
+                                  }
+                                : classRoom
+                            )
+                          );
+                        }}
+                      />
+                    ) : undefined
+                  }
                   name={studentName}
                   studentNo={studentNo}
                   gender={studentGender}
@@ -726,6 +775,8 @@ interface StudentModalProps {
   studentNo: string;
   gender: Gender;
   errorMessage?: string;
+  photoEditor?: React.ReactNode;
+  busy?: boolean;
   onNameChange: (value: string) => void;
   onNoChange: (value: string) => void;
   onGenderChange: (value: Gender) => void;
@@ -740,6 +791,8 @@ function StudentModal({
   studentNo,
   gender,
   errorMessage,
+  photoEditor,
+  busy,
   onNameChange,
   onNoChange,
   onGenderChange,
@@ -750,6 +803,7 @@ function StudentModal({
     <>
       <ModalHeader title={title} onClose={onClose} />
       <div className="space-y-5 p-5 sm:p-7">
+        {photoEditor ?? <p className="text-xs text-slate-500">保存学生后，可在编辑学生中上传照片。</p>}
         <label className="block space-y-2">
           <span className="text-sm font-bold">姓名 *</span>
           <Input value={name} onChange={event => onNameChange(event.target.value)} placeholder="请输入姓名" />
@@ -783,7 +837,7 @@ function StudentModal({
         onClose={onClose}
         onConfirm={onConfirm}
         confirmText="确定"
-        disabled={!name.trim() || Boolean(errorMessage)}
+        disabled={busy || !name.trim() || Boolean(errorMessage)}
       />
     </>
   );
