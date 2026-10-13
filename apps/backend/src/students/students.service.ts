@@ -152,7 +152,7 @@ export class StudentsService {
     );
   }
 
-  /** Only this endpoint may change photos; ordinary edits cannot inject URLs or overwrite them. */
+  /** 照片仅由专用接口更新；普通资料编辑不能注入外部图片地址或覆盖已有照片。 */
   async setStudentPhoto(
     classroomId: string,
     studentId: string,

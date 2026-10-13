@@ -54,7 +54,9 @@ import {
 
 type Term = { id: string; name: string; startDate: string; endDate: string };
 type Subject = { id: string; name: string; performanceConfig?: PerformanceField[] | null };
+/** 报告选择器读取宠物积分学生 ID，头像则由后端匹配学生管理资料后写入报告快照。 */
 type Student = ReportPet & { id: string; name: string; classId: string; className: string; score: number };
+/** 列表响应只提供摘要；打开编辑时再取详情，避免轮询携带照片和完整报告正文。 */
 type Report = {
   courseSelections?: Array<{ subjectId: string; courseScope: string; manualContent?: string }>;
   reportVersion?: "v1" | "v2";
@@ -131,7 +133,7 @@ const documentStatusHints: Record<string, { title: string; description: string }
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-/** Server save time is shown in Shanghai time regardless of browser timezone. */
+/** 保存时间统一按上海时区展示，避免老师与家长设备时区不同导致日期看似错位。 */
 function ReportEditTime({ value }: { value?: string | null }) {
   const date = value ? new Date(value) : null;
   if (!date || !Number.isFinite(date.getTime())) return <>暂无记录</>;
@@ -158,6 +160,7 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "请求失败，请稍后重试。";
 }
 
+/** 原版与 v2 共用的教师工作台：课程输入 → 分学生评价 → 后台生成 → 草稿核对 → 发布分享。 */
 export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const isV2 = version === "v2";
   const initializedTerm = useRef(false);
@@ -193,6 +196,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     lessonNumber: null as number | null,
     lessonDate: ""
   });
+  // 评价以学期、周期、日期和学生区分；切换当前学生只切换表单，不丢掉其他学生的已填内容。
   const [studentFeedback, setStudentFeedback] = useState<Record<string, StudentReportFeedback>>({});
   const [feedbackStudentId, setFeedbackStudentId] = useState("");
   const [courseScope, setCourseScope] = useState("");
@@ -201,6 +205,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     () => courseSelectionsFromScopes(subjectScopes, documents, termId, isV2),
     [subjectScopes, documents, termId, isV2]
   );
+  // v2 的多学科及手填来源一并参与预览标识，不能只用合并后的学科名称判断数据是否仍有效。
   const courseSelectionKey = isV2 ? JSON.stringify(courseSelections) : subjectId;
   const feedbackContext = isV2 ? "v2" : subjectId;
   const invalidCourseSelection =
@@ -222,8 +227,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     isV2 ? null : courseScope.trim()
   ]);
   const [scopePreviewResult, setScopePreviewResult] = useState<{ key: string; data: ScopePreview } | null>(null);
-  // V2 returns a combined subject description, so matching display strings
-  // cannot prove that a preview belongs to the current course selection.
+  // 请求返回顺序可能落后于老师的选择；只有标识完全一致的预览才能用于当前生成表单。
   const scopePreview = scopePreviewResult?.key === scopePreviewKey ? scopePreviewResult.data : null;
   const [scopePreviewError, setScopePreviewError] = useState("");
   const [scopePreviewAttempt, setScopePreviewAttempt] = useState(0);
@@ -261,7 +265,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       try {
         const full = await request.get<Report, Report>(`${base}/reports/${id}`, { params: { refresh: createUuid() } });
         if (cancelled || activeEditingId.current !== id || !full.content) return;
-        // Refresh only derived statistics, preserving every unsaved teacher edit.
+        // 草稿积分允许实时刷新，但不能用详情响应覆盖老师尚未保存的寄语、评价或照片说明。
         const scoreDetails = (full.content as ReportContent).scoreDetails;
         setDraft(current => (current ? { ...current, scoreDetails } : current));
         if (full.status !== "draft")
@@ -312,9 +316,10 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       document.removeEventListener("keydown", onKeyDown);
       previous?.focus({ preventScroll: true });
     };
-    // Updating the same draft must not refocus the header or scroll its reader.
+    // 只在切换报告时管理焦点；同一草稿的轮询更新不应把阅读位置跳回窗口顶部。
   }, [editing?.id]);
 
+  /** 并行读取工作台数据，按版本筛选报告；旧报告未标记版本时按原版兼容。 */
   const load = useCallback(
     async (refreshToken?: string) => {
       const loadedSubjectRevision = subjectRevision.current;
@@ -329,7 +334,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         request.get<Document[], Document[]>(`${base}/course-documents`)
       ]);
       setTerms(t);
-      // Ignore lists requested before a subject mutation completed; polling must not undo a successful save.
+      // 学科修改后递增版本号，丢弃修改前发出的列表响应，防止后台轮询撤销刚保存的配置。
       if (loadedSubjectRevision === subjectRevision.current) setSubjects(s);
       setStudents(p.students);
       setReports(
@@ -364,6 +369,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   useEffect(() => {
     void load().catch((error: Error) => setMessage(error.message));
   }, [load]);
+  // PDF 解析与报告生成由后台异步执行；仅有未完成任务时刷新，网络失败保留现有列表。
   useEffect(() => {
     const timer = setInterval(() => {
       if (
@@ -379,6 +385,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const processingDocuments = documents.filter(doc => doc.status === "queued" || doc.status === "parsing");
   const reviewDocuments = documents.filter(doc => doc.status === "needs_review");
 
+  // 授课范围预览做防抖，并在条件变化或组件卸载后忽略旧响应，避免错用上一门课程的内容。
   useEffect(() => {
     setScopePreviewResult(null);
     setScopePreviewError("");
@@ -424,6 +431,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     invalidCourseSelection
   ]);
 
+  // 积分和宠物预览绑定所选学生与周期；只能展示对应快照，不能把当前形态冒充历史形态。
   const scorePreviewKey = [period, termId, courseSelectionKey, start, end, ...selected].join(":");
   useEffect(() => {
     setScorePreviewError("");
@@ -498,6 +506,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       ? scorePreview.data.scoreSummaries?.find(summary => summary.studentId === feedbackStudent?.id)
       : undefined;
 
+  /** 切换周期时给出日期初值，并截到今天，避免默认生成尚未发生的课堂记录。 */
   function changePeriod(nextPeriod: string, nextTermId = termId) {
     setPeriod(nextPeriod);
     const today = new Date();
@@ -584,6 +593,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setBusy(false);
     }
   }
+  /** PDF 上传只登记解析任务；解析完成并经教师确认后，课程资料才进入可用范围。 */
   async function upload(file?: File) {
     if (!file || uploadInFlight.current) return;
     function rejectUpload(reason: string) {
@@ -611,7 +621,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     setBusy(true);
     setMessage("");
     try {
-      // Let the browser set the multipart boundary; JSON defaults would break PDF uploads.
+      // 二进制请求的 multipart 边界由浏览器生成，否则公共 JSON 请求配置会破坏文件上传。
       const data = await request.post<Document, Document>(`${base}/course-documents`, form, {
         headers: { "Content-Type": undefined },
         timeout: 120000,
@@ -638,6 +648,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setBusy(false);
     }
   }
+  /** 确认章节提交老师核对后的内容，重试沿用资料记录；删除由外层项目弹窗先确认。 */
   async function documentAction(id: string, action: "confirm" | "retry" | "delete") {
     const suffix = action === "confirm" ? `/${id}/confirm` : action === "retry" ? `/${id}/retry` : `/${id}`;
     const config =
@@ -667,6 +678,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     await load();
     if (action === "confirm") setReviewingDocumentId(null);
   }
+  /** 按已选学生提交各自评价；仅返回排队报告，正文稍后由后台生成并进入审核流程。 */
   async function generate() {
     setBusy(true);
     setMessage("");
@@ -692,7 +704,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           const allowed = new Set(scopePreview?.learningContents.map(item => item.id) ?? []);
           return {
             ...value,
-            // v2 affirmation comes from positive evaluation counts, not free-text input.
+            // v2 的“最值肯定”来自服务端统计的加分事件次数，不能由这里的自由文字伪造。
             ...(isV2 ? { highlight: "" } : {}),
             studentId,
             learningMastery: Object.fromEntries(
@@ -715,6 +727,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setBusy(false);
     }
   }
+  /** 发布、撤销和复制均以服务端报告状态为准；前端按钮限制不能代替后端教师归属校验。 */
   async function actOnReport(report: Report, action: "publish" | "retry" | "delete" | "copy" | "revoke") {
     if (actingReportId) return;
     setActingReportId(report.id);
@@ -728,7 +741,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 `${base}/reports/${report.id}/${action === "publish" ? "publish" : "shares"}`
               );
         const shareUrl = localReportShareUrl(result.url, window.location.origin);
-        // Reflect successful publishing before attempting the optional clipboard operation.
+        // 先保留发布成功状态；剪贴板失败只影响复制，不能把已经发布的报告显示成发布失败。
         setReports(old =>
           old.map(row =>
             row.id === report.id ? { ...row, status: "published", share: { id: result.shareId, url: shareUrl } } : row
@@ -756,9 +769,9 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               `${base}/reports/${report.id}/shares/${report.share.id}`
             )
           : await request.post<{ status: string }, { status: string }>(`${base}/reports/${report.id}/unpublish`);
-        // Bypass the request layer's brief GET deduplication cache after the mutation.
+        // 撤销后使用新的刷新标识绕过短期 GET 去重缓存，避免读取到变更前的分享状态。
         const refreshToken = createUuid();
-        // A repeated request for an old link may refer to an already republished report.
+        // 老链接的重复撤销请求可能遇到已重新发布的报告，需要再次以服务端状态决定是否打开编辑。
         if (result.status !== "draft") {
           await load(refreshToken);
           setMessage("该链接已撤销，报告状态已更新，请重新查看。");
@@ -799,6 +812,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       }
     }
   }
+  /** 列表正文可能为空或过期；编辑必须读取完整详情，并阻止迟到响应打开错误的报告。 */
   async function openEdit(report: Report, refreshToken?: string) {
     if (loadingReportId) return null;
     setLoadingReportId(report.id);
@@ -822,6 +836,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setLoadingReportId(null);
     }
   }
+  /** 两个固定照片位置独立写入；只合并图片字段和当前位置说明，保留未保存的正文。 */
   async function changeClassroomPhoto(file?: File, slot = 0) {
     if (!editing || busy) return;
     if (file && (!["image/jpeg", "image/png"].includes(file.type) || file.size > 2 * 1024 * 1024)) {
@@ -833,8 +848,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       const url = `${base}/reports/${editing.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`;
       const form = new FormData();
       if (file) form.append("file", file);
-      // JSON defaults serialize FormData without a file; the browser must set
-      // the multipart boundary for the BFF and Multer to receive the photo.
+      // FormData 必须保留二进制和浏览器生成的边界，才能经过同源代理到达后端文件拦截器。
       const updated = file
         ? await request.post<Report, Report>(url, form, {
             headers: { "Content-Type": undefined },
@@ -867,6 +881,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     }
   }
 
+  /** 草稿增科保留原有评价；新增学习条目按稳定 ID 合并，避免覆盖老师未保存的输入。 */
   async function addDraftSubjects() {
     if (!editing || busy) return;
     setBusy(true);
@@ -875,7 +890,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       const updated = await request.post<Report, Report>(`${base}/reports/${editing.id}/course-subjects`, {
         courseSelections: courseSelectionsFromScopes(draftSubjectScopes, documents, editing.termId ?? "", isV2)
       });
-      // A late response must not append content into another report opened meanwhile.
+      // 请求返回时可能已切换报告，不能把前一份报告的新增学科写入当前草稿。
       if (activeEditingId.current !== updated.id) {
         await load();
         return;
@@ -904,6 +919,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     }
   }
 
+  /** 删除学科同时清理失效课程证据和对应评价，其他学科与未保存文字继续保留。 */
   async function removeDraftSubject(subjectId: string) {
     if (!editing || busy) return;
     setBusy(true);
@@ -920,7 +936,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       }
       const remainingIds = new Set(((updated.content as ReportContent).learningContents ?? []).map(item => item.id));
       const removed = new Set(result.removedReferences);
-      // Keep unsaved teacher edits, but remove entries whose course evidence was deleted.
+      // 以服务端返回的删除引用为准清理正文，防止已经删除的课程证据仍出现在未保存草稿中。
       const keepEntry = (item: { sourceRefs: string[] }) => !item.sourceRefs.some(ref => removed.has(ref));
       setDraft(current =>
         current
@@ -947,15 +963,16 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     }
   }
 
+  /** 普通草稿保存只提交可编辑正文；图片经专用接口保存，服务端仍会覆盖快照派生字段。 */
   async function saveDraft() {
     if (!editing || !draft) return;
     setBusy(true);
     setMessage("");
     try {
-      // Photos have their own multipart endpoint; avoid resending base64 in the JSON draft.
+      // 课堂照片已单独保存，删除派生图片字段可避免重复发送 Base64 和回写陈旧照片。
       const content = {
         ...draft,
-        // Clearing every focus entry means omitting the optional report section.
+        // v2 清空重点等价于隐藏可选区块，不保留只有空白文字的占位条目。
         ...(isV2 ? { areasToImprove: draft.areasToImprove.filter(entry => entry.text.trim()) } : {})
       };
       delete content.classroomPhoto;
@@ -1952,8 +1969,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         createPortal(
           <div
             className={`${mobileReportControls} fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 sm:p-4`}
-            // Portal events still bubble through AppWindow in the React tree.
-            // Keep clicks/scrollbar presses from restacking its blurred desktop layer.
+            // Portal 事件仍沿 React 组件树冒泡；阻止编辑窗操作触发桌面窗口重新置顶。
             onMouseDown={event => event.stopPropagation()}
             onClick={event => {
               if (event.target === event.currentTarget) setEditing(null);

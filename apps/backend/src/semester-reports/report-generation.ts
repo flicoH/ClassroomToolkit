@@ -58,7 +58,7 @@ type Snapshot = {
   reportDetails?: ReportDetails;
 };
 
-/** Two fixed slots preserve identity when either photo is removed; legacy photos occupy slot 0. */
+/** 两个固定位置保持照片及说明对应关系；旧单图只占第一位置，明确的双空位置不回退到旧图。 */
 export function classroomPhotosForSnapshot(snapshot: {
   classroomPhoto?: unknown;
   classroomPhotos?: unknown;
@@ -76,7 +76,7 @@ export function classroomPhotosForSnapshot(snapshot: {
   ];
 }
 
-/** Missing legacy captions stay blank; captions share the same fixed photo positions. */
+/** 旧报告没有说明时保持空白；说明始终与两个固定照片位置一一对应。 */
 export function classroomPhotoCaptionsForSnapshot(snapshot: {
   classroomPhotoCaptions?: unknown;
 }) {
@@ -88,7 +88,7 @@ export function classroomPhotoCaptionsForSnapshot(snapshot: {
   );
 }
 
-// Snapshot-derived presentation data cannot be replaced by generated or edited prose.
+// 头像、课堂照片、宠物和学科展示由快照派生；AI 正文和教师普通编辑不能覆盖这些受保护字段。
 export function reportVisualsForSnapshot(snapshot: Snapshot) {
   const classroomPhotos = classroomPhotosForSnapshot(snapshot);
   return {

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import request from "@/lib/request";
 import { prepareStudentPhoto } from "./student-photo";
 
+/** 照片回调只暴露 ID 与照片；调用方局部合并，避免照片响应回写陈旧的学生资料。 */
 export type PhotoStudent = { id: string; photo?: string | null };
 type Props = {
   classId: string;
@@ -21,7 +22,7 @@ function photoError(error: unknown) {
   return response?.data?.message || (error instanceof Error ? error.message : "照片保存失败，请重试。");
 }
 
-/** The pending preview is separate from saved data, so failures never replace a student's photo. */
+/** 待保存预览与已保存照片分开管理；选图或上传失败不会替换列表中的原照片。 */
 export function StudentPhotoEditor({ classId, student, onUpdated, onBusyChange }: Props) {
   const [pending, setPending] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export function StudentPhotoEditor({ classId, student, onUpdated, onBusyChange }
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // ref 在点击瞬间生效，弥补 state 更新之前的时间窗口，防止连续点击发出重复请求。
   const inFlight = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
@@ -38,6 +40,7 @@ export function StudentPhotoEditor({ classId, student, onUpdated, onBusyChange }
       mounted.current = false;
     };
   }, []);
+  // 预览 URL 只属于当前文件；更换、取消或关闭编辑器时释放，避免长期占用图片内存。
   useEffect(() => {
     if (!pending) {
       setPreview(null);
@@ -76,6 +79,7 @@ export function StudentPhotoEditor({ classId, student, onUpdated, onBusyChange }
         method: remove ? "DELETE" : "POST",
         ...(remove ? {} : { data })
       });
+      // 即使窗口已关闭，成功的照片仍需合并到对应学生；只禁止更新已卸载编辑器的局部状态。
       onUpdated(updated);
       if (mounted.current) {
         setPending(null);

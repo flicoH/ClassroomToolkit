@@ -8,7 +8,7 @@ export type StudentPhotoFile = {
   size: number;
 };
 
-/** Decode actual bytes, strip metadata and bound stored images independently of browser checks. */
+/** 前端压缩不构成可信校验：后端独立解码实际字节、限制尺寸并去除元数据，再保存 JPEG。 */
 export async function studentPhotoDataUrl(
   file: StudentPhotoFile,
 ): Promise<string> {

@@ -38,7 +38,7 @@ export class StudentsDatabase {
     return row ? this.toClassroom(row) : undefined;
   }
 
-  /** Class writes and photo writes share a lock; stale class forms must retain the latest photos. */
+  /** 班级聚合与照片更新共用行锁；重写学生明细前取锁内最新照片，避免旧表单覆盖并发上传。 */
   async saveClassroom(classroom: Classroom) {
     const teacherId = this.teacherContext.teacherId;
     await this.classrooms.manager.transaction(async (manager) => {
@@ -88,7 +88,7 @@ export class StudentsDatabase {
             studentNo: student.studentNo,
             gender: student.gender,
             groupName: student.group ?? null,
-            // Photos are exclusively authored by setStudentPhoto, never by aggregate input.
+            // 聚合输入不具备照片写权限；仅保留数据库中最新照片，新增学生默认无照片。
             photo: photos.get(id) ?? null,
           });
         }),
@@ -97,7 +97,7 @@ export class StudentsDatabase {
     return (await this.findClassroom(classroom.id))!;
   }
 
-  /** Update only the photo after locking and checking both ownership boundaries inside the transaction. */
+  /** 事务内再次校验教师、班级与学生归属，仅更新照片；请求前的权限检查不能替代锁内复查。 */
   async setStudentPhoto(
     classroomId: string,
     studentId: string,

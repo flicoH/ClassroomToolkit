@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 type Gender = "男" | "女" | "";
 type ModalType = "student" | "editStudent" | "import" | "class" | "editClass" | "groups" | null;
 
+/** ID 是后端保存后的稳定标识，不能随学号编辑改变；照片仅由独立上传/移除接口更新。 */
 interface Student {
   id: string;
   name: string;
@@ -166,6 +167,7 @@ export function StudentManagement() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [groupDeleteTarget, setGroupDeleteTarget] = useState<string | null>(null);
 
+  // 默认班级只用于空白/加载界面的展示；所有写入都必须绑定实际从后端读取的班级。
   const displayClasses = classes.length ? classes : defaultClasses;
   const activeBackendClass = classes.find(item => item.id === activeClassId) ?? classes[0] ?? null;
   const activeClass = activeBackendClass ?? defaultClass;
@@ -245,7 +247,7 @@ export function StudentManagement() {
     setGroupDeleteTarget(null);
   }, []);
 
-  /** 添加单个学生，未填写学号时按当前班级人数生成示例学号。 */
+  /** 新增学生时先提示同班重复学号；未填写学号由后端生成并最终校验，不能依赖本地人数。 */
   const addStudent = async () => {
     const name = studentName.trim();
     const nextStudentNo = studentNo.trim();
@@ -437,7 +439,7 @@ export function StudentManagement() {
     const previousFocus = document.activeElement as HTMLElement | null;
     modalRef.current?.querySelector<HTMLElement>("input, button")?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      // A nested removal confirmation manages its own focus and Escape key.
+      // 嵌套的照片移除确认窗独立管理焦点和 Escape，避免一次按键把两层窗口都关闭。
       if (document.querySelectorAll('[role="dialog"]').length > 1) return;
       if (event.key === "Escape") {
         event.preventDefault();
@@ -674,6 +676,7 @@ export function StudentManagement() {
                         student={activeBackendClass.students.find(student => student.id === editingStudentId)!}
                         onBusyChange={setPhotoBusy}
                         onUpdated={updated => {
+                          // 上传完成后只合并照片，并绑定发起请求的班级，避免覆盖并发编辑的姓名或学号。
                           const classId = activeBackendClass.id;
                           setClasses(current =>
                             current.map(classRoom =>

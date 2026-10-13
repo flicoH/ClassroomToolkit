@@ -10,6 +10,7 @@ export type LearningContent = ReportEntry & {
   section: string;
   mastery: "unassessed" | "mastered" | "practicing" | "needs_support";
 };
+/** 可编辑正文与服务端快照派生的展示数据；头像、照片和积分不应由普通正文编辑伪造。 */
 export type LearningReportContent = {
   reportVersion?: "v2";
   studentPhoto?: string | null;
@@ -49,14 +50,14 @@ export type LearningReportData = {
   content: LearningReportContent;
 };
 
-/** Read both fixed slots, falling back to legacy single-photo reports. */
+/** 两个照片位置保持固定：第一张删除后不把第二张前移；仅旧单图报告回退到第一个位置。 */
 export function reportClassroomPhotos(content: Pick<LearningReportContent, "classroomPhoto" | "classroomPhotos">) {
   return content.classroomPhotos
     ? [content.classroomPhotos[0] ?? null, content.classroomPhotos[1] ?? null]
     : [content.classroomPhoto ?? null, null];
 }
 
-/** Manual IDs survive the public API's conversion of references to Chinese labels. */
+/** 手填内容的稳定 ID 会保留到家长页，因此不依赖已被翻译成中文的引用来判断来源。 */
 export function showsLearningMastery(item: Pick<LearningContent, "id" | "sourceRefs">) {
   return !item.id.startsWith("manual-") && !item.sourceRefs.some(ref => ref.startsWith("teacher-course:"));
 }
@@ -79,7 +80,7 @@ function dateText(value?: string, exclusive = false) {
   if (!value) return "";
   const date = new Date(new Date(value).getTime() - (exclusive ? 1 : 0));
   if (Number.isNaN(date.getTime())) return "";
-  // Safari and Node can use different locale separators; render stable numeric parts.
+  // 服务端和不同浏览器的日期分隔符可能不同，显式拼接上海时区的数字，避免水合内容不一致。
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     calendar: "gregory",
@@ -106,7 +107,7 @@ function Entries({ entries, empty }: { entries: ReportEntry[]; empty: string }) 
   );
 }
 
-/** Shared by preview, the parent page and full-content image export. */
+/** 教师预览、家长页和完整图片导出共用此视图，确保照片位置、空区块隐藏和版本兼容一致。 */
 export function LearningReportView({ report }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
   const details = content.reportDetails;
@@ -128,7 +129,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
       <p className="whitespace-pre-wrap break-words leading-8 text-slate-700">{content.summary}</p>
     </section>
   );
-  // v2 places photo evidence in the white body; legacy reports keep their original header layout.
+  // v2 课堂照片位于白色正文首部，说明使用深色文字；原版仍沿用标题区，避免旧报告布局回退。
   const classroomPhotoSection = photoCount > 0 && (
     <section aria-label="课堂照片" className={isV2 ? "min-w-0" : "mt-5"}>
       <div className={`grid w-full gap-3 ${photoCount > 1 ? "max-w-xl grid-cols-2" : "max-w-sm grid-cols-1"}`}>
@@ -221,7 +222,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         )}
         {content.reportVersion === "v2" && (
           <>
-            {/* Classroom photos enable this section; a student portrait alone must not reveal evaluations. */}
+            {/* 课堂照片是 v2 课堂表现的显示条件；圆形头像独立展示，不触发该区块。 */}
             {photoCount > 0 && (
               <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
                 <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>

@@ -1,4 +1,4 @@
-/** Bound original inputs and upload bytes so a class list never carries full-resolution photos. */
+/** 先限制原图，再生成最长边 512 像素、最大 256KB 的 JPEG，防止班级列表携带完整原图。 */
 export async function prepareStudentPhoto(file: File): Promise<File> {
   if (!["image/jpeg", "image/png"].includes(file.type) || file.size === 0 || file.size > 2 * 1024 * 1024)
     throw new Error("请选择 JPG 或 PNG 学生照片，原图最大 2MB。");
@@ -17,6 +17,7 @@ export async function prepareStudentPhoto(file: File): Promise<File> {
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("当前浏览器无法处理图片，请更换浏览器重试。");
+    // JPEG 不支持透明度，先铺白底，避免透明 PNG 转换后出现黑色背景。
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);

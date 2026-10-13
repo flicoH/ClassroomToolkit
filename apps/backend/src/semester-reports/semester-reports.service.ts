@@ -358,6 +358,8 @@ export class SemesterReportsService {
     };
   }
 
+  /** 校验当前教师的学期、学科和学生后排队生成；课程来源与评价引用保存到快照供审核和追溯。
+   * 照片参数仅由内部重新生成传入，公开请求不能通过正文伪造头像。 */
   async generate(
     input: Record<string, unknown>,
     classroomPhoto?: string | null,
@@ -482,7 +484,7 @@ export class SemesterReportsService {
       throw new BadRequestException('部分学生所在班级没有可用的已确认课程资料');
     const created: SemesterReportEntity[] = [];
     for (const [index, student] of students.entries()) {
-      // Feedback is keyed by the client ID; resolved students use stored IDs.
+      // 评价按客户端提交的 ID 取值，再换成教师隔离后的存储 ID，避免批量生成时把评价配给其他学生。
       const submittedFeedback = feedback.get(studentIds[index]!);
       const teacherInput = submittedFeedback
         ? { ...submittedFeedback, studentId: student.id }
@@ -1233,6 +1235,7 @@ export class SemesterReportsService {
     });
   }
 
+  /** 按旧报告的范围与教师输入创建新报告；头像和课堂照片沿用旧快照，不随学生资料更新。 */
   async regenerate(id: string) {
     const old = await this.findReport(id);
     const input = {
@@ -1268,7 +1271,7 @@ export class SemesterReportsService {
       ].map((subjectId) => ({ subjectId, courseScope: old.courseScope ?? '' }));
     }
     const photos = classroomPhotosForSnapshot(old.snapshot ?? {});
-    // Regeneration preserves the original portrait, including explicit or legacy absence.
+    // 显式无头像和旧报告未记录头像均保持为空，不能在重新生成时意外带入当前学生照片。
     return this.generate(
       input,
       photos[0],
@@ -1718,7 +1721,7 @@ export class SemesterReportsService {
     });
   }
 
-  /** Pet IDs may have a teacher prefix or legacy IDs; class + teacher constrain every fallback. */
+  /** 宠物积分 ID 兼容教师前缀和旧标识；即使用学号兜底，也必须限定同一教师与班级。 */
   private async photoForStudent(student: PetStudentEntity) {
     if (!student.classId) return null;
     const teacherId = this.teacher.teacherId;
