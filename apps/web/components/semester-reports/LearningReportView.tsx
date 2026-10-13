@@ -72,7 +72,7 @@ const masteryColors = {
   practicing: "bg-blue-50 text-blue-700",
   needs_support: "bg-violet-100 text-violet-700"
 };
-const periodNames: Record<string, string> = { week: "每周学习报告", month: "每月学习报告", term: "学期学习报告" };
+const periodNames: Record<string, string> = { week: "每周成长报告", month: "每月成长报告", term: "学期成长报告" };
 const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
 function dateText(value?: string, exclusive = false) {
   if (!value) return "";
@@ -134,15 +134,16 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
           <h1 className="text-2xl font-bold leading-snug sm:text-4xl">
             {report.studentName} ·{" "}
-            {details?.lessonNumber ? `第${details.lessonNumber}次课` : (periodNames[report.period] ?? "学习报告")}
+            {details?.lessonNumber ? `第${details.lessonNumber}次课` : (periodNames[report.period] ?? "成长报告")}
           </h1>
           <p className="mt-3 text-sm text-indigo-100 sm:text-base">
             {details?.lessonDate
               ? dateText(`${details.lessonDate}T00:00:00+08:00`)
               : [dateText(report.start), dateText(report.end, true)].filter(Boolean).join(" — ")}{" "}
-            · {details?.courseTheme || report.subject}
+            · {report.className}
+            {/* {details?.courseTheme || report.subject} */}
           </p>
-          <p className="mt-2 break-words text-sm text-indigo-100">{report.className}</p>
+          {/* <p className="mt-2 break-words text-sm text-indigo-100">{report.className}</p> */}
           {photoCount > 0 && (
             <div
               className={`mt-5 grid w-full gap-3 ${photoCount > 1 ? "max-w-xl grid-cols-2" : "max-w-sm grid-cols-1"}`}
