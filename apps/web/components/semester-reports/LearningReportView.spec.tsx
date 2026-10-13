@@ -309,7 +309,7 @@ it.each([false, true])(
     );
     expect(rendered.textContent).toContain("小明的宠物伙伴");
     expect(rendered.textContent).not.toContain("我的宠物伙伴");
-    expect(rendered.textContent).toContain("本期最值肯定");
+    expect(rendered.textContent).toContain("本学期最值肯定");
     expect(rendered.textContent).not.toContain("本阶段积分");
     expect(rendered.textContent).not.toContain("旧亮点");
     const row = rendered.querySelector('[aria-label="宠物伙伴与阶段积分"]')!;
