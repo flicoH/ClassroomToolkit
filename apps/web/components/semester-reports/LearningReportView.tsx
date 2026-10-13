@@ -299,7 +299,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           </section>
           {content.reportVersion === "v2" && (
             <section className="flex min-w-0 flex-col rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-6">
-              <h2 className="mb-4 text-lg font-bold text-amber-900">本期最值肯定</h2>
+              <h2 className="mb-4 text-lg font-bold text-amber-900">{periodTitles[report.period]}最值肯定</h2>
               <div className="my-auto flex flex-1 flex-col justify-center">
                 <PeriodScoreChart details={content.scoreDetails} />
               </div>
