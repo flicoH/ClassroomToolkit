@@ -3,6 +3,7 @@
 本文件适用于仓库内所有应用。具体设计与验收清单见 [docs/development-standards.md](docs/development-standards.md)。
 
 - 新功能或改变现有行为时，同步更新设计文档、实现代码和对应测试；跨端改动写清 API、数据结构、权限、失败与部署行为。
+- 新建或生成的 Markdown（`.md`）文件统一放在仓库根目录的 `sdd/` 下；仅当用户明确指定其他位置，或既有项目规范/工具要求文件必须位于特定目录时例外。更新已有 Markdown 文件时保留其原路径，不为此搬动既有文档。
 - Web 与 Admin 禁止调用浏览器原生 `alert`、`confirm`、`prompt`（含 `window`、`globalThis`、`self` 形式）。确认操作使用项目内弹窗；错误和成功反馈使用页面内状态或通知组件。弹窗需要可见关闭入口、键盘关闭和移动端可用布局。
 - 所有新增或修改的 JavaScript/TypeScript/Vue 代码（含测试、脚本与配置）交付前必须通过 ESLint 检查；`pnpm verify` 已包含全量 `pnpm lint:eslint` 检查，修复全部错误后再交付。
 - 每项行为变更配备能失败的回归用例，覆盖正常流程、边界条件、失败/权限场景；修复缺陷时先把触发条件写成测试。提交前执行 `pnpm verify`，处理失败后再交付。

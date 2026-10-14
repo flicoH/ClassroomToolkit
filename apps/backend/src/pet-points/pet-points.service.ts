@@ -75,13 +75,13 @@ export class PetPointsService {
       finalEnergy > 100000
     ) {
       throw new BadRequestException(
-        `最终能力值须为 ${maxLevel - 1} 到 100000 的整数`,
+        `最终积分须为 ${maxLevel - 1} 到 100000 的整数`,
       );
     }
     await this.database.setSettings(maxLevel, finalEnergy);
     for (const student of await this.database.findStudents()) {
       const petProgress = Math.min(student.petProgress, finalEnergy);
-      const level = petLevel(petProgress, maxLevel, finalEnergy);
+      const level = petLevel(student.score, maxLevel, finalEnergy);
       await this.database.updateStudent(student.id, {
         petProgress,
         level,
@@ -92,7 +92,7 @@ export class PetPointsService {
     return { maxLevel, finalEnergy };
   }
 
-  /** 批量调整学生积分，同时推进宠物成长并写入评价记录。 */
+  /** 当前课堂积分推导宠物等级和形态；独立成长能量只累计正向加分。 */
   async adjustScore(dto: AdjustScoreDto) {
     const changed: StudentPet[] = [];
     const { maxLevel, finalEnergy } = await this.database.getSettings();
@@ -110,12 +110,9 @@ export class PetPointsService {
       const nextStudent = await this.database.updateStudent(studentId, {
         score: nextScore,
         petProgress: nextProgress,
-        petHatched: petLevel(nextProgress, maxLevel, finalEnergy) > 1,
-        level: petLevel(nextProgress, maxLevel, finalEnergy),
-        stage: petStage(
-          petLevel(nextProgress, maxLevel, finalEnergy),
-          maxLevel,
-        ),
+        petHatched: petLevel(nextScore, maxLevel, finalEnergy) > 1,
+        level: petLevel(nextScore, maxLevel, finalEnergy),
+        stage: petStage(petLevel(nextScore, maxLevel, finalEnergy), maxLevel),
       });
       await this.database.createRecord({
         id: createEntityId('record'),
@@ -132,7 +129,7 @@ export class PetPointsService {
     return changed;
   }
 
-  /** 将班级学生同步到宠物积分表，保留已有积分和宠物进度。 */
+  /** 同步班级名单时按当前课堂积分校准等级和形态，保留既有成长能量。 */
   async syncClassStudents(dto: SyncPetClassDto) {
     const synced: StudentPet[] = [];
     const { maxLevel, finalEnergy } = await this.database.getSettings();
@@ -142,6 +139,8 @@ export class PetPointsService {
         item.studentNo,
         dto.classId,
       );
+      const score = current?.score ?? 0;
+      const level = petLevel(score, maxLevel, finalEnergy);
       synced.push(
         await this.database.saveStudent({
           id: item.id,
@@ -153,16 +152,12 @@ export class PetPointsService {
           score: current?.score ?? 0,
           maxScore: current?.maxScore ?? 30,
           trophies: current?.trophies ?? 0,
-          level: petLevel(current?.petProgress ?? 0, maxLevel, finalEnergy),
-          stage: petStage(
-            petLevel(current?.petProgress ?? 0, maxLevel, finalEnergy),
-            maxLevel,
-          ),
+          level,
+          stage: petStage(level, maxLevel),
           petId: current?.petId,
           petName: current?.petName,
           petProgress: current?.petProgress ?? 0,
-          petHatched:
-            petLevel(current?.petProgress ?? 0, maxLevel, finalEnergy) > 1,
+          petHatched: level > 1,
           absent: current?.absent ?? false,
           completedPets: current?.completedPets ?? 0,
         }),
@@ -186,12 +181,13 @@ export class PetPointsService {
       student.petProgress - (record.petDelta ?? 0),
     );
     const { maxLevel, finalEnergy } = await this.database.getSettings();
+    const level = petLevel(nextScore, maxLevel, finalEnergy);
     await this.database.updateStudent(student.id, {
       score: nextScore,
       petProgress: nextProgress,
-      petHatched: petLevel(nextProgress, maxLevel, finalEnergy) > 1,
-      level: petLevel(nextProgress, maxLevel, finalEnergy),
-      stage: petStage(petLevel(nextProgress, maxLevel, finalEnergy), maxLevel),
+      petHatched: level > 1,
+      level,
+      stage: petStage(level, maxLevel),
     });
     await this.database.deleteRecord(record.id);
     return { deleted: true };
@@ -199,14 +195,16 @@ export class PetPointsService {
 
   /** 给学生绑定宠物模板和展示昵称。 */
   async bindPet(studentId: string, dto: BindPetDto) {
-    await this.getStudentOrThrow(studentId);
+    const student = await this.getStudentOrThrow(studentId);
+    const { maxLevel, finalEnergy } = await this.database.getSettings();
+    const level = petLevel(student.score, maxLevel, finalEnergy);
     return this.database.updateStudent(studentId, {
       petId: dto.petId,
       petName: dto.petName,
       petProgress: 0,
-      petHatched: false,
-      level: 1,
-      stage: '初始形态',
+      petHatched: level > 1,
+      level,
+      stage: petStage(level, maxLevel),
     });
   }
 

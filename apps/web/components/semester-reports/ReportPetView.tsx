@@ -161,6 +161,22 @@ export const petOptions: PetOption[] = [
   }
 ];
 
+const cleanedSpriteNames = new Set([
+  "ash-lion",
+  "ash-lion-2",
+  "bubble-otter-2",
+  "coal-tail-fox-2",
+  "coal-tail-fox-3",
+  "coal-tail-fox-4",
+  "coral-whale-2",
+  "coral-whale-3",
+  "pinecone-puff-2",
+  "red-sand-tortoise-2",
+  "star-sprout-marten-2",
+  "vine-wing-bird-2",
+  "vine-wing-bird-3"
+]);
+
 function getPetFormName(pet: PetOption, index: number) {
   if (index === 0) return `${pet.name}蛋`;
   if (index === 9) return pet.evolutions[3];
@@ -181,10 +197,17 @@ export function PetSprite({
   const formName = getPetFormName(pet, stageIndex);
   const assetIndex = Math.min(3, Math.floor((Math.max(stageIndex, 1) - 1) / 2));
   const imageName = assetIndex === 0 ? pet.id : `${pet.id}-${assetIndex + 1}`;
+  // Some generated sheets contain neighboring sprite fragments; point only affected stages to cleaned copies.
+  const spriteImageName =
+    imageName === "red-sand-tortoise-3"
+      ? "red-sand-tortoise-3-hotfix"
+      : cleanedSpriteNames.has(imageName)
+        ? `${imageName}-clean`
+        : imageName;
   return (
     <div className={cn("relative aspect-square", className)} aria-label={formName}>
       <img
-        src={`/pets/starling/${imageName}.png`}
+        src={`/pets/starling/${spriteImageName}.png`}
         alt={formName}
         draggable={false}
         className="pointer-events-none h-full w-full select-none object-contain"
