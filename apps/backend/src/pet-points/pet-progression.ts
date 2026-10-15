@@ -36,15 +36,9 @@ export function petThresholds(maxLevel: number, finalEnergy: number) {
   );
 }
 
-export function petRewards(maxLevel: number) {
-  const weights = Array.from({ length: maxLevel - 1 }, (_, i) => i + 1);
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
-  const amounts = weights.map((weight) => Math.floor((50 * weight) / total));
-  const remainder = 50 - amounts.reduce((sum, amount) => sum + amount, 0);
-  const order = weights
-    .map((weight, i) => ({ i, fraction: (50 * weight) % total }))
-    .sort((a, b) => b.fraction - a.fraction || b.i - a.i);
-  for (const entry of order.slice(0, remainder))
-    amounts[entry.i] = amounts[entry.i]! + 1;
-  return [0, ...amounts];
+/** Preview only: badges are paid when completing a cycle, never on level changes. */
+export function petRewards(maxLevel: number, completionBadges = 1) {
+  return Array.from({ length: maxLevel }, (_, i) =>
+    i === maxLevel - 1 ? completionBadges : 0,
+  );
 }

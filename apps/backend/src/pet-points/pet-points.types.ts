@@ -73,6 +73,7 @@ export interface RedemptionRecord {
 }
 
 export interface PetRules {
+  completionBadges?: number;
   maxLevel: number;
   finalEnergy: number;
   version: number;

@@ -71,6 +71,7 @@ export class RedeemRewardDto extends PetWriteDto {
 }
 
 export class UpdatePetSettingsDto extends PetWriteDto {
+  completionBadges?: number;
   maxLevel?: number;
   finalEnergy?: number;
   expectedVersion!: number;

@@ -181,7 +181,7 @@ suite('pet growth isolated MySQL migration and transactions', () => {
       petId: null,
       petExperience: 0,
       score: 200,
-      trophies: 8,
+      trophies: 9,
       completedPets: 1,
     });
     const row = (

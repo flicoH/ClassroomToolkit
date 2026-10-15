@@ -188,17 +188,24 @@ export class PetPointsDatabase {
       maxLevel: setting?.maxLevel ?? 10,
       finalEnergy: setting?.finalEnergy ?? 200,
       version: setting?.version ?? 1,
+      completionBadges: setting?.completionBadges ?? 1,
     };
   }
 
-  async setSettings(maxLevel: number, finalEnergy: number, version: number) {
+  async setSettings(
+    maxLevel: number,
+    finalEnergy: number,
+    version: number,
+    completionBadges = 1,
+  ) {
     await this.settings.save({
       teacherId: this.teacherContext.teacherId,
       maxLevel,
       finalEnergy,
       version,
+      completionBadges,
     });
-    return { maxLevel, finalEnergy, version };
+    return { maxLevel, finalEnergy, version, completionBadges };
   }
 
   /** 查询当前教师的宠物积分学生列表。 */

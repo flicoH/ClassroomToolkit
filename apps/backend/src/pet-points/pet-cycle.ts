@@ -1,6 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { createEntityId } from '../common/id';
-import { petLevel, petRewards, petStage } from './pet-progression';
+import { petLevel, petStage } from './pet-progression';
 import type { CompletedPet, PetRules, StudentPet } from './pet-points.types';
 
 /** Balance and experience are independent facts; rewards are never clawed back on deductions. */
@@ -14,11 +14,6 @@ export function applyPetScore(
     experience: student.petExperience,
     energy: student.petProgress,
   };
-  const oldLevel = petLevel(
-    before.experience,
-    rules.maxLevel,
-    rules.finalEnergy,
-  );
   student.score = Math.max(0, before.score + delta);
   student.petExperience = Math.max(0, before.experience + delta);
   student.petProgress = Math.min(
@@ -26,32 +21,6 @@ export function applyPetScore(
     before.energy + (student.petId ? Math.max(0, delta) : 0),
   );
   calibratePet(student, rules);
-  const rewards = petRewards(rules.maxLevel);
-  if (student.petId && delta > 0) {
-    for (let level = oldLevel + 1; level <= student.level; level++) {
-      if (
-        student.rewardGrants.some((grant) => grant.level === level) ||
-        student.rewardProtection.includes(level)
-      )
-        continue;
-      // Mixed rule versions may assign different amounts to the same tiers; keep the cycle budget at 50.
-      const alreadyGranted = student.rewardGrants.reduce(
-        (sum, grant) => sum + grant.amount,
-        0,
-      );
-      const amount = Math.min(
-        rewards[level - 1]!,
-        Math.max(0, 50 - alreadyGranted),
-      );
-      student.rewardGrants.push({
-        level,
-        amount,
-        grantedAt: new Date().toISOString(),
-        rulesVersion: rules.version,
-      });
-      student.trophies += amount;
-    }
-  }
   student.revision++;
   return {
     scoreDelta: student.score - before.score,
@@ -86,6 +55,17 @@ export function finishPetCycle(
     student.petExperience < rules.finalEnergy
   )
     throw new ConflictException('宠物尚未满级，请刷新后重试');
+  // Completion and its badge grant are persisted together; replay uses the operation log.
+  const amount = rules.completionBadges ?? 1;
+  if (student.trophies + amount > 2147483647)
+    throw new ConflictException('成长徽章余额超过上限，请先调整余额');
+  student.rewardGrants.push({
+    level: rules.maxLevel,
+    amount,
+    grantedAt: new Date().toISOString(),
+    rulesVersion: rules.version,
+  });
+  student.trophies += amount;
   const snapshot: CompletedPet = {
     id: createEntityId('completed'),
     teacherId,

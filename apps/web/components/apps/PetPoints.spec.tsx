@@ -241,6 +241,50 @@ describe("PetPoints persisted workflows", () => {
     expect(document.querySelector('[aria-label="关闭兑换站"]')).toBeNull();
     expect(document.querySelector('[aria-label="关闭设置"]')).not.toBeNull();
   });
+  it("configures the full-level badge reward while preserving manual badge controls", async () => {
+    await mount();
+    await click(container.querySelector('[aria-label="设置"]')!);
+    await click(button("等级规则"));
+    const input = document.querySelector<HTMLInputElement>('[aria-label="满级奖励成长徽章"]')!;
+    expect(input.value).toBe("1");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0.5");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button("保存设置"));
+    expect(writes().at(-1).data.completionBadges).toBe(0.5);
+    await click(document.querySelector('[aria-label="关闭设置"]')!);
+    await click(container.querySelector('[aria-label="养成记录"]')!);
+    expect(document.querySelector('[aria-label="增加成长徽章"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="减少成长徽章"]')).not.toBeNull();
+    await click(document.querySelector('[aria-label="增加成长徽章"]')!);
+    expect(writes().at(-1).data.delta).toBe(0.5);
+  });
+  it("uses a medal for teacher badge adjustments and shows derived trophies in history", async () => {
+    student = { ...student, trophies: 5.5 };
+    await mount();
+    await click(container.querySelector('[aria-label="养成记录"]')!);
+    const history = document.querySelector('[aria-label="测试甲 的成长历程"]')!;
+    const trophyLabel = Array.from(history.querySelectorAll("span")).find(item => item.textContent === "当前奖杯")!;
+    expect(trophyLabel.parentElement?.querySelector("strong")?.textContent).toBe("2");
+    const badgeAmount = history.querySelector('[aria-label="增加成长徽章"]')?.previousElementSibling;
+    expect(badgeAmount?.textContent).toContain("5.5");
+    expect(badgeAmount?.querySelector("svg.lucide-medal")).not.toBeNull();
+    expect(badgeAmount?.querySelector("svg.lucide-trophy")).toBeNull();
+  });
+  it.each([0, 0.5, 1.5, 2, 5.5])(
+    "shows badge totals and whole trophies on cards, hiding zero counts (%s)",
+    async amount => {
+      student = { ...student, trophies: amount };
+      await mount();
+      const badges = container.querySelector(`[aria-label="成长徽章 ${amount}"]`);
+      const trophies = container.querySelector(`[aria-label="奖杯 ${Math.floor(amount / 2)}"]`);
+      expect(Boolean(badges)).toBe(amount > 0);
+      expect(Boolean(trophies)).toBe(amount >= 2);
+      if (badges) expect(badges.querySelector("svg.lucide-medal")).not.toBeNull();
+      if (trophies) expect(trophies.querySelector("svg.lucide-trophy")).not.toBeNull();
+    }
+  );
   it("search and sort never submit filtered rosters or delete hidden students", async () => {
     await mount();
     const count = writes().length;

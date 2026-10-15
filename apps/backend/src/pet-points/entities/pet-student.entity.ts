@@ -30,7 +30,7 @@ export class PetStudentEntity {
   @Column({ name: 'max_score', type: 'int', default: 30 })
   maxScore!: number;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'double', default: 0 })
   trophies!: number;
 
   @Column({ name: 'level_num', type: 'int', default: 1 })

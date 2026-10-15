@@ -169,7 +169,7 @@ interface PetPointsOverview {
   rewards: RewardItem[];
   records: EvaluationRecord[];
   redemptions: RedemptionRecord[];
-  settings: { maxLevel: number; finalEnergy: number; version: number };
+  settings: { maxLevel: number; finalEnergy: number; version: number; completionBadges?: number };
   completed: CompletedPetView[];
 }
 
@@ -436,6 +436,8 @@ export function PetPoints() {
   const [maxPetLevelDraft, setMaxPetLevelDraft] = useState(defaultMaxLevel);
   const [maxPetEnergy, setMaxPetEnergy] = useState(defaultFinalEnergy);
   const [maxPetEnergyDraft, setMaxPetEnergyDraft] = useState(defaultFinalEnergy);
+  const [completionBadges, setCompletionBadges] = useState(1);
+  const [completionBadgesDraft, setCompletionBadgesDraft] = useState("1");
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [activeClassId, setActiveClassId] = useState("");
   const [records, setRecords] = useState<EvaluationRecord[]>([]);
@@ -532,6 +534,9 @@ export function PetPoints() {
     setRulesVersion(overview.settings.version);
     setMaxPetLevel(nextMaxLevel);
     if (settingsPanelRef.current !== "等级规则") setMaxPetLevelDraft(nextMaxLevel);
+    setCompletionBadges(overview.settings.completionBadges ?? 1);
+    if (settingsPanelRef.current !== "等级规则")
+      setCompletionBadgesDraft(String(overview.settings.completionBadges ?? 1));
     setMaxPetEnergy(nextFinalEnergy);
     if (settingsPanelRef.current !== "等级规则") setMaxPetEnergyDraft(nextFinalEnergy);
     setStudents(overview.students.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
@@ -597,9 +602,17 @@ export function PetPoints() {
 
   const savePetSettings = async () => {
     if (
+      !completionBadgesDraft.trim() ||
+      !Number.isInteger(Number(completionBadgesDraft) * 2) ||
+      Number(completionBadgesDraft) < 0 ||
+      Number(completionBadgesDraft) > 10000
+    )
+      return;
+    if (
       await perform("/api/pet-points/settings", "PATCH", {
         maxLevel: maxPetLevelDraft,
         finalEnergy: maxPetEnergyDraft,
+        completionBadges: Number(completionBadgesDraft),
         expectedVersion: rulesVersion
       })
     )
@@ -1351,9 +1364,22 @@ export function PetPoints() {
                   </span>
                 )}
                 {student.trophies > 0 && (
-                  <Badge className="absolute left-3 top-3 z-10 border border-orange-200 bg-white px-3 py-1 text-orange-500 shadow-none">
-                    <Trophy className="h-4 w-4" /> x{student.trophies}
-                  </Badge>
+                  <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-5rem)] flex-wrap gap-1.5">
+                    {Math.floor(student.trophies / 2) > 0 && (
+                      <Badge
+                        aria-label={`奖杯 ${Math.floor(student.trophies / 2)}`}
+                        className="gap-1 border border-yellow-200 bg-white px-2 py-1 text-yellow-700 shadow-none"
+                      >
+                        <Trophy className="h-4 w-4" aria-hidden="true" />×{Math.floor(student.trophies / 2)}
+                      </Badge>
+                    )}
+                    <Badge
+                      aria-label={`成长徽章 ${student.trophies}`}
+                      className="gap-1 border border-orange-200 bg-white px-2 py-1 text-orange-500 shadow-none"
+                    >
+                      <Medal className="h-4 w-4" aria-hidden="true" />×{student.trophies}
+                    </Badge>
+                  </div>
                 )}
                 <button
                   onClick={() => {
@@ -1971,9 +1997,9 @@ export function PetPoints() {
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
           <section
             data-pet-dialog
-            className="max-h-[84vh] w-full max-w-[720px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+            className="flex max-h-[84dvh] w-full max-w-[720px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
           >
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
                 <h3 className="text-xl font-black">{historyStudent.name} 的成长历程</h3>
                 <p className="text-sm font-semibold text-slate-400">#{historyStudent.studentNo}</p>
@@ -1982,209 +2008,224 @@ export function PetPoints() {
                 <X className="h-5 w-5" />
               </Button>
             </div>
-            <div className="mt-5 grid gap-4 sm:grid-cols-3">
-              <div className="rounded-xl bg-orange-50 p-4">
-                <PawPrint className="h-5 w-5 text-orange-500" />
-                <strong className="mt-3 block text-2xl">{historyStudent.completedPets}</strong>
-                <span className="text-sm font-bold text-orange-700">累计完成宠物</span>
-              </div>
-              <div className="rounded-xl bg-amber-50 p-4">
-                <Medal className="h-5 w-5 text-amber-500" />
-                <strong className="mt-3 block text-2xl">{historyStudent.trophies}</strong>
-                <span className="text-sm font-bold text-amber-700">当前徽章</span>
-              </div>
-              <div className="rounded-xl bg-sky-50 p-4">
-                <Sparkles className="h-5 w-5 text-sky-500" />
-                <strong className="mt-3 block text-2xl">{`Lv.${historyStudent.level}`}</strong>
-                <span className="text-sm font-bold text-sky-700">
-                  {historyStudent.petId ? `${historyStudent.petProgress}/${maxPetEnergy} 能量` : "未绑定宠物蛋"}
-                </span>
-              </div>
-            </div>
-            <div className="mt-5 rounded-xl border border-slate-100 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h4 className="font-black">当前养成</h4>
-                  <p className="text-sm font-semibold text-slate-400">{historyStudent.petName ?? "尚未选择宠物"}</p>
+            <div
+              className="min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6"
+              data-pet-history-content
+              tabIndex={0}
+              role="region"
+              aria-label="成长历程内容"
+            >
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-xl bg-orange-50 p-4">
+                  <PawPrint className="h-5 w-5 text-orange-500" />
+                  <strong className="mt-3 block text-2xl">{historyStudent.completedPets}</strong>
+                  <span className="text-sm font-bold text-orange-700">累计完成宠物</span>
                 </div>
-                <Button
-                  variant="outline"
-                  className="rounded-lg font-bold text-rose-500"
-                  disabled={busy || !historyStudent.petId}
-                  onClick={() =>
-                    setConfirmAction({
-                      title: historyStudent.completionPending ? "完成本轮养成" : "重置当前宠物",
-                      description: historyStudent.completionPending
-                        ? "满级宠物将留存到养成成就和成长徽章，可选择新宠物开始下一轮。积分及徽章余额保留，溢出经验结转。"
-                        : "清除当前宠物、经验和能量；保留积分、徽章和已有完成档案。",
-                      confirmLabel: historyStudent.completionPending ? "完成并选新宠物" : "确认重置",
-                      onConfirm: () => resetPet(historyStudent)
-                    })
-                  }
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  {historyStudent.completionPending ? "完成本轮" : "重置"}
-                </Button>
+                <div className="rounded-xl bg-amber-50 p-4">
+                  <Medal className="h-5 w-5 text-amber-500" />
+                  <strong className="mt-3 block text-2xl">{historyStudent.trophies}</strong>
+                  <span className="text-sm font-bold text-amber-700">当前徽章</span>
+                </div>
+                <div className="rounded-xl bg-yellow-50 p-4">
+                  <Trophy className="h-5 w-5 text-yellow-600" aria-hidden="true" />
+                  <strong className="mt-3 block text-2xl">{Math.floor(historyStudent.trophies / 2)}</strong>
+                  <span className="text-sm font-bold text-yellow-800">当前奖杯</span>
+                </div>
+                <div className="rounded-xl bg-sky-50 p-4">
+                  <Sparkles className="h-5 w-5 text-sky-500" />
+                  <strong className="mt-3 block text-2xl">{`Lv.${historyStudent.level}`}</strong>
+                  <span className="text-sm font-bold text-sky-700">
+                    {historyStudent.petId ? `${historyStudent.petProgress}/${maxPetEnergy} 能量` : "未绑定宠物蛋"}
+                  </span>
+                </div>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                {Array.from({ length: maxPetLevel }, (_, index) => {
-                  const stage = formStages[getFormIndex(index + 1, maxPetLevel)];
-                  return (
+              <div className="mt-5 rounded-xl border border-slate-100 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-black">当前养成</h4>
+                    <p className="text-sm font-semibold text-slate-400">{historyStudent.petName ?? "尚未选择宠物"}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="rounded-lg font-bold text-rose-500"
+                    disabled={busy || !historyStudent.petId}
+                    onClick={() =>
+                      setConfirmAction({
+                        title: historyStudent.completionPending ? "完成本轮养成" : "重置当前宠物",
+                        description: historyStudent.completionPending
+                          ? "满级宠物将留存到养成成就和成长徽章，可选择新宠物开始下一轮。积分及徽章余额保留，溢出经验结转。领取后按当前等级设置赠送成长徽章。"
+                          : "清除当前宠物、经验和能量；保留积分、徽章和已有完成档案。",
+                        confirmLabel: historyStudent.completionPending ? "完成并选新宠物" : "确认重置",
+                        onConfirm: () => resetPet(historyStudent)
+                      })
+                    }
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    {historyStudent.completionPending ? "完成本轮" : "重置"}
+                  </Button>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {Array.from({ length: maxPetLevel }, (_, index) => {
+                    const stage = formStages[getFormIndex(index + 1, maxPetLevel)];
+                    return (
+                      <div
+                        key={stage}
+                        className={cn(
+                          "rounded-lg p-3 text-center",
+                          historyStudent.level > index ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-300"
+                        )}
+                      >
+                        <div className="font-black">{index + 1}</div>
+                        <div className="mt-1 text-xs font-bold">{stage}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mt-5 rounded-xl border border-slate-100 p-5">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black">成长徽章 · 当前持有</h4>
+                  <span className="text-xs font-bold text-slate-400">教师每次调整0.5枚</span>
+                </div>
+                <div className="mt-4 flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="rounded-lg"
+                    aria-label="减少成长徽章"
+                    title="减少0.5枚成长徽章"
+                    disabled={busy || !historyStudent.trophies}
+                    onClick={() => void updateStudentFlag(historyStudent, "trophies", -0.5)}
+                  >
+                    <Minus className="h-4 w-4" />
+                  </Button>
+                  <div className="flex min-w-28 items-center justify-center gap-2 rounded-xl bg-amber-50 px-5 py-3 text-xl font-black text-amber-600">
+                    <Medal className="h-5 w-5" aria-hidden="true" />
+                    {historyStudent.trophies}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="rounded-lg"
+                    aria-label="增加成长徽章"
+                    title="增加0.5枚成长徽章"
+                    disabled={busy}
+                    onClick={() => void updateStudentFlag(historyStudent, "trophies", 0.5)}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {completed
+                  .filter(item => item.studentId === historyStudent.id)
+                  .map(snapshot => (
+                    <button
+                      key={snapshot.id}
+                      className="block w-full rounded-lg bg-amber-50 p-3 text-left text-sm"
+                      onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
+                    >
+                      {snapshot.petName} · 满级成长纪念 · 本轮已获得 {snapshot.earnedBadges} 枚
+                    </button>
+                  ))}
+              </div>
+              <div className="mt-5">
+                <h4 className="font-black">能量成就</h4>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  {[
+                    { score: getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!, label: "破壳新星" },
+                    { score: Math.ceil(maxPetEnergy / 2), label: "成长伙伴" },
+                    { score: maxPetEnergy, label: "终极羁绊" }
+                  ].map(achievement => (
                     <div
-                      key={stage}
+                      key={achievement.label}
                       className={cn(
-                        "rounded-lg p-3 text-center",
-                        historyStudent.level > index ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-300"
+                        "rounded-xl border p-4",
+                        historyStudent.petProgress >= achievement.score
+                          ? "border-orange-200 bg-orange-50"
+                          : "border-slate-100 bg-slate-50 text-slate-300"
                       )}
                     >
-                      <div className="font-black">{index + 1}</div>
-                      <div className="mt-1 text-xs font-bold">{stage}</div>
+                      <AwardIcon unlocked={historyStudent.petProgress >= achievement.score} />
+                      <strong className="mt-2 block">{achievement.label}</strong>
+                      <span className="text-xs font-bold">达到 {achievement.score} 成长能量</span>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="mt-5 rounded-xl border border-slate-100 p-5">
-              <div className="flex items-center justify-between">
-                <h4 className="font-black">成长徽章 · 当前持有</h4>
-                <span className="text-xs font-bold text-slate-400">教师可手动调整</span>
-              </div>
-              <div className="mt-4 flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="rounded-lg"
-                  aria-label="减少成长徽章"
-                  disabled={busy || !historyStudent.trophies}
-                  onClick={() => void updateStudentFlag(historyStudent, "trophies", -1)}
-                >
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <div className="flex min-w-28 items-center justify-center gap-2 rounded-xl bg-amber-50 px-5 py-3 text-xl font-black text-amber-600">
-                  <Trophy className="h-5 w-5" />
-                  {historyStudent.trophies}
+                  ))}
                 </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="rounded-lg"
-                  aria-label="增加成长徽章"
-                  disabled={busy}
-                  onClick={() => void updateStudentFlag(historyStudent, "trophies", 1)}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
               </div>
-            </div>
-            <div className="mt-3 space-y-2">
-              {completed
-                .filter(item => item.studentId === historyStudent.id)
-                .map(snapshot => (
-                  <button
-                    key={snapshot.id}
-                    className="block w-full rounded-lg bg-amber-50 p-3 text-left text-sm"
-                    onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
-                  >
-                    {snapshot.petName} · 满级成长纪念 · 本轮已获得 {snapshot.earnedBadges} 枚
-                  </button>
-                ))}
-            </div>
-            <div className="mt-5">
-              <h4 className="font-black">能量成就</h4>
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                {[
-                  { score: getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!, label: "破壳新星" },
-                  { score: Math.ceil(maxPetEnergy / 2), label: "成长伙伴" },
-                  { score: maxPetEnergy, label: "终极羁绊" }
-                ].map(achievement => (
-                  <div
-                    key={achievement.label}
-                    className={cn(
-                      "rounded-xl border p-4",
-                      historyStudent.petProgress >= achievement.score
-                        ? "border-orange-200 bg-orange-50"
-                        : "border-slate-100 bg-slate-50 text-slate-300"
-                    )}
-                  >
-                    <AwardIcon unlocked={historyStudent.petProgress >= achievement.score} />
-                    <strong className="mt-2 block">{achievement.label}</strong>
-                    <span className="text-xs font-bold">达到 {achievement.score} 成长能量</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-5 space-y-3">
-              <h4 className="font-black">养成成就</h4>
-              {completed
-                .filter(item => item.studentId === historyStudent.id)
-                .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
-                .map(snapshot => (
-                  <div key={snapshot.id} className="break-words rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <CompletedPetPortrait petId={snapshot.petId} />
-                    <strong>
-                      {snapshot.petName} · Lv.{snapshot.level}
-                    </strong>
-                    <p className="text-sm">
-                      {formatDate(snapshot.completedAt)} · 满级纪念 · 本轮已获得 {snapshot.earnedBadges} 枚成长徽章
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "certificate" })}
-                      >
-                        奖状
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
-                      >
-                        合影纪念
-                      </Button>
+              <div className="mt-5 space-y-3">
+                <h4 className="font-black">养成成就</h4>
+                {completed
+                  .filter(item => item.studentId === historyStudent.id)
+                  .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
+                  .map(snapshot => (
+                    <div key={snapshot.id} className="break-words rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <CompletedPetPortrait petId={snapshot.petId} />
+                      <strong>
+                        {snapshot.petName} · Lv.{snapshot.level}
+                      </strong>
+                      <p className="text-sm">
+                        {formatDate(snapshot.completedAt)} · 满级纪念 · 本轮已获得 {snapshot.earnedBadges} 枚成长徽章
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "certificate" })}
+                        >
+                          奖状
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
+                        >
+                          合影纪念
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              {!completed.some(item => item.studentId === historyStudent.id) && (
-                <p className="text-sm text-slate-500">
-                  暂无可追溯完成档案{historyStudent.completedPets > 0 ? "；历史详情不可追溯" : ""}
-                </p>
-              )}
-              {!historyStudent.petId && (
-                <Button
-                  onClick={() => {
-                    setHistoryStudentId(null);
-                    openPetPicker(historyStudent.id);
-                  }}
-                >
-                  选择新宠物，开始下一轮
-                </Button>
-              )}
-              {historyStudent.petId && !historyStudent.completionPending && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setHistoryStudentId(null);
-                    openPetPicker(historyStudent.id);
-                  }}
-                >
-                  更换当前宠物（保留进度）
-                </Button>
-              )}
-            </div>
-            <div className="mt-5 rounded-xl bg-slate-50 p-5">
-              <div className="flex items-center gap-2">
-                <Gift className="h-5 w-5 text-slate-400" />
-                <h4 className="font-black">兑换记录</h4>
-              </div>
-              {redemptions
-                .filter(item => item.studentId === historyStudent.id)
-                .map(item => (
-                  <p key={item.id} className="mt-3 text-sm">
-                    {formatDate(item.createdAt)} · {item.rewardName} · {item.cost} 积分
+                  ))}
+                {!completed.some(item => item.studentId === historyStudent.id) && (
+                  <p className="text-sm text-slate-500">
+                    暂无可追溯完成档案{historyStudent.completedPets > 0 ? "；历史详情不可追溯" : ""}
                   </p>
-                ))}
-              {!redemptions.some(item => item.studentId === historyStudent.id) && (
-                <p className="mt-4 text-center text-sm text-slate-400">暂时没有奖品兑换记录</p>
-              )}
+                )}
+                {!historyStudent.petId && (
+                  <Button
+                    onClick={() => {
+                      setHistoryStudentId(null);
+                      openPetPicker(historyStudent.id);
+                    }}
+                  >
+                    选择新宠物，开始下一轮
+                  </Button>
+                )}
+                {historyStudent.petId && !historyStudent.completionPending && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setHistoryStudentId(null);
+                      openPetPicker(historyStudent.id);
+                    }}
+                  >
+                    更换当前宠物（保留进度）
+                  </Button>
+                )}
+              </div>
+              <div className="mt-5 rounded-xl bg-slate-50 p-5">
+                <div className="flex items-center gap-2">
+                  <Gift className="h-5 w-5 text-slate-400" />
+                  <h4 className="font-black">兑换记录</h4>
+                </div>
+                {redemptions
+                  .filter(item => item.studentId === historyStudent.id)
+                  .map(item => (
+                    <p key={item.id} className="mt-3 text-sm">
+                      {formatDate(item.createdAt)} · {item.rewardName} · {item.cost} 积分
+                    </p>
+                  ))}
+                {!redemptions.some(item => item.studentId === historyStudent.id) && (
+                  <p className="mt-4 text-center text-sm text-slate-400">暂时没有奖品兑换记录</p>
+                )}
+              </div>
             </div>
           </section>
         </div>
@@ -2746,9 +2787,30 @@ export function PetPoints() {
                       }
                     />
                   </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    满级奖励成长徽章
+                    <Input
+                      aria-label="满级奖励成长徽章"
+                      step={0.5}
+                      type="number"
+                      min={0}
+                      max={10000}
+                      value={completionBadgesDraft}
+                      onChange={event => setCompletionBadgesDraft(event.target.value)}
+                    />
+                  </label>
                   <Button
                     onClick={() => void savePetSettings()}
-                    disabled={busy || (maxPetLevelDraft === maxPetLevel && maxPetEnergyDraft === maxPetEnergy)}
+                    disabled={
+                      busy ||
+                      !completionBadgesDraft.trim() ||
+                      !Number.isInteger(Number(completionBadgesDraft) * 2) ||
+                      Number(completionBadgesDraft) < 0 ||
+                      Number(completionBadgesDraft) > 10000 ||
+                      (maxPetLevelDraft === maxPetLevel &&
+                        maxPetEnergyDraft === maxPetEnergy &&
+                        Number(completionBadgesDraft) === completionBadges)
+                    }
                   >
                     保存设置
                   </Button>

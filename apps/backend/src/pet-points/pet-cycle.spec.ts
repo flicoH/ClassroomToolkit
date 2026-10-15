@@ -1,9 +1,4 @@
-import {
-  applyPetScore,
-  calibratePet,
-  finishPetCycle,
-  resetPetCycle,
-} from './pet-cycle';
+import { applyPetScore, finishPetCycle, resetPetCycle } from './pet-cycle';
 import { petLevel, petThresholds, petRewards } from './pet-progression';
 import type { StudentPet } from './pet-points.types';
 
@@ -36,13 +31,13 @@ function student(): StudentPet {
   };
 }
 describe('养成轮次业务不变量', () => {
-  it('uses rounded thresholds and a total budget of fifty for every supported level count', () => {
+  it('uses rounded thresholds and a completion-only preview for every supported level count', () => {
     expect(petThresholds(10, 100)).toEqual([
       0, 11, 22, 33, 44, 56, 67, 78, 89, 100,
     ]);
-    expect(petRewards(10)).toEqual([0, 1, 2, 3, 4, 6, 7, 8, 9, 10]);
+    expect(petRewards(10)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
     for (let levels = 2; levels <= 10; levels++) {
-      expect(petRewards(levels).reduce((a, b) => a + b, 0)).toBe(50);
+      expect(petRewards(levels).reduce((a, b) => a + b, 0)).toBe(1);
       const thresholds = petThresholds(levels, levels - 1);
       thresholds.forEach((threshold, i) =>
         expect(petLevel(threshold, levels, levels - 1)).toBe(i + 1),
@@ -56,13 +51,13 @@ describe('养成轮次业务不变量', () => {
       petExperience: 22,
       score: 22,
       level: 3,
-      trophies: 3,
+      trophies: 0,
     });
     applyPetScore(s, -2, rules);
     expect(s.level).toBe(2);
     s.petId = 'cloud-bear';
     applyPetScore(s, 2, rules);
-    expect(s.trophies).toBe(3);
+    expect(s.trophies).toBe(0);
   });
   it('archives A once, retains balances and overflow, and grows B independently', () => {
     const s = student();
@@ -71,13 +66,13 @@ describe('养成轮次业务不变量', () => {
     expect(snapshot).toMatchObject({
       petId: 'sprout-puff',
       level: 10,
-      earnedBadges: 50,
+      earnedBadges: 1,
       cycleId: 'cycle-a',
     });
     expect(s).toMatchObject({
       petExperience: 2,
       score: 102,
-      trophies: 50,
+      trophies: 1,
       completedPets: 1,
       petId: null,
     });
@@ -86,11 +81,11 @@ describe('养成轮次业务不变量', () => {
     applyPetScore(s, 20, rules);
     expect(s).toMatchObject({
       petExperience: 22,
-      trophies: 53,
+      trophies: 1,
       completedPets: 1,
     });
     expect(snapshot.petId).toBe('sprout-puff');
-    expect(snapshot.earnedBadges).toBe(50);
+    expect(snapshot.earnedBadges).toBe(1);
   });
   it('records independent clipped deltas and protects rewards after an intermediate reset', () => {
     const s = student();
@@ -103,7 +98,7 @@ describe('养成轮次业务不变量', () => {
     resetPetCycle(s);
     s.petId = 'sprout-puff';
     applyPetScore(s, 22, rules);
-    expect(s.trophies).toBe(3);
+    expect(s.trophies).toBe(0);
     expect(s.completedPets).toBe(0);
   });
   it('does not complete unbound pets and cancels pending completion on deduction', () => {
@@ -131,12 +126,12 @@ describe('养成轮次业务不变量', () => {
     expect(a.id).not.toBe(b.id);
     expect(s).toMatchObject({
       completedPets: 2,
-      trophies: 100,
+      trophies: 2,
       score: 200,
       petExperience: 0,
     });
-    expect(a.earnedBadges).toBe(50);
-    expect(b.earnedBadges).toBe(50);
+    expect(a.earnedBadges).toBe(1);
+    expect(b.earnedBadges).toBe(1);
   });
   it('uses strictly increasing and consistent threshold boundaries at every supported scale', () => {
     for (let levels = 2; levels <= 10; levels++)
@@ -150,14 +145,24 @@ describe('养成轮次业务不变量', () => {
         });
       }
   });
-  it('keeps the fifty-badge cycle budget when the teacher changes the level count mid-cycle', () => {
+  it('uses the current configured completion reward and preserves manual and legacy badges', () => {
     const s = student();
-    applyPetScore(s, 10, { maxLevel: 2, finalEnergy: 10, version: 1 });
-    expect(s.trophies).toBe(50);
-    const next = { maxLevel: 10, finalEnergy: 200, version: 2 };
-    calibratePet(s, next);
-    applyPetScore(s, 190, next);
-    expect(s.trophies).toBe(50);
-    expect(s.rewardGrants.reduce((sum, g) => sum + g.amount, 0)).toBe(50);
+    s.trophies = 7;
+    s.rewardGrants = [
+      { level: 2, amount: 3, grantedAt: 'legacy', rulesVersion: 1 },
+    ];
+    applyPetScore(s, 100, rules);
+    expect(s.trophies).toBe(7);
+    const snapshot = finishPetCycle(
+      s,
+      { ...rules, completionBadges: 4 },
+      'teacher',
+    );
+    expect(s.trophies).toBe(11);
+    expect(snapshot.earnedBadges).toBe(7);
+    s.petId = 'sprout-puff';
+    applyPetScore(s, 100, rules);
+    finishPetCycle(s, { ...rules, completionBadges: 0 }, 'teacher');
+    expect(s.trophies).toBe(11);
   });
 });

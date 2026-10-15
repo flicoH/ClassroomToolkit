@@ -33,7 +33,7 @@ function setup() {
   });
   let state = {
     students: [initial('one'), initial('two')],
-    rules: { maxLevel: 10, finalEnergy: 100, version: 1 },
+    rules: { maxLevel: 10, finalEnergy: 100, version: 1, completionBadges: 1 },
     records: [] as EvaluationRecord[],
     completed: [] as CompletedPet[],
     rubrics: [
@@ -85,7 +85,8 @@ function setup() {
       maxLevel: number,
       finalEnergy: number,
       version: number,
-    ) => (state.rules = { maxLevel, finalEnergy, version }),
+      completionBadges = 1,
+    ) => (state.rules = { maxLevel, finalEnergy, version, completionBadges }),
     findStudents: async () => structuredClone(state.students),
     findStudentById: async (id: string) =>
       structuredClone(state.students.find((student) => student.id === id)),
@@ -185,6 +186,83 @@ function setup() {
 }
 
 describe('PetPointsService transactional workflows', () => {
+  it('keeps half badges through manual changes, scoring, completion and retry', async () => {
+    const t = setup();
+    await t.service.adjustTrophies('one', { ...t.meta(), delta: 0.5 });
+    expect(t.state().students[0]!.trophies).toBe(0.5);
+    await expect(
+      t.service.adjustTrophies('one', { ...t.meta(), delta: -1 }),
+    ).rejects.toThrow();
+    await expect(
+      t.service.adjustTrophies('one', { ...t.meta(), delta: 0.25 }),
+    ).rejects.toThrow();
+    await t.service.updateSettings({
+      ...t.meta(),
+      expectedVersion: 1,
+      completionBadges: 0.5,
+    });
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 100,
+      label: '满级',
+    });
+    expect(t.state().students[0]!.trophies).toBe(0.5);
+    const dto = t.meta();
+    await t.service.completePet('one', dto);
+    await t.service.completePet('one', dto);
+    expect(t.state().students[0]!.trophies).toBe(1);
+    expect(t.state().completed[0]!.earnedBadges).toBe(0.5);
+    await t.service.adjustTrophies('one', { ...t.meta(), delta: -0.5 });
+    expect(t.state().students[0]!.trophies).toBe(0.5);
+  });
+
+  it('rolls back completion badges if saving the archive fails', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 100,
+      label: '满级',
+    });
+    const before = structuredClone(t.state());
+    t.fail();
+    await expect(t.service.completePet('one', t.meta())).rejects.toThrow(
+      '档案失败',
+    );
+    expect(t.state()).toEqual(before);
+  });
+  it('configures completion badges without issuing retroactive grants and validates quantities', async () => {
+    const t = setup();
+    for (const completionBadges of [-1, 1.25, 10001]) {
+      await expect(
+        t.service.updateSettings({
+          ...t.meta(),
+          expectedVersion: 1,
+          completionBadges,
+        }),
+      ).rejects.toThrow();
+    }
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 100,
+      label: '满级',
+    });
+    expect(t.state().students[0]!.trophies).toBe(0);
+    await t.service.updateSettings({
+      ...t.meta(),
+      expectedVersion: 1,
+      completionBadges: 5,
+    });
+    expect(t.state().students[0]!.trophies).toBe(0);
+    const dto = t.meta();
+    await t.service.completePet('one', dto);
+    await t.service.completePet('one', dto);
+    expect(t.state().students[0]!.trophies).toBe(5);
+    expect(t.state().completed).toHaveLength(1);
+  });
+
   it('deletes rewards idempotently, keeps history and never recreates deleted defaults', async () => {
     const t = setup();
     t.state().students[0]!.score = 5;
@@ -281,7 +359,7 @@ describe('PetPointsService transactional workflows', () => {
     await t.service.adjustScore(dto);
     await t.service.adjustScore(dto);
     expect(t.state().records).toHaveLength(1);
-    expect(t.state().students[0]!.trophies).toBe(3);
+    expect(t.state().students[0]!.trophies).toBe(0);
     await expect(
       t.service.adjustScore({ ...dto, operationId: 'other-operation' }),
     ).rejects.toThrow('数据已更新');
@@ -317,7 +395,7 @@ describe('PetPointsService transactional workflows', () => {
       completedPets: 1,
       petExperience: 2,
       score: 102,
-      trophies: 50,
+      trophies: 1,
       petId: null,
     });
     const snapshot = structuredClone(t.state().completed[0]);
@@ -355,7 +433,9 @@ describe('PetPointsService transactional workflows', () => {
       delta: 22,
       label: '重升',
     });
-    expect(t.state().students[0]!.trophies).toBe(3);
+    expect(t.state().students[0]!.trophies).toBe(0);
+    for (let i = 0; i < 3; i++)
+      await t.service.adjustTrophies('one', { ...t.meta(), delta: 1 });
     await t.service.setAbsence('one', { ...t.meta(), absent: true });
     await t.service.adjustTrophies('one', { ...t.meta(), delta: -1 });
     expect((await t.service.overview()).students[0]).toMatchObject({
@@ -441,7 +521,7 @@ describe('PetPointsService transactional workflows', () => {
       expectedVersion: 1,
     });
     expect(t.state().completed[0]).toEqual(snapshot);
-    expect(t.state().students[0]!.trophies).toBe(50);
+    expect(t.state().students[0]!.trophies).toBe(1);
   });
   it('rejects invalid rubric, reward, pet, note and unprovable historical rollback inputs', async () => {
     const t = setup();

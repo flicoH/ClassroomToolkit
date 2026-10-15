@@ -50,6 +50,16 @@ function integer(value: number, min: number, max: number) {
   if (!Number.isInteger(value) || value < min || value > max)
     throw new BadRequestException(`数值须为 ${min} 到 ${max} 的整数`);
 }
+/** Half badges are exactly representable; reject other fractions and non-finite input. */
+function badgeAmount(value: number, max: number) {
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isInteger(value * 2)
+  )
+    throw new BadRequestException(`徽章须为0到${max}之间的0.5倍数`);
+}
 function text(value: unknown, max: number) {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max)
     throw new BadRequestException(`文字不能为空，最多 ${max} 个字符`);
@@ -112,7 +122,7 @@ export class PetPointsService {
       settings: {
         ...settings,
         thresholds: petThresholds(settings.maxLevel, settings.finalEnergy),
-        rewards: petRewards(settings.maxLevel),
+        rewards: petRewards(settings.maxLevel, settings.completionBadges),
       },
       rubrics: await this.database.findRubrics(),
       rewards: (await this.database.findRewards()).filter(
@@ -292,7 +302,7 @@ export class PetPointsService {
           const changes = applyPetScore(student, item.delta, rules);
           integer(student.score, 0, 2147483647);
           integer(student.petExperience, 0, 2147483647);
-          integer(student.trophies, 0, 2147483647);
+          badgeAmount(student.trophies, 2147483647);
           await db.createRecord({
             id: createEntityId('record'),
             studentId: student.id,
@@ -374,11 +384,11 @@ export class PetPointsService {
   }
 
   async adjustTrophies(id: string, dto: PetWriteDto & { delta: number }) {
-    if (dto.delta !== 1 && dto.delta !== -1)
-      throw new BadRequestException('徽章每次调整1枚');
+    if (![0.5, -0.5, 1, -1].includes(dto.delta))
+      throw new BadRequestException('徽章每次调整0.5或1枚');
     return this.write(`trophies:${id}`, dto, async (db) => {
       const student = await this.student(db, id, dto);
-      integer(student.trophies + dto.delta, 0, 2147483647);
+      badgeAmount(student.trophies + dto.delta, 2147483647);
       student.trophies += dto.delta;
       student.revision++;
       return db.updateStudent(id, student);
@@ -392,12 +402,16 @@ export class PetPointsService {
         throw new ConflictException('等级规则已更新，请刷新');
       const maxLevel = dto.maxLevel ?? current.maxLevel,
         finalEnergy = dto.finalEnergy ?? current.finalEnergy;
+      const completionBadges =
+        dto.completionBadges ?? current.completionBadges ?? 1;
+      badgeAmount(completionBadges, 10000);
       integer(maxLevel, 2, 10);
       integer(finalEnergy, maxLevel - 1, 100000);
       const rules = await db.setSettings(
         maxLevel,
         finalEnergy,
         current.version + 1,
+        completionBadges,
       );
       for (const student of await db.findStudents()) {
         calibratePet(student, rules);
