@@ -1,409 +1,522 @@
 import { PetPointsService } from './pet-points.service';
+import type {
+  CompletedPet,
+  EvaluationRecord,
+  StudentPet,
+} from './pet-points.types';
 
-describe('PetPointsService', () => {
-  it('creates server-side default rubrics and rewards for a teacher without configuration', async () => {
-    const database = {
-      findRubrics: jest.fn().mockResolvedValue([]),
-      findRewards: jest.fn().mockResolvedValue([]),
-      findStudents: jest.fn().mockResolvedValue([]),
-      findRecords: jest.fn().mockResolvedValue([]),
-      findRedemptions: jest.fn().mockResolvedValue([]),
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      createRubric: jest.fn().mockImplementation(async (rubric) => rubric),
-      createReward: jest.fn().mockImplementation(async (reward) => reward),
-    };
-    const service = new PetPointsService(database as never);
-
-    const overview = await service.overview();
-
-    expect(overview.rubrics).toHaveLength(7);
-    expect(overview.rewards).toHaveLength(4);
-    expect(database.createRubric).toHaveBeenCalledWith(
-      expect.objectContaining({ category: '课堂表现', label: '积极发言' }),
-    );
-    expect(database.createRubric).toHaveBeenCalledWith(
-      expect.objectContaining({ category: '纪律常规', label: '迟到早退' }),
-    );
+function setup() {
+  const initial = (id: string): StudentPet => ({
+    id,
+    name: id,
+    studentNo: id,
+    classId: 'class',
+    className: '测试班',
+    group: '一组',
+    score: 0,
+    maxScore: 30,
+    trophies: 0,
+    level: 1,
+    stage: '初始形态',
+    petId: 'sprout-puff',
+    petProgress: 0,
+    petExperience: 0,
+    petHatched: false,
+    absent: false,
+    completedPets: 0,
+    cycleId: `cycle-${id}`,
+    revision: 0,
+    completionPending: false,
+    cycleRulesVersion: 1,
+    rewardGrants: [],
+    rewardProtection: [],
   });
-
-  it('updates a teacher rubric category and score on the server', async () => {
-    const rubric = {
-      id: 'rubric-1',
-      category: '课堂表现' as const,
-      label: '认真听讲',
-      score: 1,
-      enabled: true,
-    };
-    const database = {
-      findRubricById: jest.fn().mockResolvedValue(rubric),
-      updateRubric: jest.fn().mockImplementation(async (_rubricId, patch) => ({
-        ...rubric,
-        ...patch,
-      })),
-    };
-    const service = new PetPointsService(database as never);
-
-    await service.updateRubric('rubric-1', {
-      category: '品德修养',
-      label: ' 主动帮助同学 ',
-      score: 20,
-    });
-
-    expect(database.updateRubric).toHaveBeenCalledWith(
-      'rubric-1',
-      expect.objectContaining({
-        category: '品德修养',
-        label: '主动帮助同学',
-        score: 10,
-      }),
-    );
+  let state = {
+    students: [initial('one'), initial('two')],
+    rules: { maxLevel: 10, finalEnergy: 100, version: 1 },
+    records: [] as EvaluationRecord[],
+    completed: [] as CompletedPet[],
+    rubrics: [
+      {
+        id: 'r1',
+        category: '课堂表现',
+        label: '发言',
+        score: 2,
+        enabled: true,
+      },
+      {
+        id: 'r2',
+        category: '课堂表现',
+        label: '听讲',
+        score: 1,
+        enabled: true,
+      },
+    ],
+    rewards: [{ id: 'gift', name: '贴纸', cost: 1, stock: 1, enabled: true }],
+    redemptions: [] as unknown[],
+  };
+  const operations = new Map<string, { payload: string; result: unknown }>();
+  let failed = false;
+  const db = {
+    teacherId: 'teacher',
+    write: jest.fn(async (operation, work) => {
+      const prior = operation && operations.get(operation.operationId);
+      if (prior) {
+        if (prior.payload !== JSON.stringify(operation.payload))
+          throw new Error('操作编号已用于其他请求');
+        return structuredClone(prior.result);
+      }
+      const before = structuredClone(state);
+      try {
+        const result = await work(db);
+        if (operation)
+          operations.set(operation.operationId, {
+            payload: JSON.stringify(operation.payload),
+            result: structuredClone(result),
+          });
+        return result;
+      } catch (error) {
+        state = before;
+        throw error;
+      }
+    }),
+    getSettings: async () => ({ ...state.rules }),
+    setSettings: async (
+      maxLevel: number,
+      finalEnergy: number,
+      version: number,
+    ) => (state.rules = { maxLevel, finalEnergy, version }),
+    findStudents: async () => structuredClone(state.students),
+    findStudentById: async (id: string) =>
+      structuredClone(state.students.find((student) => student.id === id)),
+    updateStudent: jest.fn(async (id: string, patch: Partial<StudentPet>) => {
+      const s = state.students.find((student) => student.id === id)!;
+      Object.assign(s, patch);
+      return structuredClone(s);
+    }),
+    findStudentForSync: async (id: string) =>
+      structuredClone(state.students.find((student) => student.id === id)),
+    canonicalClass: jest.fn(async (id: string) => {
+      if (id !== 'class') throw new Error('班级不存在');
+      return {
+        className: '规范班级',
+        students: state.students.map((s) => ({
+          id: s.id,
+          name: s.name,
+          studentNo: s.studentNo,
+          group: s.group,
+        })),
+      };
+    }),
+    saveStudent: async (s: StudentPet) => {
+      const i = state.students.findIndex((item) => item.id === s.id);
+      state.students[i] = structuredClone(s);
+      return s;
+    },
+    deleteClassStudentsExcept: jest.fn(async () => undefined),
+    findRubrics: async () => state.rubrics,
+    findRubricById: async (id: string) =>
+      state.rubrics.find((item) => item.id === id),
+    createRubric: async (value: (typeof state.rubrics)[number]) => {
+      state.rubrics.push(value);
+      return value;
+    },
+    updateRubric: async (
+      id: string,
+      patch: Partial<(typeof state.rubrics)[number]>,
+    ) =>
+      Object.assign(
+        state.rubrics.find((r) => r.id === id)!,
+        Object.fromEntries(
+          Object.entries(patch).filter(([, v]) => v !== undefined),
+        ),
+      ),
+    createRecord: async (record: EvaluationRecord) => {
+      if (failed && state.records.length === 1)
+        throw new Error('第二条记录失败');
+      state.records.push(record);
+      return record;
+    },
+    findRecordById: async (id: string) =>
+      state.records.find((record) => record.id === id),
+    deleteRecord: async (id: string) => {
+      state.records = state.records.filter((record) => record.id !== id);
+    },
+    findRecords: async () => state.records,
+    saveCompleted: async (snapshot: CompletedPet) => {
+      if (failed) throw new Error('档案失败');
+      state.completed.push(snapshot);
+    },
+    findCompleted: async () => state.completed,
+    findRewards: async () => state.rewards,
+    findRewardById: async (id: string) =>
+      state.rewards.find((reward) => reward.id === id),
+    createReward: async (value: (typeof state.rewards)[number]) => {
+      state.rewards.push(value);
+      return value;
+    },
+    updateReward: async (
+      id: string,
+      patch: Partial<(typeof state.rewards)[number]>,
+    ) => Object.assign(state.rewards.find((r) => r.id === id)!, patch),
+    createRedemption: async (record: unknown) => {
+      if (failed) throw new Error('兑换记录失败');
+      state.redemptions.push(record);
+      return record;
+    },
+    findRedemptions: async () => state.redemptions,
+  };
+  let n = 0;
+  const meta = () => ({
+    operationId: `test-operation-${++n}`,
+    revisions: Object.fromEntries(
+      state.students.map((s) => [s.id, s.revision]),
+    ),
   });
+  return {
+    service: new PetPointsService(db as never),
+    db,
+    state: () => state,
+    meta,
+    fail: () => {
+      failed = true;
+    },
+  };
+}
 
-  it('syncs classroom students into pet points while preserving existing score state', async () => {
-    const existing = {
-      id: '2026001',
-      name: '旧姓名',
-      studentNo: '2026001',
-      classId: 'old-class',
-      className: '旧班级',
-      group: '旧组',
-      score: 12,
-      maxScore: 30,
-      trophies: 1,
-      level: 2,
-      stage: '成长形态' as const,
-      petProgress: 10,
-      petHatched: true,
-      absent: false,
-      completedPets: 0,
-    };
-    const database = {
-      deleteClassStudentsExcept: jest.fn().mockResolvedValue(undefined),
-      findStudentForSync: jest.fn().mockResolvedValue(existing),
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      saveStudent: jest.fn().mockImplementation(async (student) => student),
-    };
-    const service = new PetPointsService(database as never);
-
-    const synced = await service.syncClassStudents({
-      classId: 'grade-1',
-      className: '一年级',
-      students: [
-        {
-          id: 'class-1:2026001',
-          name: '周杰伦',
-          studentNo: '2026001',
-          group: '一组',
-        },
-      ],
-    });
-
-    expect(database.findStudentForSync).toHaveBeenCalledWith(
-      'class-1:2026001',
-      '2026001',
-      'grade-1',
-    );
-    expect(database.saveStudent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'class-1:2026001',
-        name: '周杰伦',
-        classId: 'grade-1',
-        className: '一年级',
-        group: '一组',
-        score: 12,
-        petProgress: 10,
-      }),
-    );
-    expect(database.deleteClassStudentsExcept).toHaveBeenCalledWith('grade-1', [
-      'class-1:2026001',
-    ]);
-    expect(synced[0].score).toBe(12);
-  });
-
-  it('saves the teacher final ability and recalculates existing pets', async () => {
-    const database = {
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      setSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 4, finalEnergy: 90 }),
-      findStudents: jest
-        .fn()
-        .mockResolvedValue([{ id: 'student-1', score: 120, petProgress: 120 }]),
-      updateStudent: jest.fn().mockResolvedValue({}),
-    };
-    const service = new PetPointsService(database as never);
+describe('PetPointsService transactional workflows', () => {
+  it('deletes rewards idempotently, keeps history and never recreates deleted defaults', async () => {
+    const t = setup();
+    t.state().students[0]!.score = 5;
+    await t.service.redeem({ ...t.meta(), studentId: 'one', rewardId: 'gift' });
+    const before = structuredClone(t.state().redemptions);
+    expect(before).toHaveLength(1);
+    const dto = t.meta();
+    await t.service.deleteReward('gift', dto);
+    await t.service.deleteReward('gift', dto);
+    expect(t.state().rewards[0]!.enabled).toBe(false);
+    expect((await t.service.overview()).rewards).toEqual([]);
+    expect((await t.service.overview()).rewards).toEqual([]);
+    expect(t.state().redemptions).toEqual(before);
     await expect(
-      service.updateSettings({ maxLevel: 4, finalEnergy: 90 }),
-    ).resolves.toEqual({
+      t.service.addRewardStock('gift', { ...t.meta(), quantity: 1 }),
+    ).rejects.toThrow();
+    await expect(
+      t.service.redeem({ ...t.meta(), studentId: 'one', rewardId: 'gift' }),
+    ).rejects.toThrow();
+    await expect(t.service.deleteReward('foreign', t.meta())).rejects.toThrow(
+      '奖品不存在',
+    );
+  });
+  it('adds stock once per operation and rejects foreign rewards, invalid quantities and overflow', async () => {
+    const t = setup();
+    const dto = { ...t.meta(), quantity: 3 };
+    await t.service.addRewardStock('gift', dto);
+    await t.service.addRewardStock('gift', dto);
+    expect(t.state().rewards[0]!.stock).toBe(4);
+    for (const quantity of [0, -1, 1.5, 2147483648]) {
+      await expect(
+        t.service.addRewardStock('gift', { ...t.meta(), quantity }),
+      ).rejects.toThrow();
+    }
+    await expect(
+      t.service.addRewardStock('foreign', { ...t.meta(), quantity: 1 }),
+    ).rejects.toThrow('奖品不存在');
+    t.state().rewards[0]!.stock = 2147483647;
+    await expect(
+      t.service.addRewardStock('gift', { ...t.meta(), quantity: 1 }),
+    ).rejects.toThrow();
+    expect(t.state().rewards[0]!.stock).toBe(2147483647);
+  });
+  it('ignores filtered, empty and forged client rosters while preserving all student state', async () => {
+    const t = setup();
+    t.state().students[1]!.score = 44;
+    const result = await t.service.syncClassStudents({
+      classId: 'class',
+      className: '伪造',
+      students: [],
+    });
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({ score: 44, className: '规范班级' });
+    expect(t.db.deleteClassStudentsExcept).toHaveBeenCalledWith('class', [
+      'one',
+      'two',
+    ]);
+    await expect(
+      t.service.syncClassStudents({ classId: 'other' }),
+    ).rejects.toThrow('班级不存在');
+  });
+  it('rolls back every student and reward when a later record fails', async () => {
+    const t = setup();
+    t.fail();
+    const before = structuredClone(t.state());
+    await expect(
+      t.service.evaluate(
+        { ...t.meta(), studentIds: ['one', 'two'], rubricIds: ['r1', 'r2'] },
+        false,
+      ),
+    ).rejects.toThrow('第二条记录失败');
+    expect(t.state()).toEqual(before);
+  });
+  it('processes indicators in chosen order, stores clipped deltas and safely undoes them', async () => {
+    const t = setup();
+    t.state().students[0]!.score = 1;
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: -2,
+      label: '扣分',
+    });
+    expect(t.state().records[0]).toMatchObject({
+      delta: -2,
+      scoreDelta: -1,
+      petExperienceDelta: 0,
+    });
+    await t.service.deleteRecord(t.state().records[0]!.id, t.meta());
+    expect(t.state().students[0]).toMatchObject({ score: 1, petExperience: 0 });
+  });
+  it('retries the same operation once and rejects stale revisions, missing metadata and inaccessible students', async () => {
+    const t = setup();
+    const dto = { ...t.meta(), studentIds: ['one'], delta: 22, label: '加分' };
+    await t.service.adjustScore(dto);
+    await t.service.adjustScore(dto);
+    expect(t.state().records).toHaveLength(1);
+    expect(t.state().students[0]!.trophies).toBe(3);
+    await expect(
+      t.service.adjustScore({ ...dto, operationId: 'other-operation' }),
+    ).rejects.toThrow('数据已更新');
+    await expect(
+      t.service.adjustScore({
+        studentIds: ['one'],
+        delta: 2,
+        label: '旧客户端',
+      } as never),
+    ).rejects.toThrow('客户端版本');
+    await expect(
+      t.service.adjustScore({
+        ...t.meta(),
+        studentIds: ['other'],
+        delta: 2,
+        label: '越权',
+      }),
+    ).rejects.toThrow('不存在');
+  });
+  it('completes once, retains history in both views and scores the next cycle without mutating it', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 102,
+      label: '满级',
+    });
+    const dto = t.meta();
+    await t.service.completePet('one', dto);
+    await t.service.completePet('one', dto);
+    expect(t.state().completed).toHaveLength(1);
+    expect(t.state().students[0]).toMatchObject({
+      completedPets: 1,
+      petExperience: 2,
+      score: 102,
+      trophies: 50,
+      petId: null,
+    });
+    const snapshot = structuredClone(t.state().completed[0]);
+    await t.service.bindPet('one', {
+      ...t.meta(),
+      petId: 'cloud-bear',
+      petName: '新宠',
+    });
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 20,
+      label: '新轮',
+    });
+    const oldRecord = t.state().records[0]!;
+    await t.service.deleteRecord(oldRecord.id, t.meta());
+    expect(t.state().students[0]!.petExperience).toBe(22);
+    expect(t.state().completed[0]).toEqual(snapshot);
+  });
+  it('preserves energy on switching, protects reset rewards, persists absence and badge adjustments', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 22,
+      label: '升级',
+    });
+    await t.service.bindPet('one', { ...t.meta(), petId: 'cloud-bear' });
+    expect(t.state().students[0]!.petProgress).toBe(22);
+    await t.service.resetPet('one', t.meta());
+    await t.service.bindPet('one', { ...t.meta(), petId: 'sprout-puff' });
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 22,
+      label: '重升',
+    });
+    expect(t.state().students[0]!.trophies).toBe(3);
+    await t.service.setAbsence('one', { ...t.meta(), absent: true });
+    await t.service.adjustTrophies('one', { ...t.meta(), delta: -1 });
+    expect((await t.service.overview()).students[0]).toMatchObject({
+      absent: true,
+      trophies: 2,
+    });
+  });
+  it('ordinary batch excludes absent students while advanced evaluation includes them explicitly', async () => {
+    const t = setup();
+    t.state().students[1]!.absent = true;
+    const result = await t.service.evaluate(
+      { ...t.meta(), studentIds: ['one', 'two'], rubricIds: ['r1', 'r2'] },
+      true,
+    );
+    expect(result.skippedIds).toEqual(['two']);
+    expect(t.state().students.map((s) => s.score)).toEqual([3, 0]);
+    await t.service.evaluate(
+      { ...t.meta(), studentIds: ['two'], rubricIds: ['r2', 'r1'] },
+      false,
+    );
+    expect(t.state().students[1]!.score).toBe(3);
+    await expect(
+      t.service.evaluate(
+        { ...t.meta(), studentIds: ['two'], rubricIds: ['r1'] },
+        true,
+      ),
+    ).rejects.toThrow('没有可评分');
+  });
+  it('redeems balance without regressing pets and rolls back stock on failure', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 45,
+      label: '成长',
+    });
+    const before = structuredClone(t.state().students[0]);
+    t.fail();
+    await expect(
+      t.service.redeem({ ...t.meta(), studentId: 'one', rewardId: 'gift' }),
+    ).rejects.toThrow('兑换记录失败');
+    expect(t.state().students[0]).toEqual(before);
+    expect(t.state().rewards[0]!.stock).toBe(1);
+    const success = setup();
+    await success.service.adjustScore({
+      ...success.meta(),
+      studentIds: ['one'],
+      delta: 45,
+      label: '成长',
+    });
+    await success.service.redeem({
+      ...success.meta(),
+      studentId: 'one',
+      rewardId: 'gift',
+    });
+    expect(success.state().students[0]).toMatchObject({
+      score: 44,
+      petExperience: 45,
+      level: 5,
+    });
+    await expect(
+      success.service.redeem({
+        ...success.meta(),
+        studentId: 'one',
+        rewardId: 'gift',
+      }),
+    ).rejects.toThrow('库存不足');
+  });
+  it('does not generate historical rewards on settings changes or rewrite completed snapshots', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 102,
+      label: '满级',
+    });
+    await t.service.completePet('one', t.meta());
+    const snapshot = structuredClone(t.state().completed[0]);
+    await t.service.updateSettings({
+      ...t.meta(),
       maxLevel: 4,
       finalEnergy: 90,
+      expectedVersion: 1,
     });
-    expect(database.setSettings).toHaveBeenCalledWith(4, 90);
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      'student-1',
-      expect.objectContaining({
-        petProgress: 90,
-        level: 4,
-        stage: '终极形态',
-      }),
-    );
+    expect(t.state().completed[0]).toEqual(snapshot);
+    expect(t.state().students[0]!.trophies).toBe(50);
   });
-
-  it('binds a pet at the level and form earned by current classroom points', async () => {
-    const database = {
-      findStudentById: jest
-        .fn()
-        .mockResolvedValue({ id: 'student-1', score: 42, petProgress: 0 }),
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      updateStudent: jest.fn().mockResolvedValue({ id: 'student-1' }),
-    };
-    const service = new PetPointsService(database as never);
-
-    await service.bindPet('student-1', { petId: 'sprout-puff' });
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      'student-1',
-      expect.objectContaining({
-        petId: 'sprout-puff',
-        petProgress: 0,
-        level: 2,
-        stage: '第2形态',
-        petHatched: true,
+  it('rejects invalid rubric, reward, pet, note and unprovable historical rollback inputs', async () => {
+    const t = setup();
+    await expect(
+      t.service.createRubric({
+        ...t.meta(),
+        category: '课堂表现',
+        label: '测试',
+        score: 11,
       }),
-    );
-  });
-
-  it('adjusts scores in the backend and writes evaluation records', async () => {
-    const student = {
-      id: '2026001',
-      name: '周杰伦',
-      studentNo: '2026001',
-      classId: 'grade-1',
-      className: '一年级',
-      group: '一组',
-      score: 3,
-      maxScore: 30,
-      trophies: 0,
-      level: 1,
-      stage: '初始形态' as const,
-      petId: 'sprout-puff',
-      petProgress: 0,
-      petHatched: false,
-      absent: false,
-      completedPets: 0,
-    };
-    const database = {
-      findStudentById: jest.fn().mockResolvedValue(student),
-      updateStudent: jest
-        .fn()
-        .mockImplementation(async (_studentId, patch) => ({
-          ...student,
-          ...patch,
-        })),
-      createRecord: jest.fn().mockImplementation(async (record) => record),
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-    };
-    const service = new PetPointsService(database as never);
-
-    const changed = await service.adjustScore({
-      studentIds: ['2026001'],
-      delta: 5,
-      label: '积极发言',
-      category: '课堂表现',
-      note: '举手回答',
-    });
-
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      '2026001',
-      expect.objectContaining({
-        score: 8,
-        petProgress: 5,
-        petHatched: false,
+    ).rejects.toThrow();
+    await expect(
+      t.service.createReward({ ...t.meta(), name: '', cost: 1, stock: 1 }),
+    ).rejects.toThrow();
+    await expect(
+      t.service.bindPet('one', { ...t.meta(), petId: 'fake' }),
+    ).rejects.toThrow();
+    await expect(
+      t.service.adjustScore({
+        ...t.meta(),
+        studentIds: ['one'],
+        delta: 1,
+        label: '长备注',
+        note: 'a'.repeat(61),
       }),
-    );
-    expect(database.createRecord).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: expect.stringMatching(/^record-/),
-        studentId: '2026001',
-        label: '积极发言',
-        delta: 5,
-        petDelta: 5,
-        note: '举手回答',
-      }),
-    );
-    expect(changed[0].score).toBe(8);
-  });
-
-  it('caps final growth at 200 and records only the growth actually earned', async () => {
-    const student = {
-      id: 'student-1',
-      score: 30,
-      petId: 'sprout-puff',
-      petProgress: 195,
-    };
-    const database = {
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      findStudentById: jest.fn().mockResolvedValue(student),
-      updateStudent: jest
-        .fn()
-        .mockImplementation(async (_id, patch) => ({ ...student, ...patch })),
-      createRecord: jest.fn().mockResolvedValue({}),
-    };
-    const service = new PetPointsService(database as never);
-    await service.adjustScore({
-      studentIds: ['student-1'],
-      delta: 10,
-      label: '表现优秀',
-    });
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      'student-1',
-      expect.objectContaining({
-        petProgress: 200,
-        level: 2,
-      }),
-    );
-    expect(database.createRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ petDelta: 5 }),
-    );
-  });
-
-  it('derives level and form from classroom points when energy ranks differently', async () => {
-    const student = {
-      id: 'student-1',
-      score: 135,
-      petId: 'sprout-puff',
-      petProgress: 125,
-    };
-    const database = {
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      findStudentById: jest.fn().mockResolvedValue(student),
-      updateStudent: jest
-        .fn()
-        .mockImplementation(async (_id, patch) => ({ ...student, ...patch })),
-      createRecord: jest.fn().mockResolvedValue({}),
-    };
-    const service = new PetPointsService(database as never);
-
-    await service.adjustScore({
-      studentIds: ['student-1'],
-      delta: 0,
-      label: '积分等级校准',
-    });
-
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      'student-1',
-      expect.objectContaining({
-        score: 135,
-        petProgress: 125,
-        level: 7,
-        stage: '第7形态',
-        petHatched: true,
-      }),
-    );
-  });
-
-  it('regresses level and form when a classroom point deduction crosses a threshold', async () => {
-    const student = {
-      id: 'student-1',
-      score: 135,
-      petId: 'sprout-puff',
-      petProgress: 125,
-    };
-    const database = {
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-      findStudentById: jest.fn().mockResolvedValue(student),
-      updateStudent: jest
-        .fn()
-        .mockImplementation(async (_id, patch) => ({ ...student, ...patch })),
-      createRecord: jest.fn().mockResolvedValue({}),
-    };
-    const service = new PetPointsService(database as never);
-
-    await service.adjustScore({
-      studentIds: ['student-1'],
+    ).rejects.toThrow();
+    t.state().records.push({
+      id: 'old',
+      studentId: 'one',
+      label: '旧',
       delta: -2,
-      label: '扣分回退',
-    });
-
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      'student-1',
-      expect.objectContaining({
-        score: 133,
-        petProgress: 125,
-        level: 6,
-        stage: '第6形态',
-        petHatched: true,
-      }),
-    );
-  });
-
-  it('deletes evaluation records through the backend and rolls student scores back', async () => {
-    const student = {
-      id: '2026001',
-      name: '周杰伦',
-      studentNo: '2026001',
-      classId: 'grade-1',
-      className: '一年级',
-      group: '一组',
-      score: 8,
-      maxScore: 30,
-      trophies: 0,
-      level: 1,
-      stage: '初始形态' as const,
-      petProgress: 5,
-      petHatched: true,
-      absent: false,
-      completedPets: 0,
-    };
-    const record = {
-      id: 'record-1',
-      studentId: '2026001',
-      category: '手动调整' as const,
-      label: 'Codex自动测试加分',
-      delta: 5,
-      petDelta: 5,
+      category: '手动调整',
       note: '',
       createdAt: new Date().toISOString(),
-    };
-    const database = {
-      findRecordById: jest.fn().mockResolvedValue(record),
-      findStudentById: jest.fn().mockResolvedValue(student),
-      updateStudent: jest
-        .fn()
-        .mockResolvedValue({ ...student, score: 3, petProgress: 0 }),
-      deleteRecord: jest.fn().mockResolvedValue(true),
-      getSettings: jest
-        .fn()
-        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200 }),
-    };
-    const service = new PetPointsService(database as never);
-
-    await expect(service.deleteRecord('record-1')).resolves.toEqual({
-      deleted: true,
     });
-    expect(database.updateStudent).toHaveBeenCalledWith(
-      '2026001',
-      expect.objectContaining({
-        score: 3,
-        petProgress: 0,
-        petHatched: false,
-      }),
+    await expect(t.service.deleteRecord('old', t.meta())).rejects.toThrow(
+      '缺少实际变化证据',
     );
-    expect(database.deleteRecord).toHaveBeenCalledWith('record-1');
+  });
+  it('rechecks absence before validating the stale revision of a skipped ordinary-batch student', async () => {
+    const t = setup();
+    const dto = { ...t.meta(), studentIds: ['one', 'two'], rubricIds: ['r1'] };
+    await t.service.setAbsence('two', { ...t.meta(), absent: true });
+    const result = await t.service.evaluate(dto, true);
+    expect(result.processedIds).toEqual(['one']);
+    expect(result.skippedIds).toEqual(['two']);
+  });
+  it('clips each indicator in its chosen order instead of merging the net request', async () => {
+    const forward = setup();
+    forward.state().rubrics[0]!.score = -2;
+    forward.state().rubrics[1]!.score = 3;
+    await forward.service.evaluate(
+      { ...forward.meta(), studentIds: ['one'], rubricIds: ['r1', 'r2'] },
+      false,
+    );
+    expect(forward.state().students[0]).toMatchObject({
+      score: 3,
+      petExperience: 3,
+    });
+    expect(forward.state().records.map((record) => record.scoreDelta)).toEqual([
+      0, 3,
+    ]);
+    const reverse = setup();
+    reverse.state().rubrics[0]!.score = -2;
+    reverse.state().rubrics[1]!.score = 3;
+    await reverse.service.evaluate(
+      { ...reverse.meta(), studentIds: ['one'], rubricIds: ['r2', 'r1'] },
+      false,
+    );
+    expect(reverse.state().students[0]).toMatchObject({
+      score: 1,
+      petExperience: 1,
+    });
+    expect(reverse.state().records.map((record) => record.scoreDelta)).toEqual([
+      3, -2,
+    ]);
   });
 });

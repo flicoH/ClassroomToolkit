@@ -51,8 +51,8 @@ describe('pet state and history persistence', () => {
         state = structuredClone(value);
         return value;
       }),
-      delete: jest.fn(async () => {
-        state = undefined;
+      update: jest.fn(async (_where, patch) => {
+        Object.assign(state!, patch);
       }),
     };
     const manager = {
@@ -144,7 +144,7 @@ describe('pet state and history persistence', () => {
     expect(next.observations()).toEqual([
       expect.objectContaining({ pet: null, studentId: 'teacher:one' }),
     ]);
-    expect(next.state()).toBeUndefined();
+    expect(next.state()?.rosterActive).toBe(false);
     expect(next.students.find).toHaveBeenCalledWith({
       where: { teacherId: 'teacher', classId: 'class' },
     });

@@ -31,4 +31,15 @@ export class PetEvaluationRecordEntity {
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
+
+  @Column({ name: 'score_delta', type: 'int', nullable: true })
+  scoreDelta!: number | null;
+  @Column({ name: 'experience_delta', type: 'int', nullable: true })
+  petExperienceDelta!: number | null;
+  @Column({ name: 'cycle_id', type: 'varchar', length: 64, nullable: true })
+  cycleId!: string | null;
+  @Column({ name: 'before_values', type: 'json', nullable: true })
+  beforeValues!: { score: number; experience: number; energy: number } | null;
+  @Column({ name: 'after_values', type: 'json', nullable: true })
+  afterValues!: { score: number; experience: number; energy: number } | null;
 }

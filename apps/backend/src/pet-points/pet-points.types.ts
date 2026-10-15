@@ -17,12 +17,19 @@ export interface StudentPet {
   trophies: number;
   level: number;
   stage: PetStage;
-  petId?: string;
-  petName?: string;
+  petId?: string | null;
+  petName?: string | null;
   petProgress: number;
   petHatched: boolean;
   absent: boolean;
   completedPets: number;
+  petExperience: number;
+  cycleId: string;
+  revision: number;
+  completionPending: boolean;
+  cycleRulesVersion: number;
+  rewardGrants: PetGrant[];
+  rewardProtection: number[];
 }
 
 export interface RubricItem {
@@ -48,6 +55,11 @@ export interface EvaluationRecord {
   label: string;
   delta: number;
   petDelta?: number;
+  scoreDelta?: number;
+  petExperienceDelta?: number;
+  cycleId?: string;
+  beforeValues?: { score: number; experience: number; energy: number };
+  afterValues?: { score: number; experience: number; energy: number };
   note: string;
   createdAt: string;
 }
@@ -58,4 +70,30 @@ export interface RedemptionRecord {
   rewardName: string;
   cost: number;
   createdAt: string;
+}
+
+export interface PetRules {
+  maxLevel: number;
+  finalEnergy: number;
+  version: number;
+}
+export interface PetGrant {
+  level: number;
+  amount: number;
+  grantedAt: string;
+  rulesVersion: number;
+}
+export interface CompletedPet {
+  id: string;
+  teacherId: string;
+  studentId: string;
+  cycleId: string;
+  petId: string;
+  petName: string;
+  level: number;
+  stage: string;
+  rules: PetRules;
+  rewardGrants: PetGrant[];
+  earnedBadges: number;
+  completedAt: string;
 }

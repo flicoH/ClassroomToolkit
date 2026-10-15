@@ -10,4 +10,6 @@ export class PetSettingEntity {
 
   @Column({ name: 'final_energy', type: 'int', default: 200 })
   finalEnergy!: number;
+  @Column({ type: 'int', default: 1 })
+  version!: number;
 }

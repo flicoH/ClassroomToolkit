@@ -8,6 +8,10 @@
 import { petOptions, PetSprite, formStages } from "@/components/semester-reports/ReportPetView";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createUuid } from "@/lib/id";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PetCertificate } from "./pet-points/PetCertificate";
+import { usePetDialog } from "./pet-points/use-pet-dialog";
 import { createPortal } from "react-dom";
 import {
   ArrowDownUp,
@@ -18,7 +22,6 @@ import {
   ClipboardList,
   Clock3,
   Droplets,
-  FileText,
   Flame,
   Gift,
   History,
@@ -78,6 +81,10 @@ interface StudentPet {
   petHatched: boolean;
   absent: boolean;
   completedPets: number;
+  petExperience: number;
+  cycleId: string;
+  revision: number;
+  completionPending: boolean;
 }
 
 type EvaluationCategory = "课堂表现" | "作业情况" | "品德修养" | "纪律常规";
@@ -97,6 +104,8 @@ interface EvaluationRecord {
   label: string;
   delta: number;
   petDelta?: number;
+  scoreDelta?: number;
+  cycleId?: string;
   note: string;
   createdAt: string;
 }
@@ -142,13 +151,26 @@ interface Classroom {
   groups: string[];
 }
 
+export interface CompletedPetView {
+  id: string;
+  studentId: string;
+  cycleId: string;
+  petId: string;
+  petName: string;
+  level: number;
+  stage: string;
+  rules: { maxLevel: number; finalEnergy: number; version: number };
+  earnedBadges: number;
+  completedAt: string;
+}
 interface PetPointsOverview {
   students: StudentPet[];
   rubrics: RubricItem[];
   rewards: RewardItem[];
   records: EvaluationRecord[];
   redemptions: RedemptionRecord[];
-  settings: { maxLevel: number; finalEnergy: number };
+  settings: { maxLevel: number; finalEnergy: number; version: number };
+  completed: CompletedPetView[];
 }
 
 const fallbackClassrooms: Classroom[] = [
@@ -166,7 +188,9 @@ const maxScoreAdjustment = 200;
 const defaultMaxLevel = 10;
 
 function getPetLevel(progress: number, maxLevel: number, finalEnergy = defaultFinalEnergy) {
-  return Math.min(maxLevel, Math.floor((Math.max(0, progress) * (maxLevel - 1)) / finalEnergy) + 1);
+  return Array.from({ length: maxLevel }, (_, i) => Math.round((i * finalEnergy) / (maxLevel - 1))).filter(
+    value => value <= Math.max(0, progress)
+  ).length;
 }
 
 function getFormIndex(level: number, maxLevel: number) {
@@ -174,7 +198,7 @@ function getFormIndex(level: number, maxLevel: number) {
 }
 
 function getNextPetThreshold(level: number, maxLevel: number, finalEnergy = defaultFinalEnergy) {
-  return level >= maxLevel ? null : Math.ceil((level * finalEnergy) / (maxLevel - 1));
+  return level >= maxLevel ? null : Math.round((level * finalEnergy) / (maxLevel - 1));
 }
 
 function getPetFormName(pet: PetOption, index: number) {
@@ -326,8 +350,8 @@ function normalizeStudent(
   finalEnergy = defaultFinalEnergy
 ): StudentPet {
   const petProgress = student.petProgress ?? (student.petId ? student.score : 0);
-  const level = getPetLevel(student.score, maxLevel, finalEnergy);
-  const petHatched = level > 1;
+  const level = getPetLevel(student.petExperience, maxLevel, finalEnergy);
+  const petHatched = Boolean(student.petId && level > 1);
   const formIndex = getFormIndex(level, maxLevel);
   return {
     ...student,
@@ -359,7 +383,11 @@ function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): Stu
     petProgress: 0,
     petHatched: false,
     absent: false,
-    completedPets: 0
+    completedPets: 0,
+    petExperience: 0,
+    cycleId: "",
+    revision: 0,
+    completionPending: false
   };
 }
 
@@ -383,8 +411,26 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
   return [...currentStudents.filter(student => student.classId !== classroom.id), ...nextClassStudents];
 }
 
+function CompletedPetPortrait({ petId }: { petId: string }) {
+  const pet = petOptions.find(item => item.id === petId);
+  return pet ? <PetSprite pet={pet} stageIndex={9} className="mb-2 w-20" /> : null;
+}
+
 /** 宠物积分主界面，串联学生筛选、批量评分、宠物选择、兑换和报表弹窗。 */
 export function PetPoints() {
+  const [completed, setCompleted] = useState<CompletedPetView[]>([]);
+  const [rulesVersion, setRulesVersion] = useState(1);
+  const [certificate, setCertificate] = useState<{
+    snapshot: CompletedPetView;
+    name: string;
+    kind: "certificate" | "memory";
+  } | null>(null);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const pendingWrites = useRef(new Map<string, Record<string, unknown>>());
+  const overviewRequest = useRef(0);
+  const needsRefresh = useRef(false);
+  const [refreshError, setRefreshError] = useState("");
   const [students, setStudents] = useState<StudentPet[]>(initialStudents);
   const [maxPetLevel, setMaxPetLevel] = useState(defaultMaxLevel);
   const [maxPetLevelDraft, setMaxPetLevelDraft] = useState(defaultMaxLevel);
@@ -418,13 +464,16 @@ export function PetPoints() {
   const [reportOpen, setReportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel | null>(null);
+  const settingsPanelRef = useRef(settingsPanel);
+  settingsPanelRef.current = settingsPanel;
   const [rewardStoreOpen, setRewardStoreOpen] = useState(false);
+  const [rewardStoreTab, setRewardStoreTab] = useState<"商品列表" | "兑换记录">("商品列表");
   const [rewardStudentId, setRewardStudentId] = useState(initialStudents[0]?.id ?? "");
   const [notice, setNotice] = useState("");
   const [petEffects, setPetEffects] = useState<Record<string, "hatch" | "evolve">>({});
   const [scoreAdjustStudentId, setScoreAdjustStudentId] = useState<string | null>(null);
   const [scoreAdjustMode, setScoreAdjustMode] = useState<ScoreAdjustMode>("add");
-  const [scoreAdjustValue, setScoreAdjustValue] = useState(1);
+  const [scoreAdjustValue, setScoreAdjustValue] = useState("1");
   const [scoreAdjustReason, setScoreAdjustReason] = useState("");
   const [scoreAdjustNote, setScoreAdjustNote] = useState("");
   const [newRubricLabel, setNewRubricLabel] = useState("");
@@ -437,11 +486,12 @@ export function PetPoints() {
   const [newRewardName, setNewRewardName] = useState("");
   const [newRewardCost, setNewRewardCost] = useState(5);
   const [newRewardStock, setNewRewardStock] = useState(1);
+  const [restockDrafts, setRestockDrafts] = useState<Record<string, string>>({});
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     description: string;
     confirmLabel: string;
-    onConfirm: () => void;
+    onConfirm: () => Promise<boolean>;
   } | null>(null);
 
   useEffect(() => {
@@ -450,7 +500,7 @@ export function PetPoints() {
 
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(""), 2400);
+    const timer = window.setTimeout(() => setNotice(""), 10000);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
@@ -468,13 +518,22 @@ export function PetPoints() {
 
   /** 从后端加载宠物积分总览，包括学生、规则、奖品、记录和兑换数据。 */
   const loadPetPointsOverview = useCallback(async () => {
-    const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points");
+    const requestId = ++overviewRequest.current;
+    // Bypass the shared 600ms GET reuse so a just-committed revision cannot be replaced by stale data.
+    const overview = await request<PetPointsOverview, PetPointsOverview>("/api/pet-points", {
+      params: { readRevision: requestId }
+    });
+    if (requestId !== overviewRequest.current) return;
+    needsRefresh.current = false;
+    setRefreshError("");
     const nextMaxLevel = overview.settings?.maxLevel ?? defaultMaxLevel;
     const nextFinalEnergy = overview.settings?.finalEnergy ?? defaultFinalEnergy;
+    setCompleted(overview.completed ?? []);
+    setRulesVersion(overview.settings.version);
     setMaxPetLevel(nextMaxLevel);
-    setMaxPetLevelDraft(nextMaxLevel);
+    if (settingsPanelRef.current !== "等级规则") setMaxPetLevelDraft(nextMaxLevel);
     setMaxPetEnergy(nextFinalEnergy);
-    setMaxPetEnergyDraft(nextFinalEnergy);
+    if (settingsPanelRef.current !== "等级规则") setMaxPetEnergyDraft(nextFinalEnergy);
     setStudents(overview.students.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
     setRubrics(overview.rubrics);
     setRewards(overview.rewards);
@@ -482,14 +541,69 @@ export function PetPoints() {
     setRedemptions(overview.redemptions);
   }, []);
 
+  /** Retain the exact operation and revisions after an uncertain response; refresh failures never resubmit writes. */
+  const perform = async (
+    url: string,
+    method: "POST" | "PATCH" | "DELETE",
+    data: Record<string, unknown>,
+    studentIds: string[] = [],
+    onSaved?: (result: unknown) => void
+  ) => {
+    if (busyRef.current) return false;
+    if (needsRefresh.current) {
+      setNotice("请先刷新数据，确认最新保存结果");
+      return false;
+    }
+    overviewRequest.current++;
+    busyRef.current = true;
+    setBusy(true);
+    let key: string | undefined;
+    try {
+      key = JSON.stringify({ url, method, data });
+      // 编号生成等准备阶段也必须释放操作锁，避免异常后所有写入永久禁用。
+      let payload = pendingWrites.current.get(key);
+      if (!payload) {
+        payload = {
+          ...data,
+          // 局域网 HTTP 不提供 randomUUID，复用兼容生成器并保留重试时的操作编号。
+          operationId: createUuid(),
+          revisions: Object.fromEntries(
+            studentIds.map(id => [id, students.find(student => student.id === id)?.revision])
+          )
+        };
+        pendingWrites.current.set(key, payload);
+      }
+      const result = await request({ url, method, data: payload });
+      onSaved?.(result);
+      pendingWrites.current.delete(key);
+      await loadPetPointsOverview().catch(() => {
+        needsRefresh.current = true;
+        setRefreshError("已保存，刷新失败；请点击刷新数据，不要再次提交");
+      });
+      return true;
+    } catch (error) {
+      const failure = error as { response?: { status?: number; data?: { message?: string } }; message?: string };
+      if (failure.response?.status && failure.response.status < 500) {
+        if (key) pendingWrites.current.delete(key);
+        if (failure.response.status === 409) await loadPetPointsOverview().catch(() => undefined);
+      }
+      setNotice(failure.response?.data?.message ?? failure.message ?? "操作失败，保留原输入，请重试");
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const savePetSettings = async () => {
-    await request<{ maxLevel: number }, { maxLevel: number }>({
-      url: "/api/pet-points/settings",
-      method: "PATCH",
-      data: { maxLevel: maxPetLevelDraft, finalEnergy: maxPetEnergyDraft }
-    });
-    await loadPetPointsOverview();
-    setNotice("宠物等级积分设置已更新");
+    if (
+      await perform("/api/pet-points/settings", "PATCH", {
+        maxLevel: maxPetLevelDraft,
+        finalEnergy: maxPetEnergyDraft,
+        expectedVersion: rulesVersion
+      })
+    )
+      setNotice("宠物等级经验设置已更新");
   };
 
   /** 按当前筛选条件加载班级学生，并同步到宠物积分学生表。 */
@@ -500,21 +614,14 @@ export function PetPoints() {
       setStudentDataLoading(true);
       setStudentDataError("");
       try {
-        const params = new URLSearchParams({
-          group: filters.groupFilter,
-          query: filters.query,
-          sort: filters.sortMode
-        });
-        const classroom = await request<Classroom, Classroom>(`/api/classes/${filters.classId}?${params.toString()}`);
+        const classroom = await request<Classroom, Classroom>(`/api/classes/${filters.classId}`);
+        if (studentRequestIdRef.current !== requestId) return;
         await request<StudentPet[], StudentPet[]>({
           url: "/api/pet-points/students/sync",
           method: "POST",
-          data: {
-            classId: classroom.id,
-            className: classroom.name,
-            students: classroom.students
-          }
+          data: { classId: classroom.id }
         });
+        if (studentRequestIdRef.current !== requestId) return;
         await loadPetPointsOverview();
         if (studentRequestIdRef.current !== requestId) return;
         setClassrooms(current =>
@@ -617,23 +724,15 @@ export function PetPoints() {
     item => item.enabled && (scoreAdjustMode === "add" ? item.score > 0 : item.score < 0)
   );
   const availableRewards = rewards.filter(item => item.enabled);
+  const evaluationAbsentCount = selectedStudentIds.filter(
+    id => students.find(student => student.id === id)?.absent
+  ).length;
   const evaluationTotal = selectedRubrics.reduce((sum, item) => sum + item.score, 0);
+  const evaluatedScore = classRecords.reduce((sum, record) => sum + (record.scoreDelta ?? record.delta), 0);
+  const incompleteHistory = classRecords.some(record => record.scoreDelta === undefined);
   const totalScore = classStudents.reduce((sum, student) => sum + student.score, 0);
   const averageScore = classStudents.length ? Math.round((totalScore / classStudents.length) * 10) / 10 : 0;
   const hatchedCount = classStudents.filter(student => student.petId && student.petHatched).length;
-
-  /** 使用当前班级和已有筛选条件，局部覆盖后重新请求学生列表。 */
-  const requestActiveClassStudents = (nextFilters: Partial<PetPointStudentFilters>) => {
-    if (!hasBackendClassrooms) return;
-    const filters = {
-      classId: activeClass.id,
-      groupFilter,
-      query,
-      sortMode,
-      ...nextFilters
-    };
-    requestClassroomStudents(filters);
-  };
 
   /** 切换班级时清空搜索、分组和批量选择状态。 */
   const switchClass = (classId: string) => {
@@ -659,20 +758,17 @@ export function PetPoints() {
   const switchGroup = (nextGroup: string) => {
     setGroupFilter(nextGroup);
     setSelectedStudentIds([]);
-    requestActiveClassStudents({ groupFilter: nextGroup });
   };
 
   /** 切换排序方式并刷新后端排序结果。 */
   const switchSortMode = (nextSortMode: SortMode) => {
     setSortMode(nextSortMode);
-    requestActiveClassStudents({ sortMode: nextSortMode });
   };
 
   /** 更新搜索关键词，并按关键词重新同步当前班级学生。 */
   const switchQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     setSelectedStudentIds([]);
-    requestActiveClassStudents({ query: nextQuery });
   };
 
   /** 调整单个学生积分，同时由后端同步宠物成长能量和评价记录。 */
@@ -684,19 +780,19 @@ export function PetPoints() {
   ) => {
     const student = students.find(item => item.id === studentId);
     if (!student) return;
-    await request<StudentPet[], StudentPet[]>({
-      url: "/api/pet-points/scores/adjust",
-      method: "POST",
-      data: { studentIds: [studentId], delta, label, category: "手动调整", note }
-    });
-    await loadPetPointsOverview();
+    return perform(
+      "/api/pet-points/scores/adjust",
+      "POST",
+      { studentIds: [studentId], delta, label, category: "手动调整", note },
+      [studentId]
+    );
   };
 
   /** 打开手动加分/扣分弹窗，并按模式初始化表单。 */
   const openScoreAdjust = (studentId: string, mode: ScoreAdjustMode) => {
     setScoreAdjustStudentId(studentId);
     setScoreAdjustMode(mode);
-    setScoreAdjustValue(1);
+    setScoreAdjustValue("1");
     setScoreAdjustReason(mode === "add" ? "手动加分" : "手动扣分");
     setScoreAdjustNote("");
   };
@@ -704,51 +800,44 @@ export function PetPoints() {
   /** 关闭积分调整弹窗，并清空调整草稿。 */
   const closeScoreAdjust = () => {
     setScoreAdjustStudentId(null);
-    setScoreAdjustValue(1);
+    setScoreAdjustValue("1");
     setScoreAdjustReason("");
     setScoreAdjustNote("");
   };
 
   /** 提交手动积分调整，限制单次调整值在允许范围内。 */
-  const applyScoreAdjust = (value = scoreAdjustValue, reason = scoreAdjustReason) => {
+  const applyScoreAdjust = async (value: string | number = scoreAdjustValue, reason = scoreAdjustReason) => {
     if (!scoreAdjustStudent) return;
-    const normalizedValue = Math.max(1, Math.min(maxScoreAdjustment, Math.round(Math.abs(value))));
+    const normalizedValue = Number(value);
+    if (!Number.isInteger(normalizedValue) || normalizedValue < 1 || normalizedValue > maxScoreAdjustment) {
+      setNotice(`请输入 1 到 ${maxScoreAdjustment} 的整数分值`);
+      return;
+    }
     const delta = scoreAdjustMode === "add" ? normalizedValue : -normalizedValue;
-    void updateStudentScore(
+    const saved = await updateStudentScore(
       scoreAdjustStudent.id,
       delta,
       reason.trim() || (delta > 0 ? "手动加分" : "手动扣分"),
       scoreAdjustNote.trim()
     );
-    closeScoreAdjust();
+    if (saved) closeScoreAdjust();
   };
 
   /** 新增评价指标，分值限制在 -10 到 10 之间。 */
   const addRubric = async () => {
     const label = newRubricLabel.trim();
     if (!label) return;
-    await request<RubricItem, RubricItem>({
-      url: "/api/pet-points/rubrics",
-      method: "POST",
-      data: {
-        category: newRubricCategory,
-        label,
-        score: Math.max(-10, Math.min(10, Math.round(newRubricScore)))
-      }
-    });
-    await loadPetPointsOverview();
+    if (
+      !(await perform("/api/pet-points/rubrics", "POST", { category: newRubricCategory, label, score: newRubricScore }))
+    )
+      return;
     setNewRubricLabel("");
     setNewRubricScore(1);
   };
 
   /** 将指标修改保存到服务端，并用返回值更新当前列表。 */
   const updateRubric = async (rubricId: string, patch: Partial<Omit<RubricItem, "id">>) => {
-    const updated = await request<RubricItem, RubricItem>({
-      url: `/api/pet-points/rubrics/${rubricId}`,
-      method: "PATCH",
-      data: patch
-    });
-    setRubrics(current => current.map(rubric => (rubric.id === rubricId ? updated : rubric)));
+    return perform(`/api/pet-points/rubrics/${rubricId}`, "PATCH", patch);
   };
 
   /** 打开指标编辑状态并复制当前服务端数据作为草稿。 */
@@ -762,28 +851,20 @@ export function PetPoints() {
   /** 保存指标名称、分类和分值。 */
   const saveRubric = async () => {
     if (!editingRubricId || !editingRubricLabel.trim()) return;
-    await updateRubric(editingRubricId, {
+    const saved = await updateRubric(editingRubricId, {
       label: editingRubricLabel.trim(),
       category: editingRubricCategory,
       score: Math.max(-10, Math.min(10, Math.round(editingRubricScore)))
     });
-    setEditingRubricId(null);
+    if (saved) setEditingRubricId(null);
   };
 
   /** 新增兑换奖品，并规范化消耗积分和库存数值。 */
   const addReward = async () => {
     const name = newRewardName.trim();
     if (!name) return;
-    await request<RewardItem, RewardItem>({
-      url: "/api/pet-points/rewards",
-      method: "POST",
-      data: {
-        name,
-        cost: Math.max(1, Math.round(newRewardCost)),
-        stock: Math.max(0, Math.round(newRewardStock))
-      }
-    });
-    await loadPetPointsOverview();
+    if (!(await perform("/api/pet-points/rewards", "POST", { name, cost: newRewardCost, stock: newRewardStock })))
+      return;
     setNewRewardName("");
     setNewRewardCost(5);
     setNewRewardStock(1);
@@ -792,38 +873,42 @@ export function PetPoints() {
   /** 为当前兑换学生兑换奖品，积分或库存不足时直接忽略。 */
   const redeemReward = async (reward: RewardItem) => {
     if (!rewardStudent || reward.stock <= 0 || rewardStudent.score < reward.cost) return;
-    await request<RedemptionRecord, RedemptionRecord>({
-      url: "/api/pet-points/rewards/redeem",
-      method: "POST",
-      data: {
-        studentId: rewardStudent.id,
-        rewardId: reward.id
-      }
-    });
-    await loadPetPointsOverview();
+    if (
+      !(await perform("/api/pet-points/rewards/redeem", "POST", { studentId: rewardStudent.id, rewardId: reward.id }, [
+        rewardStudent.id
+      ]))
+    )
+      return;
     setNotice(`${rewardStudent.name} 已兑换 ${reward.name}`);
   };
 
   /** 批量应用选中的评价指标，完成后退出评分模式。 */
   const applyEvaluation = async () => {
     if (!selectedStudentIds.length || !selectedRubrics.length) return;
-    await Promise.all(
-      selectedRubrics.map(item =>
-        request<StudentPet[], StudentPet[]>({
-          url: "/api/pet-points/scores/adjust",
-          method: "POST",
-          data: {
-            studentIds: selectedStudentIds,
-            delta: item.score,
-            label: item.label,
-            category: item.category,
-            note: evaluationNote.trim()
-          }
-        })
-      )
+    const studentIds = selectedStudentIds.filter(
+      id => evaluationMode === "advanced" || !students.find(student => student.id === id)?.absent
     );
-    await loadPetPointsOverview();
-    setNotice(`已为 ${selectedStudentIds.length} 名学生完成评分`);
+    if (!studentIds.length) {
+      setNotice("没有可评分学生，普通批量排除请假学生");
+      return;
+    }
+    let processed = studentIds.length;
+    let skipped = 0;
+    if (
+      !(await perform(
+        `/api/pet-points/scores/${evaluationMode === "advanced" ? "evaluate" : "batch-evaluate"}`,
+        "POST",
+        { studentIds, rubricIds: selectedRubricIds, note: evaluationNote.trim() },
+        studentIds,
+        result => {
+          const outcome = result as { processedIds?: string[]; skippedIds?: string[] };
+          processed = outcome.processedIds?.length ?? studentIds.length;
+          skipped = outcome.skippedIds?.length ?? 0;
+        }
+      ))
+    )
+      return;
+    setNotice(`已为 ${processed} 名学生完成评分${skipped ? `，跳过 ${skipped} 名请假学生` : ""}`);
     setEvaluationMode(null);
     setSelectedRubricIds([]);
     setEvaluationNote("");
@@ -833,16 +918,14 @@ export function PetPoints() {
 
   /** 删除评价记录，并让后端回退对应积分和成长能量。 */
   const removeRecord = async (record: EvaluationRecord) => {
-    await request<{ deleted: boolean }, { deleted: boolean }>({
-      url: `/api/pet-points/records/${record.id}`,
-      method: "DELETE"
-    });
-    await loadPetPointsOverview();
-    setNotice("评价记录已删除，积分与成长能量已同步回退");
+    const saved = await perform(`/api/pet-points/records/${record.id}`, "DELETE", {}, [record.studentId]);
+    if (saved) setNotice("评价已回退；旧轮次仅回退积分余额，成长徽章不回收");
+    return saved;
   };
 
   /** 切换单个学生的批量选择状态。 */
   const toggleStudentSelection = (studentId: string) => {
+    if (evaluationMode !== "advanced" && students.find(student => student.id === studentId)?.absent) return;
     setSelectedStudentIds(current =>
       current.includes(studentId) ? current.filter(id => id !== studentId) : [...current, studentId]
     );
@@ -850,7 +933,7 @@ export function PetPoints() {
 
   /** 全选或取消全选当前筛选后的可见学生。 */
   const toggleAllVisible = () => {
-    const visibleIds = filteredStudents.map(student => student.id);
+    const visibleIds = filteredStudents.filter(student => !student.absent).map(student => student.id);
     const allSelected = visibleIds.every(id => selectedStudentIds.includes(id));
     setSelectedStudentIds(current =>
       allSelected ? current.filter(id => !visibleIds.includes(id)) : Array.from(new Set([...current, ...visibleIds]))
@@ -859,7 +942,7 @@ export function PetPoints() {
 
   /** 反选当前可见学生，保留不可见学生原有选择状态。 */
   const invertVisible = () => {
-    const visibleIds = filteredStudents.map(student => student.id);
+    const visibleIds = filteredStudents.filter(student => !student.absent).map(student => student.id);
     setSelectedStudentIds(current => {
       const outside = current.filter(id => !visibleIds.includes(id));
       const inverted = visibleIds.filter(id => !current.includes(id));
@@ -892,12 +975,15 @@ export function PetPoints() {
   const confirmPet = async () => {
     if (!selectedStudent || !selectedPet) return;
     const nickname = petNickname.trim() || selectedPet.name;
-    await request<StudentPet, StudentPet>({
-      url: `/api/pet-points/students/${selectedStudent.id}/pet`,
-      method: "PATCH",
-      data: { petId: selectedPet.id, petName: nickname }
-    });
-    await loadPetPointsOverview();
+    if (
+      !(await perform(
+        `/api/pet-points/students/${selectedStudent.id}/pet`,
+        "PATCH",
+        { petId: selectedPet.id, petName: nickname },
+        [selectedStudent.id]
+      ))
+    )
+      return;
     closePetPicker();
   };
 
@@ -907,27 +993,31 @@ export function PetPoints() {
     setSettingsOpen(false);
   };
 
-  /** 重置当前宠物养成进度；已完成终极形态时计入完成数量。 */
-  const resetPet = (student: StudentPet) => {
-    setStudents(current =>
-      current.map(item =>
-        item.id === student.id
-          ? {
-              ...item,
-              petId: undefined,
-              petName: undefined,
-              petProgress: 0,
-              petHatched: false,
-              score: 0,
-              level: 1,
-              stage: "初始形态",
-              completedPets: item.completedPets + (item.petId && item.petProgress >= maxPetEnergy ? 1 : 0)
-            }
-          : item
-      )
+  const resetPet = async (student: StudentPet) => {
+    const complete = student.completionPending;
+    const saved = await perform(
+      `/api/pet-points/students/${student.id}/pet/${complete ? "complete" : "reset"}`,
+      "POST",
+      {},
+      [student.id]
     );
-    setNotice("宠物养成进度已重置");
+    if (saved) {
+      setNotice(complete ? "满级宠物已进入养成成就与成长徽章" : "养成已重置，积分和徽章保留");
+      if (complete) {
+        setHistoryStudentId(null);
+        openPetPicker(student.id);
+      }
+    }
+    return saved;
   };
+
+  const updateStudentFlag = (student: StudentPet, flag: "absence" | "trophies", value: boolean | number) =>
+    perform(
+      `/api/pet-points/students/${student.id}/${flag}`,
+      "PATCH",
+      flag === "absence" ? { absent: value } : { delta: value },
+      [student.id]
+    );
 
   /** 将评价记录时间格式化为列表里使用的短时间。 */
   const formatDate = (value: string) =>
@@ -937,6 +1027,32 @@ export function PetPoints() {
       hour: "2-digit",
       minute: "2-digit"
     }).format(new Date(value));
+
+  usePetDialog(
+    {
+      selectedStudentId,
+      historyStudentId,
+      recordStudentId,
+      scoreAdjustStudentId,
+      evaluationMode,
+      reportOpen,
+      settingsPanel,
+      rewardStoreOpen,
+      certificateOpen: Boolean(certificate),
+      confirmOpen: Boolean(confirmAction)
+    },
+    () => {
+      if (certificate) setCertificate(null);
+      else if (selectedStudentId) closePetPicker();
+      else if (scoreAdjustStudentId) closeScoreAdjust();
+      else if (historyStudentId) setHistoryStudentId(null);
+      else if (recordStudentId) setRecordStudentId(null);
+      else if (evaluationMode) setEvaluationMode(null);
+      else if (rewardStoreOpen) setRewardStoreOpen(false);
+      else if (settingsPanel) setSettingsPanel(null);
+      else setReportOpen(false);
+    }
+  );
 
   const metricPicker = (
     <div>
@@ -993,9 +1109,12 @@ export function PetPoints() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#f7f9fc] text-slate-950">
-      {notice && (
-        <div className="fixed left-1/2 top-5 z-[90] -translate-x-1/2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-xl">
-          {notice}
+      {(notice || refreshError) && (
+        <div
+          role="status"
+          className="fixed left-1/2 top-5 z-[10010] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-xl"
+        >
+          {refreshError || notice}
         </div>
       )}
       <header className="flex shrink-0 flex-col items-stretch gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:flex-wrap lg:items-center lg:px-5">
@@ -1108,18 +1227,19 @@ export function PetPoints() {
               积分报告
               {/* <Badge className="absolute -right-2 -top-2 bg-red-500 text-white">限时</Badge> */}
             </Button>
-            {/* <Button
+            <Button
               variant="ghost"
               className="h-11 rounded-xl bg-amber-100 px-4 font-bold text-amber-700 hover:bg-amber-200"
               disabled={!hasBackendClassrooms}
               onClick={() => {
+                setRewardStoreTab("商品列表");
                 setRewardStoreOpen(true);
                 setRewardStudentId(classStudents[0]?.id ?? "");
               }}
             >
               <Gift className="h-5 w-5" />
               兑换站
-            </Button> */}
+            </Button>
             <Button
               variant="ghost"
               className="h-11 rounded-xl bg-slate-100 px-4 font-bold"
@@ -1176,8 +1296,15 @@ export function PetPoints() {
                         title: "刷新宠物积分数据",
                         description: "将重新从后端读取学生积分、宠物、评价记录、奖品和指标配置。",
                         confirmLabel: "确认刷新",
-                        onConfirm: () => {
-                          void loadPetPointsOverview().then(() => setNotice("后端数据已刷新"));
+                        onConfirm: async () => {
+                          try {
+                            await loadPetPointsOverview();
+                            setNotice("后端数据已刷新");
+                            return true;
+                          } catch {
+                            setNotice("刷新失败，请重试");
+                            return false;
+                          }
                         }
                       });
                     }}
@@ -1191,19 +1318,19 @@ export function PetPoints() {
           </div>
         )}
       </header>
-
       <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-y-auto p-4 sm:grid-cols-2 lg:gap-5 lg:p-5 2xl:grid-cols-3">
         {filteredStudents.map(student => {
           const pet = petOptions.find(item => item.id === student.petId);
-          const genericEvolutionIndex = getEvolutionIndex(student.score);
+          const genericEvolutionIndex = getEvolutionIndex(student.petExperience);
           const petEvolutionIndex = getFormIndex(student.level, maxPetLevel);
           const currentFormName = pet ? getPetFormName(pet, petEvolutionIndex) : "";
           const nextPetThreshold = getNextPetThreshold(student.level, maxPetLevel, maxPetEnergy);
-          const growthValue = pet ? Math.min(student.score, maxPetEnergy) : student.score;
-          const percent = Math.min(100, Math.round((growthValue / (pet ? maxPetEnergy : student.maxScore)) * 100));
+          const growthValue = student.petExperience;
+          const percent = Math.min(100, Math.round((growthValue / (nextPetThreshold ?? maxPetEnergy)) * 100));
           const petEffect = petEffects[student.id];
           return (
             <section
+              data-pet-dialog
               key={student.id}
               className={cn(
                 "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
@@ -1229,9 +1356,14 @@ export function PetPoints() {
                   </Badge>
                 )}
                 <button
-                  onClick={() => (batchMode ? toggleStudentSelection(student.id) : openPetPicker(student.id))}
+                  onClick={() => {
+                    if (batchMode) toggleStudentSelection(student.id);
+                    else if (!student.petId) openPetPicker(student.id);
+                    else if (student.completionPending) setHistoryStudentId(student.id);
+                    else openScoreAdjust(student.id, "add");
+                  }}
                   className="group flex h-full w-full items-center justify-center"
-                  aria-label={`为${student.name}选择宠物`}
+                  aria-label={student.petId ? `为${student.name}评分` : `为${student.name}选择宠物`}
                 >
                   {pet && student.petHatched ? (
                     <div className="text-center">
@@ -1257,14 +1389,14 @@ export function PetPoints() {
                     <PetEgg
                       key={`${pet.id}-egg-${student.petProgress}`}
                       pet={pet}
-                      progress={student.score}
+                      progress={student.petExperience}
                       hatchThreshold={getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!}
                       className="w-40 transition duration-300 group-hover:scale-105"
                     />
                   ) : (
                     <IncubatingEgg
-                      key={`egg-${student.score}`}
-                      score={student.score}
+                      key={`egg-${student.petExperience}`}
+                      score={student.petExperience}
                       className="w-40 transition duration-300 group-hover:scale-105"
                     />
                   )}
@@ -1322,33 +1454,39 @@ export function PetPoints() {
                     variant="ghost"
                     className="h-8 w-8 rounded-lg bg-rose-50 text-rose-500"
                     onClick={() => openScoreAdjust(student.id, "subtract")}
-                    disabled={batchMode}
+                    disabled={batchMode || busy}
                     aria-label={`为${student.name}扣分`}
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
                   <div className="text-right">
-                    <span className="block text-[11px] font-bold text-slate-400">课堂积分</span>
+                    <span className="block text-[11px] font-bold text-slate-400">本轮经验</span>
                     <div className="text-3xl font-black text-slate-950">
-                      {student.score}
-                      <span className="text-lg text-slate-300">/{student.maxScore}</span>
+                      {student.petExperience}
+                      <span className="text-sm text-slate-400">/{nextPetThreshold ?? maxPetEnergy}</span>
                     </div>
+                    <span className="text-xs text-slate-500">可用积分 {student.score}</span>
                   </div>
                   <Button
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600"
                     onClick={() => openScoreAdjust(student.id, "add")}
-                    disabled={batchMode}
+                    disabled={batchMode || busy}
                     aria-label={`为${student.name}加分`}
                   >
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
+              {student.completionPending && (
+                <Button className="mt-3 w-full" onClick={() => setHistoryStudentId(student.id)}>
+                  领取满级纪念，开始下一轮
+                </Button>
+              )}
               <div
                 className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100"
-                aria-label={`${pet ? "宠物等级积分" : "孵化"}进度${percent}%`}
+                aria-label={`${pet ? "宠物等级经验" : "孵化"}进度${percent}%`}
               >
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-orange-500 to-yellow-400 transition-all duration-300"
@@ -1358,12 +1496,12 @@ export function PetPoints() {
               {pet && (
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-xs font-bold text-slate-500">
                   <span>
-                    等级积分 {Math.min(student.score, maxPetEnergy)}/{maxPetEnergy}
+                    本轮经验 {student.petExperience}/{nextPetThreshold ?? maxPetEnergy}
                   </span>
                   <span>
                     {nextPetThreshold === null
                       ? "已达最终形态"
-                      : `下一级 Lv.${student.level + 1}：${nextPetThreshold} 积分`}
+                      : `下一级 Lv.${student.level + 1}：${nextPetThreshold} 经验`}
                   </span>
                 </div>
               )}
@@ -1377,11 +1515,11 @@ export function PetPoints() {
                 <span className={cn("ml-auto text-xs font-bold", pet ? "text-emerald-600" : "text-amber-600")}>
                   {pet
                     ? nextPetThreshold !== null
-                      ? `还需 ${Math.max(0, nextPetThreshold - student.score)} 积分进化`
+                      ? `还需 ${Math.max(0, nextPetThreshold - student.petExperience)} 经验进化`
                       : "已达终极形态"
-                    : student.score >= evolutionThresholds[3]
+                    : student.petExperience >= evolutionThresholds[3]
                       ? "能量已满，点击选择宠物蛋"
-                      : `再得 ${evolutionThresholds[genericEvolutionIndex + 1]! - student.score} 分进入下一阶段`}
+                      : `再得 ${evolutionThresholds[genericEvolutionIndex + 1]! - student.petExperience} 分进入下一阶段`}
                 </span>
               </div>
             </section>
@@ -1397,7 +1535,7 @@ export function PetPoints() {
 
       {evaluationMode === "batch" && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
-          <section className="w-full max-w-[760px] rounded-2xl bg-white p-6 shadow-2xl">
+          <section data-pet-dialog className="w-full max-w-[760px] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black">批量评分</h3>
@@ -1438,9 +1576,12 @@ export function PetPoints() {
       )}
 
       {evaluationMode === "advanced" && (
-        <div className="fixed inset-0 z-40 bg-[#f7f9fc] p-4 sm:p-6">
-          <section className="mx-auto flex h-full max-w-[1280px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4 sm:p-6">
+          <section
+            data-pet-dialog
+            className="flex h-[min(680px,80dvh)] w-full max-w-[1000px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 sm:px-6 sm:py-4">
               <div>
                 <h3 className="text-xl font-black">高级评分</h3>
                 <p className="text-sm font-semibold text-slate-400">批量选择学生和多个评价指标</p>
@@ -1466,8 +1607,8 @@ export function PetPoints() {
                 </Button>
               </div>
             </div>
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[340px_1fr]">
-              <aside className="overflow-y-auto border-r border-slate-100 bg-slate-50 p-5">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain lg:grid lg:grid-cols-[300px_1fr] lg:overflow-hidden">
+              <aside className="max-h-48 shrink-0 overflow-y-auto border-b border-slate-100 bg-slate-50 p-4 lg:max-h-none lg:border-b-0 lg:border-r lg:p-5">
                 <div className="flex items-center justify-between">
                   <h4 className="font-black">选择学生</h4>
                   <button
@@ -1483,6 +1624,11 @@ export function PetPoints() {
                     {selectedStudentIds.length === classStudents.length ? "取消全选" : "全选"}
                   </button>
                 </div>
+                {evaluationAbsentCount > 0 && (
+                  <p role="status" className="mt-3 text-sm text-orange-700">
+                    本次包含 {evaluationAbsentCount} 名请假学生，提交后也将评分。
+                  </p>
+                )}
                 <div className="mt-4 grid gap-2">
                   {classStudents.map(student => {
                     const selected = selectedStudentIds.includes(student.id);
@@ -1532,7 +1678,7 @@ export function PetPoints() {
               </p>
               <Button
                 onClick={() => void applyEvaluation()}
-                disabled={!selectedStudentIds.length || !selectedRubrics.length}
+                disabled={busy || !selectedStudentIds.length || !selectedRubrics.length}
                 className="h-11 rounded-xl bg-slate-950 px-7 font-black text-white hover:bg-slate-800"
               >
                 <Save className="h-5 w-5" />
@@ -1545,12 +1691,15 @@ export function PetPoints() {
 
       {recordStudent && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
-          <section className="flex max-h-[82vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <section
+            data-pet-dialog
+            className="flex max-h-[82vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          >
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
               <div>
                 <h3 className="text-xl font-black">{recordStudent.name} 的评价记录</h3>
                 <p className="mt-1 text-sm font-semibold text-slate-400">
-                  累计 {recordStudent.score} 分 ·{" "}
+                  可用积分 {recordStudent.score} 分 ·{" "}
                   {records.filter(record => record.studentId === recordStudent.id).length} 次评价
                 </p>
               </div>
@@ -1559,19 +1708,14 @@ export function PetPoints() {
               </Button>
             </div>
             <div className="flex items-center justify-between bg-amber-50 px-6 py-3">
-              <span className="font-black text-amber-800">今日请假</span>
+              <span className="font-black text-amber-800">请假标记</span>
               <button
-                onClick={() =>
-                  setStudents(current =>
-                    current.map(student =>
-                      student.id === recordStudent.id ? { ...student, absent: !student.absent } : student
-                    )
-                  )
-                }
+                onClick={() => void updateStudentFlag(recordStudent, "absence", !recordStudent.absent)}
                 className={cn(
                   "relative h-7 w-12 rounded-full transition",
                   recordStudent.absent ? "bg-orange-500" : "bg-slate-300"
                 )}
+                aria-label={`设置${recordStudent.name}请假标记`}
                 aria-pressed={recordStudent.absent}
               >
                 <span
@@ -1624,7 +1768,7 @@ export function PetPoints() {
                           onClick={() =>
                             setConfirmAction({
                               title: "删除评价记录",
-                              description: `删除“${record.label}”后，将回退 ${Math.abs(record.delta)} 分${record.petDelta ? `，并回退 ${Math.abs(record.petDelta)} 点成长能量` : ""}。`,
+                              description: `删除“${record.label}”后，按实际变化回退积分余额${students.find(student => student.id === record.studentId)?.cycleId === record.cycleId ? "与本轮经验/能量" : "；旧轮次不改变当前经验或完成档案"}。升级徽章不回收，缺少证据的旧记录不能回退。`,
                               confirmLabel: "确认删除",
                               onConfirm: () => removeRecord(record)
                             })
@@ -1652,7 +1796,7 @@ export function PetPoints() {
         selectedStudent &&
         createPortal(
           <div
-            className="bg-black/50"
+            className="fixed bg-black/50"
             style={{
               position: "fixed",
               inset: 0,
@@ -1660,6 +1804,7 @@ export function PetPoints() {
             }}
           >
             <section
+              data-pet-dialog
               className="flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
               style={{
                 position: "fixed",
@@ -1784,7 +1929,7 @@ export function PetPoints() {
                                 {formName}
                               </p>
                               <p className="mt-0.5 text-[10px] font-bold text-slate-400">
-                                {index === 0 ? 0 : Math.ceil((index * maxPetEnergy) / (maxPetLevel - 1))} 能量
+                                {index === 0 ? 0 : Math.round((index * maxPetEnergy) / (maxPetLevel - 1))} 经验
                               </p>
                             </div>
                           );
@@ -1798,6 +1943,7 @@ export function PetPoints() {
                         className="mt-5 h-11 rounded-xl border-0 bg-slate-100 px-4 font-semibold shadow-none"
                       />
                       <Button
+                        disabled={busy}
                         onClick={() => void confirmPet()}
                         className="mt-4 h-12 rounded-xl bg-slate-950 text-base font-black text-white hover:bg-slate-800"
                       >
@@ -1823,7 +1969,10 @@ export function PetPoints() {
 
       {historyStudent && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
-          <section className="max-h-[84vh] w-full max-w-[720px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <section
+            data-pet-dialog
+            className="max-h-[84vh] w-full max-w-[720px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+          >
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black">{historyStudent.name} 的成长历程</h3>
@@ -1861,18 +2010,20 @@ export function PetPoints() {
                 <Button
                   variant="outline"
                   className="rounded-lg font-bold text-rose-500"
-                  disabled={!historyStudent.petId}
+                  disabled={busy || !historyStudent.petId}
                   onClick={() =>
                     setConfirmAction({
-                      title: "重置当前宠物",
-                      description: "将清空当前宠物和积分进度；已达到终极形态的宠物会计入完成数量。",
-                      confirmLabel: "确认重置",
+                      title: historyStudent.completionPending ? "完成本轮养成" : "重置当前宠物",
+                      description: historyStudent.completionPending
+                        ? "满级宠物将留存到养成成就和成长徽章，可选择新宠物开始下一轮。积分及徽章余额保留，溢出经验结转。"
+                        : "清除当前宠物、经验和能量；保留积分、徽章和已有完成档案。",
+                      confirmLabel: historyStudent.completionPending ? "完成并选新宠物" : "确认重置",
                       onConfirm: () => resetPet(historyStudent)
                     })
                   }
                 >
                   <RotateCcw className="h-4 w-4" />
-                  重置
+                  {historyStudent.completionPending ? "完成本轮" : "重置"}
                 </Button>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -1895,7 +2046,7 @@ export function PetPoints() {
             </div>
             <div className="mt-5 rounded-xl border border-slate-100 p-5">
               <div className="flex items-center justify-between">
-                <h4 className="font-black">成长徽章</h4>
+                <h4 className="font-black">成长徽章 · 当前持有</h4>
                 <span className="text-xs font-bold text-slate-400">教师可手动调整</span>
               </div>
               <div className="mt-4 flex items-center gap-3">
@@ -1903,16 +2054,9 @@ export function PetPoints() {
                   variant="outline"
                   size="icon"
                   className="rounded-lg"
-                  disabled={!historyStudent.trophies}
-                  onClick={() =>
-                    setStudents(current =>
-                      current.map(student =>
-                        student.id === historyStudent.id
-                          ? { ...student, trophies: Math.max(0, student.trophies - 1) }
-                          : student
-                      )
-                    )
-                  }
+                  aria-label="减少成长徽章"
+                  disabled={busy || !historyStudent.trophies}
+                  onClick={() => void updateStudentFlag(historyStudent, "trophies", -1)}
                 >
                   <Minus className="h-4 w-4" />
                 </Button>
@@ -1924,20 +2068,29 @@ export function PetPoints() {
                   variant="outline"
                   size="icon"
                   className="rounded-lg"
-                  onClick={() =>
-                    setStudents(current =>
-                      current.map(student =>
-                        student.id === historyStudent.id ? { ...student, trophies: student.trophies + 1 } : student
-                      )
-                    )
-                  }
+                  aria-label="增加成长徽章"
+                  disabled={busy}
+                  onClick={() => void updateStudentFlag(historyStudent, "trophies", 1)}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
             </div>
+            <div className="mt-3 space-y-2">
+              {completed
+                .filter(item => item.studentId === historyStudent.id)
+                .map(snapshot => (
+                  <button
+                    key={snapshot.id}
+                    className="block w-full rounded-lg bg-amber-50 p-3 text-left text-sm"
+                    onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
+                  >
+                    {snapshot.petName} · 满级成长纪念 · 本轮已获得 {snapshot.earnedBadges} 枚
+                  </button>
+                ))}
+            </div>
             <div className="mt-5">
-              <h4 className="font-black">成长成就</h4>
+              <h4 className="font-black">能量成就</h4>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 {[
                   { score: getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!, label: "破壳新星" },
@@ -1960,30 +2113,226 @@ export function PetPoints() {
                 ))}
               </div>
             </div>
-            <div className="mt-5 flex flex-wrap gap-3">
-              <Button
-                variant="outline"
-                className="h-11 flex-1 rounded-xl font-black"
-                onClick={() => setNotice("成长奖状已生成并保存到本地记录")}
-              >
-                <FileText className="h-5 w-5" />
-                创建奖状
-              </Button>
-              <Button
-                className="h-11 flex-1 rounded-xl bg-slate-950 font-black text-white"
-                disabled={!historyStudent.petId}
-                onClick={() => setNotice("宠物合影已加入成长档案")}
-              >
-                <PawPrint className="h-5 w-5" />
-                宠物合影
-              </Button>
+            <div className="mt-5 space-y-3">
+              <h4 className="font-black">养成成就</h4>
+              {completed
+                .filter(item => item.studentId === historyStudent.id)
+                .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
+                .map(snapshot => (
+                  <div key={snapshot.id} className="break-words rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <CompletedPetPortrait petId={snapshot.petId} />
+                    <strong>
+                      {snapshot.petName} · Lv.{snapshot.level}
+                    </strong>
+                    <p className="text-sm">
+                      {formatDate(snapshot.completedAt)} · 满级纪念 · 本轮已获得 {snapshot.earnedBadges} 枚成长徽章
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "certificate" })}
+                      >
+                        奖状
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setCertificate({ snapshot, name: historyStudent.name, kind: "memory" })}
+                      >
+                        合影纪念
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              {!completed.some(item => item.studentId === historyStudent.id) && (
+                <p className="text-sm text-slate-500">
+                  暂无可追溯完成档案{historyStudent.completedPets > 0 ? "；历史详情不可追溯" : ""}
+                </p>
+              )}
+              {!historyStudent.petId && (
+                <Button
+                  onClick={() => {
+                    setHistoryStudentId(null);
+                    openPetPicker(historyStudent.id);
+                  }}
+                >
+                  选择新宠物，开始下一轮
+                </Button>
+              )}
+              {historyStudent.petId && !historyStudent.completionPending && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setHistoryStudentId(null);
+                    openPetPicker(historyStudent.id);
+                  }}
+                >
+                  更换当前宠物（保留进度）
+                </Button>
+              )}
             </div>
             <div className="mt-5 rounded-xl bg-slate-50 p-5">
               <div className="flex items-center gap-2">
                 <Gift className="h-5 w-5 text-slate-400" />
                 <h4 className="font-black">兑换记录</h4>
               </div>
-              <p className="mt-4 text-center text-sm font-semibold text-slate-400">暂时没有奖品兑换记录</p>
+              {redemptions
+                .filter(item => item.studentId === historyStudent.id)
+                .map(item => (
+                  <p key={item.id} className="mt-3 text-sm">
+                    {formatDate(item.createdAt)} · {item.rewardName} · {item.cost} 积分
+                  </p>
+                ))}
+              {!redemptions.some(item => item.studentId === historyStudent.id) && (
+                <p className="mt-4 text-center text-sm text-slate-400">暂时没有奖品兑换记录</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {rewardStoreOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
+          <section
+            data-pet-dialog
+            className="flex max-h-[80dvh] w-full max-w-[880px] flex-col overflow-hidden rounded-3xl border border-orange-100 bg-[#fffdf9] shadow-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-orange-100 bg-orange-50/70 px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="rounded-xl bg-white p-2 text-amber-500 shadow-sm">
+                  <Gift className="h-6 w-6" />
+                </span>
+                <div>
+                  <h3 className="font-black text-slate-900">积分兑换站</h3>
+                  <p className="text-xs text-amber-700">商品 {availableRewards.length} · 用积分兑换一份小奖励</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 rounded-full bg-white"
+                aria-label="关闭兑换站"
+                onClick={() => setRewardStoreOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="shrink-0 border-b border-orange-100 px-4 py-3 sm:px-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex rounded-xl bg-slate-100 p-1" role="group" aria-label="兑换站导航">
+                  {(["商品列表", "兑换记录"] as const).map(tab => (
+                    <button
+                      key={tab}
+                      aria-pressed={rewardStoreTab === tab}
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-sm font-bold text-slate-500",
+                        rewardStoreTab === tab && "bg-white text-amber-700 shadow-sm"
+                      )}
+                      onClick={() => setRewardStoreTab(tab)}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  variant="ghost"
+                  className="text-slate-500"
+                  onClick={() => {
+                    setRewardStoreOpen(false);
+                    openSettingsPanel("奖品配置");
+                  }}
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  商店管理
+                </Button>
+              </div>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <label className="flex min-w-0 items-center gap-2 text-sm font-bold text-slate-600">
+                  兑换学生
+                  <select
+                    aria-label="兑换学生"
+                    className="min-w-0 flex-1 rounded-xl border border-orange-100 bg-white p-2 sm:max-w-72"
+                    value={rewardStudent?.id ?? ""}
+                    onChange={event => setRewardStudentId(event.target.value)}
+                  >
+                    {classStudents.map(student => (
+                      <option key={student.id} value={student.id}>
+                        {student.name} · 可用积分 {student.score}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-800">
+                  可用积分 {rewardStudent?.score ?? 0}
+                </span>
+              </div>
+            </div>
+            <div className="min-h-0 overflow-y-auto p-4 sm:p-5">
+              <p className="mb-4 text-xs text-slate-500">兑换仅扣可用积分，不影响宠物经验、等级或徽章。</p>
+              {rewardStoreTab === "商品列表" ? (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {availableRewards.map(reward => {
+                    const unavailable = reward.stock < 1;
+                    const insufficient = !rewardStudent || rewardStudent.score < reward.cost;
+                    return (
+                      <article key={reward.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-amber-50 to-orange-50">
+                          <span
+                            className={cn(
+                              "absolute left-3 top-3 rounded-full bg-white/90 px-2 py-1 text-xs font-bold",
+                              unavailable ? "text-slate-400" : "text-emerald-700"
+                            )}
+                          >
+                            {unavailable ? "已兑完" : `库存 ${reward.stock}`}
+                          </span>
+                          <Gift className={cn("h-12 w-12 text-amber-500", unavailable && "opacity-30")} />
+                        </div>
+                        <div className="p-4">
+                          <h4 className="break-words font-black text-slate-900">{reward.name}</h4>
+                          <p className="mt-1 text-xs text-slate-400">班级积分好礼</p>
+                          <div className="mt-5 flex items-center justify-between gap-2">
+                            <span className="font-black text-amber-600">
+                              {reward.cost} <span className="text-xs">积分</span>
+                            </span>
+                            <Button
+                              className="rounded-xl bg-amber-500 hover:bg-amber-600"
+                              disabled={busy || unavailable || insufficient}
+                              aria-label={`兑换${reward.name}`}
+                              onClick={() => void redeemReward(reward)}
+                            >
+                              {unavailable ? "已兑完" : insufficient ? "积分不足" : "兑换"}
+                            </Button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {!availableRewards.length && (
+                    <p className="col-span-full py-10 text-center text-sm text-slate-400">
+                      暂无可兑换奖品，请在商店管理中添加。
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {redemptions
+                    .filter(item => item.studentId === rewardStudent?.id)
+                    .map(item => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4"
+                      >
+                        <div className="min-w-0">
+                          <p className="break-words font-bold">{item.rewardName}</p>
+                          <p className="mt-1 text-xs text-slate-400">{formatDate(item.createdAt)}</p>
+                        </div>
+                        <span className="shrink-0 font-bold text-amber-700">−{item.cost} 积分</span>
+                      </div>
+                    ))}
+                  {!redemptions.some(item => item.studentId === rewardStudent?.id) && (
+                    <p className="py-10 text-center text-sm text-slate-400">该学生暂无兑换记录</p>
+                  )}
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -1991,7 +2340,10 @@ export function PetPoints() {
 
       {reportOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
-          <section className="max-h-[84vh] w-full max-w-[900px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <section
+            data-pet-dialog
+            className="max-h-[84vh] w-full max-w-[900px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-black">{activeClass.name}学期成长报告</h3>
@@ -2003,8 +2355,8 @@ export function PetPoints() {
             </div>
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
-                { label: "班级总积分", value: totalScore, icon: BarChart3 },
-                { label: "人均积分", value: averageScore, icon: Sparkles },
+                { label: "班级可用积分", value: totalScore, icon: BarChart3 },
+                { label: "人均可用积分", value: averageScore, icon: Sparkles },
                 { label: "评价次数", value: classRecords.length, icon: ClipboardList },
                 { label: "已孵化宠物", value: hatchedCount, icon: PawPrint }
               ].map(item => (
@@ -2073,7 +2425,10 @@ export function PetPoints() {
 
       {settingsPanel && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
-          <section className="max-h-[84vh] w-full max-w-[760px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <section
+            data-pet-dialog
+            className="max-h-[84vh] w-full max-w-[760px] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-black">{settingsPanel}</h3>
@@ -2120,7 +2475,7 @@ export function PetPoints() {
                   </label>
                   <Button
                     className="bg-orange-500 font-bold hover:bg-orange-600"
-                    disabled={!newRubricLabel.trim()}
+                    disabled={busy || !newRubricLabel.trim()}
                     onClick={() => void addRubric()}
                   >
                     <Plus className="h-4 w-4" />
@@ -2161,7 +2516,11 @@ export function PetPoints() {
                           className="w-24"
                           aria-label="指标分值"
                         />
-                        <Button size="sm" disabled={!editingRubricLabel.trim()} onClick={() => void saveRubric()}>
+                        <Button
+                          size="sm"
+                          disabled={busy || !editingRubricLabel.trim()}
+                          onClick={() => void saveRubric()}
+                        >
                           <Save className="h-4 w-4" />
                           保存
                         </Button>
@@ -2205,11 +2564,153 @@ export function PetPoints() {
                 ))}
               </div>
             )}
+            {settingsPanel === "奖品配置" && (
+              <div className="mt-5 space-y-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <h4 className="font-black">新增奖品</h4>
+                  <p className="mt-1 text-sm text-slate-500">设置兑换所需积分和初始库存。</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <label className="grid gap-2 text-sm font-bold">
+                      奖品名称
+                      <Input
+                        aria-label="奖品名称"
+                        placeholder="例如：星星贴纸"
+                        maxLength={64}
+                        value={newRewardName}
+                        onChange={event => setNewRewardName(event.target.value)}
+                      />
+                    </label>
+                    <label className="grid gap-2 text-sm font-bold">
+                      兑换积分
+                      <Input
+                        aria-label="兑换积分"
+                        type="number"
+                        min={1}
+                        max={2147483647}
+                        value={newRewardCost}
+                        onChange={event => setNewRewardCost(Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="grid gap-2 text-sm font-bold">
+                      初始库存
+                      <Input
+                        aria-label="初始库存"
+                        type="number"
+                        min={0}
+                        max={2147483647}
+                        value={newRewardStock}
+                        onChange={event => setNewRewardStock(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    className="mt-4 w-full sm:w-auto"
+                    disabled={
+                      busy ||
+                      !newRewardName.trim() ||
+                      !Number.isInteger(newRewardCost) ||
+                      newRewardCost < 1 ||
+                      newRewardCost > 2147483647 ||
+                      !Number.isInteger(newRewardStock) ||
+                      newRewardStock < 0 ||
+                      newRewardStock > 2147483647
+                    }
+                    onClick={() => void addReward()}
+                  >
+                    创建奖品
+                  </Button>
+                </div>
+                <div>
+                  <h4 className="font-black">已有奖品 · {rewards.length} 项</h4>
+                  <p className="mt-1 text-sm text-slate-500">补充数量会累加到当前库存，兑换记录保持不变。</p>
+                  <div className="mt-3 grid gap-3">
+                    {rewards.map(reward => {
+                      const quantity = Number(restockDrafts[reward.id] ?? "1");
+                      return (
+                        <div
+                          key={reward.id}
+                          className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="min-w-0">
+                            <h5 className="break-words font-bold">{reward.name}</h5>
+                            <p className="mt-1 text-sm text-slate-500">
+                              {reward.cost} 积分 / 件 ·{" "}
+                              <span className={reward.stock ? "text-emerald-700" : "text-rose-600"}>
+                                剩余库存 {reward.stock}
+                              </span>
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-end gap-2">
+                            <label className="grid min-w-0 flex-1 gap-1 text-xs font-bold text-slate-500">
+                              补充数量
+                              <Input
+                                className="w-full sm:w-28"
+                                aria-label={`为${reward.name}补充库存数量`}
+                                type="number"
+                                min={1}
+                                max={2147483647 - reward.stock}
+                                value={restockDrafts[reward.id] ?? "1"}
+                                onChange={event =>
+                                  setRestockDrafts(current => ({ ...current, [reward.id]: event.target.value }))
+                                }
+                              />
+                            </label>
+                            <Button
+                              disabled={
+                                busy ||
+                                !Number.isInteger(quantity) ||
+                                quantity < 1 ||
+                                quantity + reward.stock > 2147483647
+                              }
+                              onClick={async () => {
+                                if (await perform(`/api/pet-points/rewards/${reward.id}/stock`, "POST", { quantity })) {
+                                  setRestockDrafts(current => ({ ...current, [reward.id]: "1" }));
+                                  setNotice(`已为${reward.name}补充 ${quantity} 件库存`);
+                                }
+                              }}
+                            >
+                              补充库存
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="shrink-0 text-rose-600"
+                              disabled={busy}
+                              title={`删除奖品${reward.name}`}
+                              aria-label={`删除奖品${reward.name}`}
+                              onClick={() =>
+                                setConfirmAction({
+                                  title: "删除奖品",
+                                  description: `确定删除“${reward.name}”吗？删除后不可再兑换，已有兑换记录会保留。`,
+                                  confirmLabel: "确认删除",
+                                  onConfirm: async () => {
+                                    const saved = await perform(`/api/pet-points/rewards/${reward.id}`, "DELETE", {});
+                                    if (saved) setNotice(`已删除奖品：${reward.name}`);
+                                    return saved;
+                                  }
+                                })
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!rewards.length && (
+                      <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">
+                        暂无奖品，请先创建。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             {settingsPanel === "等级规则" && (
               <div className="mt-5 space-y-4">
                 <p className="rounded-xl bg-orange-50 p-4 text-sm font-bold leading-6 text-orange-800">
-                  宠物等级与形态根据当前课堂积分计算，达到 {maxPetEnergy} 分时为最终形态；宠物成长能量继续独立累计。默认
-                  10 级；设置较少等级时，会从 10 个形态中均匀选取，始终保留蛋和最终形态。
+                  宠物等级与形态根据本轮经验计算，达到 {maxPetEnergy} 分时为最终形态；宠物成长能量继续独立累计。默认 10
+                  级；设置较少等级时，会从 10 个形态中均匀选取，始终保留蛋和最终形态。
                 </p>
                 <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 p-4">
                   <label className="text-sm font-bold text-slate-600">
@@ -2247,7 +2748,7 @@ export function PetPoints() {
                   </label>
                   <Button
                     onClick={() => void savePetSettings()}
-                    disabled={maxPetLevelDraft === maxPetLevel && maxPetEnergyDraft === maxPetEnergy}
+                    disabled={busy || (maxPetLevelDraft === maxPetLevel && maxPetEnergyDraft === maxPetEnergy)}
                   >
                     保存设置
                   </Button>
@@ -2258,12 +2759,12 @@ export function PetPoints() {
                     return (
                       <div key={index} className="rounded-xl border border-slate-100 p-4 text-center">
                         <strong className="text-2xl text-orange-500">
-                          {index === 0 ? 0 : Math.ceil((index * maxPetEnergy) / (maxPetLevel - 1))}
+                          {index === 0 ? 0 : Math.round((index * maxPetEnergy) / (maxPetLevel - 1))}
                         </strong>
                         <span className="mt-2 block text-sm font-black">
                           Lv.{index + 1} · {formStages[formIndex]}
                         </span>
-                        <span className="text-xs font-semibold text-slate-400">课堂积分</span>
+                        <span className="text-xs font-semibold text-slate-400">本轮经验</span>
                       </div>
                     );
                   })}
@@ -2325,8 +2826,12 @@ export function PetPoints() {
             )}
             {settingsPanel === "积分统计" && (
               <div className="mt-5">
+                {incompleteHistory && (
+                  <p className="text-sm text-amber-700">历史记录缺少实际变化，统计不完整；旧记录按原请求值展示。</p>
+                )}
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <StatTile label="班级总分" value={totalScore} />
+                  <StatTile label="可用积分合计" value={totalScore} />
+                  <StatTile label="记录累计评价（净值）" value={evaluatedScore} />
                   <StatTile label="平均分" value={averageScore} />
                   <StatTile label="最高分" value={Math.max(0, ...classStudents.map(student => student.score))} />
                 </div>
@@ -2335,14 +2840,14 @@ export function PetPoints() {
                     <div key={student.id}>
                       <div className="flex justify-between text-sm font-bold">
                         <span>{student.name}</span>
-                        <span>
-                          {student.score}/{student.maxScore}
-                        </span>
+                        <span>{student.score} 可用积分</span>
                       </div>
                       <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                         <div
                           className="h-full rounded-full bg-gradient-to-r from-orange-500 to-yellow-400"
-                          style={{ width: `${(student.score / student.maxScore) * 100}%` }}
+                          style={{
+                            width: `${(student.score / Math.max(1, ...classStudents.map(item => item.score))) * 100}%`
+                          }}
                         />
                       </div>
                     </div>
@@ -2356,14 +2861,17 @@ export function PetPoints() {
 
       {scoreAdjustStudent && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
-          <section className="w-full max-w-[560px] rounded-2xl bg-white p-6 shadow-2xl">
+          <section
+            data-pet-dialog
+            className="max-h-[90dvh] w-full max-w-[560px] overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl sm:p-6"
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black">
                   {scoreAdjustMode === "add" ? "加分" : "扣分"} · {scoreAdjustStudent.name}
                 </h3>
                 <p className="mt-1 text-sm font-semibold text-slate-400">
-                  当前 {scoreAdjustStudent.score}/{scoreAdjustStudent.maxScore} 分，宠物能量{" "}
+                  可用积分 {scoreAdjustStudent.score} 分，本轮经验 {scoreAdjustStudent.petExperience}，宠物能量{" "}
                   {scoreAdjustStudent.petProgress}/{maxPetEnergy}
                 </p>
               </div>
@@ -2382,7 +2890,7 @@ export function PetPoints() {
                   onClick={() => {
                     setScoreAdjustMode(item.mode);
                     setScoreAdjustReason(item.mode === "add" ? "手动加分" : "手动扣分");
-                    setScoreAdjustValue(1);
+                    setScoreAdjustValue("1");
                   }}
                   className={cn(
                     "flex h-11 items-center justify-center gap-2 rounded-lg text-sm font-black text-slate-500 transition",
@@ -2431,7 +2939,11 @@ export function PetPoints() {
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 rounded-lg"
-                  onClick={() => setScoreAdjustValue(value => Math.max(1, value - 1))}
+                  onClick={() =>
+                    setScoreAdjustValue(value =>
+                      String(Math.max(1, Math.min(maxScoreAdjustment, Number(value) || 1) - 1))
+                    )
+                  }
                   aria-label="减少调整分值"
                 >
                   <Minus className="h-4 w-4" />
@@ -2442,16 +2954,24 @@ export function PetPoints() {
                   min={1}
                   max={maxScoreAdjustment}
                   value={scoreAdjustValue}
-                  onChange={event =>
-                    setScoreAdjustValue(Math.max(1, Math.min(maxScoreAdjustment, Number(event.target.value) || 1)))
+                  onChange={event => setScoreAdjustValue(event.target.value)}
+                  aria-invalid={
+                    !Number.isInteger(Number(scoreAdjustValue)) ||
+                    Number(scoreAdjustValue) < 1 ||
+                    Number(scoreAdjustValue) > maxScoreAdjustment
                   }
+                  aria-describedby="score-adjust-hint"
                   className="h-11 flex-1 rounded-xl bg-slate-50 text-center text-xl font-black"
                 />
                 <Button
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 rounded-lg"
-                  onClick={() => setScoreAdjustValue(value => Math.min(maxScoreAdjustment, value + 1))}
+                  onClick={() =>
+                    setScoreAdjustValue(value =>
+                      String(Math.min(maxScoreAdjustment, Math.max(0, Number(value) || 0) + 1))
+                    )
+                  }
                   aria-label="增加调整分值"
                 >
                   <Plus className="h-4 w-4" />
@@ -2471,7 +2991,16 @@ export function PetPoints() {
                 placeholder="备注（可选）"
                 className="h-11 rounded-xl bg-slate-50"
               />
+              <p id="score-adjust-hint" className="text-xs text-slate-500">
+                请输入 1 到 {maxScoreAdjustment} 的整数，可清空后重新输入。
+              </p>
               <Button
+                disabled={
+                  busy ||
+                  !Number.isInteger(Number(scoreAdjustValue)) ||
+                  Number(scoreAdjustValue) < 1 ||
+                  Number(scoreAdjustValue) > maxScoreAdjustment
+                }
                 onClick={() => applyScoreAdjust()}
                 className={cn(
                   "h-12 rounded-xl text-base font-black text-white",
@@ -2486,31 +3015,20 @@ export function PetPoints() {
         </div>
       )}
 
-      {confirmAction && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4">
-          <section className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-100 text-rose-500">
-              <Trash2 className="h-6 w-6" />
-            </div>
-            <h3 className="mt-4 text-xl font-black">{confirmAction.title}</h3>
-            <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{confirmAction.description}</p>
-            <div className="mt-6 flex justify-end gap-3">
-              <Button variant="outline" className="rounded-xl font-bold" onClick={() => setConfirmAction(null)}>
-                取消
-              </Button>
-              <Button
-                className="rounded-xl bg-rose-500 font-black text-white hover:bg-rose-600"
-                onClick={() => {
-                  confirmAction.onConfirm();
-                  setConfirmAction(null);
-                }}
-              >
-                {confirmAction.confirmLabel}
-              </Button>
-            </div>
-          </section>
-        </div>
-      )}
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        title={confirmAction?.title ?? ""}
+        description={confirmAction?.description ?? ""}
+        confirmText={confirmAction?.confirmLabel}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (!confirmAction || busyRef.current) return;
+          void confirmAction.onConfirm().then(saved => {
+            if (saved) setConfirmAction(null);
+          });
+        }}
+      />
+      {certificate && <PetCertificate {...certificate} onClose={() => setCertificate(null)} onError={setNotice} />}
     </div>
   );
 }

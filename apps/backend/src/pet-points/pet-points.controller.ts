@@ -9,7 +9,12 @@ import {
   Post,
 } from '@nestjs/common';
 import {
+  AddRewardStockDto,
   AdjustScoreDto,
+  EvaluatePetsDto,
+  PetWriteDto,
+  PetFlagDto,
+  PetTrophyDto,
   BindPetDto,
   CreateRewardDto,
   CreateRubricDto,
@@ -75,6 +80,16 @@ export class PetPointsController {
     return this.petPointsService.createReward(dto);
   }
 
+  @Delete('rewards/:id')
+  deleteReward(@Param('id') id: string, @Body() dto: PetWriteDto) {
+    return this.petPointsService.deleteReward(id, dto);
+  }
+
+  @Post('rewards/:id/stock')
+  addRewardStock(@Param('id') id: string, @Body() dto: AddRewardStockDto) {
+    return this.petPointsService.addRewardStock(id, dto);
+  }
+
   /** 兑换奖品并记录功能使用。 */
   @Post('rewards/redeem')
   @TrackFeature('pet-points', 'redeem')
@@ -84,7 +99,34 @@ export class PetPointsController {
 
   /** 删除评价记录并回退对应积分。 */
   @Delete('records/:recordId')
-  deleteRecord(@Param('recordId') recordId: string) {
-    return this.petPointsService.deleteRecord(recordId);
+  deleteRecord(@Param('recordId') recordId: string, @Body() dto: PetWriteDto) {
+    return this.petPointsService.deleteRecord(recordId, dto);
+  }
+
+  @Post('scores/evaluate')
+  @TrackFeature('pet-points', 'score')
+  evaluate(@Body() dto: EvaluatePetsDto) {
+    return this.petPointsService.evaluate(dto, false);
+  }
+  @Post('scores/batch-evaluate')
+  @TrackFeature('pet-points', 'score')
+  batchEvaluate(@Body() dto: EvaluatePetsDto) {
+    return this.petPointsService.evaluate(dto, true);
+  }
+  @Post('students/:studentId/pet/complete')
+  complete(@Param('studentId') id: string, @Body() dto: PetWriteDto) {
+    return this.petPointsService.completePet(id, dto);
+  }
+  @Post('students/:studentId/pet/reset')
+  reset(@Param('studentId') id: string, @Body() dto: PetWriteDto) {
+    return this.petPointsService.resetPet(id, dto);
+  }
+  @Patch('students/:studentId/absence')
+  absence(@Param('studentId') id: string, @Body() dto: PetFlagDto) {
+    return this.petPointsService.setAbsence(id, dto);
+  }
+  @Patch('students/:studentId/trophies')
+  trophies(@Param('studentId') id: string, @Body() dto: PetTrophyDto) {
+    return this.petPointsService.adjustTrophies(id, dto);
   }
 }

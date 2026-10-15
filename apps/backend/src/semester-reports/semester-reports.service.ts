@@ -1707,6 +1707,7 @@ export class SemesterReportsService {
     const byId = new Map<string, PetStudentEntity>();
     for (const row of rows) {
       byId.set(row.id, row);
+      if (row.logicalId) byId.set(row.logicalId, row);
       byId.set(
         row.id.startsWith(`${teacherId}:`)
           ? row.id.slice(teacherId.length + 1)

@@ -40,4 +40,19 @@ describe('AppController (e2e)', () => {
       .send({ maxLevel: 10, finalEnergy: 200 })
       .expect(401);
   });
+  it('protects all growth and atomic scoring endpoints without a teacher session', async () => {
+    for (const path of [
+      '/pet-points/scores/evaluate',
+      '/pet-points/scores/batch-evaluate',
+      '/pet-points/rewards/gift/stock',
+      '/pet-points/students/one/pet/complete',
+      '/pet-points/students/one/pet/reset',
+    ])
+      await request(app.getHttpServer()).post(path).send({}).expect(401);
+    for (const path of [
+      '/pet-points/students/one/absence',
+      '/pet-points/students/one/trophies',
+    ])
+      await request(app.getHttpServer()).patch(path).send({}).expect(401);
+  });
 });

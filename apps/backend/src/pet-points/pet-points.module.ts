@@ -1,3 +1,5 @@
+import { PetCompletedEntity } from './entities/pet-completed.entity';
+import { PetOperationEntity } from './entities/pet-operation.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PetEvaluationRecordEntity } from './entities/pet-evaluation-record.entity';
@@ -15,6 +17,8 @@ import { PetPointsService } from './pet-points.service';
   imports: [
     TypeOrmModule.forFeature([
       PetStudentEntity,
+      PetCompletedEntity,
+      PetOperationEntity,
       PetStateHistoryEntity,
       PetSettingEntity,
       PetRubricEntity,
