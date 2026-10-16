@@ -163,7 +163,6 @@ function errorMessage(error: unknown) {
 /** 原版与 v2 共用的教师工作台：课程输入 → 分学生评价 → 后台生成 → 草稿核对 → 发布分享。 */
 export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const isV2 = version === "v2";
-  const initializedTerm = useRef(false);
   const reportTitle = isV2 ? "学期报告v2" : "学期报告";
   const sectionId = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -183,9 +182,13 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [termId, setTermId] = useState("");
   const [subjectId, setSubjectId] = useState("");
   const subjectRevision = useRef(0);
-  const [period, setPeriod] = useState(isV2 ? "term" : "month");
+  const [period, setPeriod] = useState("week");
   const [generationMode] = useState("template");
-  const [start, setStart] = useState(localDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+  const [start, setStart] = useState(() => {
+    const monday = new Date();
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return localDateString(monday);
+  });
   const [end, setEnd] = useState(localDateString(new Date()));
   const [selected, setSelected] = useState<string[]>([]);
   const [keywords, setKeywords] = useState("");
@@ -301,6 +304,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [documentRefreshFailed, setDocumentRefreshFailed] = useState(false);
   const [imageReport, setImageReport] = useState<{ studentName: string; url: string } | null>(null);
   const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
+  // Historical reports can have a different period from the current creation form.
+  const editingPeriodTitle = periodTitles[editing?.period ?? ""] ?? "本期";
   useEffect(() => {
     if (!editing?.id) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -352,18 +357,9 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setDocuments(d);
       setDocumentRefreshFailed(false);
       setTermId(current => current || t[0]?.id || "");
-      if (isV2 && !initializedTerm.current && t[0]) {
-        initializedTerm.current = true;
-        setStart(t[0].startDate.slice(0, 10));
-        setEnd(
-          t[0].endDate.slice(0, 10) < localDateString(new Date())
-            ? t[0].endDate.slice(0, 10)
-            : localDateString(new Date())
-        );
-      }
       setSubjectId(current => current || s[0]?.id || "");
     },
-    [version, isV2]
+    [version]
   );
 
   useEffect(() => {
@@ -2220,7 +2216,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                     {!isV2 && (
                       <section className="space-y-3">
                         <h3 className="font-semibold">
-                          {periodTitles[period]}学习内容
+                          {editingPeriodTitle}学习内容
                           {!draft.learningContents?.length || draft.learningContents.some(showsLearningMastery)
                             ? "与掌握"
                             : ""}
@@ -2286,7 +2282,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                       />
                     )}
                     <section className="space-y-3">
-                      <h3 className="font-semibold">{periodTitles[period]}的课堂表现</h3>
+                      <h3 className="font-semibold">{editingPeriodTitle}的课堂表现</h3>
                       <p className="text-xs text-muted-foreground">
                         仅填写实际观察，如“基本完成”“能说词”“引导参与”；留空的项目不会展示。
                       </p>
