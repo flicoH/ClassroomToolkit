@@ -45,6 +45,57 @@ describe("SemesterReports mobile workflow", () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
+  describe.each(["v1", "v2"] as const)("%s default report period", version => {
+    it.each([
+      ["2026-10-16", "2026-10-12"],
+      ["2026-10-19", "2026-10-19"],
+      ["2026-11-01", "2026-10-26"]
+    ])("starts at the current Monday on %s", async (today, monday) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(`${today}T12:00:00`));
+      try {
+        await act(async () => root.render(<SemesterReports version={version} />));
+        expect(container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')?.value).toBe("week");
+        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, today]);
+        const period = container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')!;
+        act(() => {
+          period.value = "month";
+          period.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([`${today.slice(0, 7)}-01`, today]);
+        if (version === "v2") {
+          act(() => {
+            period.value = "term";
+            period.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-09-01", today]);
+        }
+        act(() => {
+          period.value = "week";
+          period.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, today]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the weekly default when initial loading fails", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-16T12:00:00"));
+      api.get.mockRejectedValue(new Error("学期加载失败"));
+      try {
+        await act(async () => root.render(<SemesterReports version={version} />));
+        expect(container.querySelector('[role="status"]')?.textContent).toContain("学期加载失败");
+        expect(container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')?.value).toBe("week");
+        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+        expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-10-12", "2026-10-16"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
   async function readyV2Generation(version: "v1" | "v2" = "v2") {
     const originalGet = api.get.getMockImplementation()!;
     api.get.mockImplementation(async (url: string) => {
@@ -452,7 +503,9 @@ describe("SemesterReports mobile workflow", () => {
         "/api/semester-reports/reports/generate",
         expect.objectContaining({
           reportVersion: "v2",
-          period: "term",
+          period: "week",
+          start: expect.any(String),
+          end: expect.any(String),
           studentIds: ["student"],
           courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }]
         })
@@ -467,6 +520,7 @@ describe("SemesterReports mobile workflow", () => {
     "shows unavailable history and a retryable read failure without substituting the current pet in %s",
     async version => {
       vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-09T12:00:00"));
       try {
         api.post.mockImplementation(async (url: string) =>
           url.endsWith("preview-input")
@@ -1037,6 +1091,58 @@ describe("SemesterReports mobile workflow", () => {
         expect.objectContaining({ id: "pdf-one", mastery: "practicing" })
       ])
     );
+  });
+
+  it.each([
+    ["v1", "week", "本周"],
+    ["v1", "month", "本月"],
+    ["v1", "term", "本学期"],
+    ["v2", "week", "本周"],
+    ["v2", "month", "本月"],
+    ["v2", "term", "本学期"]
+  ] as const)("uses the edited %s report's %s period for headings", async (version, period, title) => {
+    const originalGet = api.get.getMockImplementation()!;
+    const report = {
+      id: "report",
+      reportVersion: version,
+      studentName: "小明",
+      className: "一班",
+      period,
+      status: "draft",
+      termId: "term",
+      subjectId: "subject",
+      content: {
+        summary: "原寄语",
+        courseOverview: "课程",
+        strengths: [],
+        areasToImprove: [],
+        homeSuggestions: [],
+        limitations: [],
+        reportVersion: version
+      }
+    };
+    api.get.mockImplementation(async (url: string) => {
+      if (url.endsWith("/reports")) return [structuredClone(report)];
+      if (url.endsWith("/reports/report")) return structuredClone(report);
+      return originalGet(url);
+    });
+    await act(async () => root.render(<SemesterReports version={version} />));
+    // Keep the composer on a different period so its selection cannot mask a stale editor title.
+    const composerPeriod = container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')!;
+    act(() => {
+      composerPeriod.value = period === "week" ? "month" : "week";
+      composerPeriod.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => button("预览 / 编辑").click());
+    const modal = document.querySelector('[role="dialog"]')!;
+    const headings = () => [...modal.querySelectorAll("h3")].map(heading => heading.textContent);
+    expect(headings()).toContain(`${title}的课堂表现`);
+    if (version === "v1") expect(headings()).toContain(`${title}学习内容与掌握`);
+    api.patch.mockRejectedValueOnce(new Error("保存失败"));
+    await act(async () => button("保存草稿").click());
+    expect(modal.textContent).toContain("保存失败");
+    expect(headings()).toContain(`${title}的课堂表现`);
+    expect(api.patch.mock.calls.at(-1)![1].content.summary).toBe("原寄语");
   });
 
   it("adds and removes draft subjects, preserving unsaved edits and allowing retries", async () => {
