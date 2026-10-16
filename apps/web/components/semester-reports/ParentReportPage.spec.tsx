@@ -60,4 +60,38 @@ describe("public report initial rendering", () => {
     expect(container.querySelector("article")).toBeNull();
     act(() => root.unmount());
   });
+  it("shows all saved subject evaluations on an existing parent link without classroom photos", async () => {
+    const subjects = ["英语", "数学", "拼音", "阅读"].map((name, index) => ({ subjectId: `subject-${index}`, name }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ...report,
+          content: {
+            ...report.content,
+            classroomPhoto: null,
+            classroomPhotos: [null, null],
+            reportSubjects: subjects,
+            classroomPerformance: subjects.map(subject => ({
+              subjectId: subject.subjectId,
+              text: `${subject.name}课堂任务 · 独立完成`,
+              sourceRefs: ["教师核对与评价"]
+            }))
+          }
+        })
+      })
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => root.render(<ParentReportPage params={Promise.resolve({ token: "existing-token" })} />));
+    expect(container.querySelectorAll('[aria-label="分学科学习表现"]')).toHaveLength(1);
+    for (const subject of subjects) {
+      const section = container.querySelector(`[aria-label="${subject.name}的课堂表现"]`);
+      expect(section?.textContent).toContain(`${subject.name}课堂任务`);
+      expect(section?.textContent).toContain("独立完成");
+    }
+    expect(container.querySelector('[aria-label="课堂照片"]')).toBeNull();
+    act(() => root.unmount());
+  });
 });

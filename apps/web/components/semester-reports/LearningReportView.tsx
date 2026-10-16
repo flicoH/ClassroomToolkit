@@ -118,6 +118,9 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     sections.set(item.section, items);
   }
   const isV2 = content.reportVersion === "v2";
+  // 照片不能决定已保存学科评价的可见性；两者都为空时才省略空区块。
+  const showClassroomPerformance =
+    photoCount > 0 || Boolean(content.classroomPerformance?.some(item => item.text.trim()));
   const showTeacherMessage = !isV2 || Boolean(content.summary.trim());
   const focusEntries = isV2 ? content.areasToImprove.filter(entry => entry.text.trim()) : content.areasToImprove;
   const showNextFocus = !isV2 || focusEntries.length > 0;
@@ -209,49 +212,52 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               value={content.growthAssessment}
               periodTitle={periodTitles[report.period] ?? "本期"}
             />
-            <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
-              <h2 className="mb-4 text-lg font-bold text-sky-900">{periodTitles[report.period]}学习表现</h2>
-              <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                {(content.reportSubjects ?? []).map(subject => (
-                  <section
-                    key={subject.subjectId}
-                    aria-label={`${subject.name}的课堂表现`}
-                    className="min-w-0 border-b border-slate-100 py-4"
-                  >
-                    <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
-                    <p className="mb-3 mt-1 text-sm font-semibold text-violet-700">课堂表现记录</p>
-                    {(content.classroomPerformance ?? [])
-                      .filter(item => item.subjectId === subject.subjectId)
-                      .map((item, index) => {
-                        const separator = item.text.indexOf(" · ");
-                        return (
-                          <p
-                            key={index}
-                            className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
-                          >
-                            {separator >= 0 ? (
-                              <>
-                                <span className="mr-2 font-semibold text-teal-700">
-                                  {item.text.slice(0, separator)}：
-                                </span>
-                                {item.text.slice(separator + 3)}
-                              </>
-                            ) : (
-                              item.text
-                            )}
-                          </p>
-                        );
-                      })}
-                    {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
-                      <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            </section>
+            {showClassroomPerformance && (
+              <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
+                <h2 className="mb-4 text-lg font-bold text-sky-900">{periodTitles[report.period]}学习表现</h2>
+                <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                  {(content.reportSubjects ?? []).map(subject => (
+                    <section
+                      key={subject.subjectId}
+                      aria-label={`${subject.name}的课堂表现`}
+                      className="min-w-0 border-b border-slate-100 py-4"
+                    >
+                      <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
+                      <p className="mb-3 mt-1 text-sm font-semibold text-violet-700">课堂表现记录</p>
+                      {(content.classroomPerformance ?? [])
+                        .filter(item => item.subjectId === subject.subjectId)
+                        .map((item, index) => {
+                          const separator = item.text.indexOf(" · ");
+                          return (
+                            <p
+                              key={index}
+                              className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
+                            >
+                              {separator >= 0 ? (
+                                <>
+                                  <span className="mr-2 font-semibold text-teal-700">
+                                    {item.text.slice(0, separator)}：
+                                  </span>
+                                  {item.text.slice(separator + 3)}
+                                </>
+                              ) : (
+                                item.text
+                              )}
+                            </p>
+                          );
+                        })}
+                      {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
+                        <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
-        {(content.reportVersion !== "v2" || Boolean(content.classroomPerformance?.some(item => !item.subjectId))) && (
+        {(content.reportVersion !== "v2" ||
+          Boolean(content.classroomPerformance?.some(item => !item.subjectId && item.text.trim()))) && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             {content.reportVersion !== "v2" && (
               <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
