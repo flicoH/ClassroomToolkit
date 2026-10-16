@@ -120,6 +120,8 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     sections.set(item.section, items);
   }
   const isV2 = content.reportVersion === "v2";
+  const showClassroomPerformance =
+    photoCount > 0 || Boolean(content.classroomPerformance?.some(item => item.text.trim()));
   const showTeacherMessage = !isV2 || Boolean(content.summary.trim());
   const focusEntries = isV2 ? content.areasToImprove.filter(entry => entry.text.trim()) : content.areasToImprove;
   const showNextFocus = !isV2 || focusEntries.length > 0;
@@ -222,8 +224,8 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         )}
         {content.reportVersion === "v2" && (
           <>
-            {/* 课堂照片是 v2 课堂表现的显示条件；圆形头像独立展示，不触发该区块。 */}
-            {photoCount > 0 && (
+            {/* 已填写的学科评价不能因缺少照片而隐藏；无照片且无评价时继续省略空区块。 */}
+            {showClassroomPerformance && (
               <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
                 <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>
                 <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">

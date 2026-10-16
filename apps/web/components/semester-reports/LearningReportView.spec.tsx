@@ -49,7 +49,7 @@ it.each([false, true])(
     expect(body.children[2]?.textContent).toContain("学习准备与课堂能力");
   }
 );
-it("hides the entire v2 classroom performance section without classroom photos even when a student portrait exists", () => {
+it("shows saved v2 subject and legacy evaluations without classroom photos in preview and export", () => {
   for (const forImage of [false, true]) {
     for (const photos of [{}, { classroomPhotos: [null, null], classroomPhoto: "stale-legacy-photo" }]) {
       const rendered = document.createElement("div");
@@ -62,7 +62,7 @@ it("hides the entire v2 classroom performance section without classroom photos e
               ...report.content,
               ...photos,
               reportVersion: "v2",
-              studentPhoto: "data:image/jpeg;base64,portrait",
+              studentPhoto: "portrait",
               reportSubjects: [{ subjectId: "english", name: "英语" }],
               classroomPerformance: [
                 { subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] },
@@ -72,16 +72,68 @@ it("hides the entire v2 classroom performance section without classroom photos e
           }}
         />
       );
-      expect([...rendered.querySelectorAll("h2")].map(node => node.textContent)).not.toContain("课堂表现");
-      expect(rendered.textContent).not.toContain("主动参与");
-      expect(rendered.textContent).not.toContain("旧课堂评价");
+      expect(rendered.querySelectorAll('[aria-label="分学科学习表现"]')).toHaveLength(1);
+      expect(
+        [...rendered.querySelectorAll("h3")].filter(node => node.textContent === "未分学科的原课堂表现")
+      ).toHaveLength(1);
+      expect(rendered.querySelector('[aria-label="英语的课堂表现"]')?.textContent).toContain("主动参与");
+      expect(rendered.textContent).toContain("未分学科的原课堂表现");
+      expect(rendered.textContent).toContain("旧课堂评价");
+      expect(rendered.querySelector('[aria-label="课堂照片"]')).toBeNull();
       expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
       expect(rendered.querySelector('header img[alt="小明的头像"]')).not.toBeNull();
-      expect(rendered.querySelector("header")?.nextElementSibling?.firstElementChild?.textContent).toContain(
+      expect(rendered.querySelector("header")?.nextElementSibling?.children[1]?.textContent).toContain(
         "学习准备与课堂能力"
       );
     }
   }
+});
+it.each([
+  { classroomPerformance: [] },
+  { classroomPerformance: [{ subjectId: "english", text: " \n ", sourceRefs: [] }] }
+])("hides empty v2 classroom performance without photos: %j", ({ classroomPerformance }) => {
+  for (const forImage of [false, true]) {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            classroomPhotos: [null, null],
+            reportSubjects: [{ subjectId: "english", name: "英语" }],
+            classroomPerformance
+          }
+        }}
+      />
+    );
+    expect(rendered.querySelector('[aria-label="分学科学习表现"]')).toBeNull();
+    expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
+  }
+});
+it.each(["english", undefined])("shows a saved evaluation without photos or a portrait (subject: %s)", subjectId => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          reportSubjects: [
+            { subjectId: "english", name: "英语" },
+            { subjectId: "math", name: "数学" }
+          ],
+          classroomPerformance: [{ subjectId, text: "保留已填写的评价", sourceRefs: ["teacher-review"] }]
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("保留已填写的评价");
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).toContain("老师暂未填写");
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).not.toContain("保留已填写的评价");
 });
 it.each([
   { classroomPhoto: "data:image/png;base64,legacy" },
