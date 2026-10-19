@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { GrowthAssessmentFields, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ClassroomPerformanceFields, type PerformanceRating } from "./ClassroomPerformanceFields";
-import { showsLearningMastery, masteryLabels, type LearningContent } from "./LearningReportView";
+import { learningSectionTitle, showsLearningMastery, masteryLabels, type LearningContent } from "./LearningReportView";
 
 export type StudentReportFeedback = {
   learningMastery: Record<string, LearningContent["mastery"]>;
@@ -87,7 +87,9 @@ export function StudentFeedbackForm({
             {learningContents.map((item, index) => (
               <div key={item.id} className="rounded-xl border bg-slate-50/50 p-3">
                 <div className="mb-2 flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between">
-                  <span className="min-w-0 break-words text-xs font-semibold text-indigo-600">{item.section}</span>
+                  <span className="min-w-0 break-words text-xs font-semibold text-indigo-600">
+                    {learningSectionTitle(item.section)}
+                  </span>
                   {showsLearningMastery(item) && (
                     <select
                       aria-label={`${student.name} 学习内容 ${index + 1} 掌握情况`}

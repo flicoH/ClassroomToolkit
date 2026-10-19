@@ -676,3 +676,37 @@ it("formats report dates deterministically even when browser locale date formatt
     locale.mockRestore();
   }
 });
+
+it.each([false, true])("omits the legacy manual suffix from original report headings (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          learningContents: [
+            {
+              id: "manual",
+              section: "科学 · 教师填写",
+              text: "观察种子发芽",
+              mastery: "unassessed",
+              sourceRefs: ["teacher-course:science"]
+            },
+            {
+              id: "pdf",
+              section: "英语 · Unit1",
+              text: "朗读短句",
+              mastery: "unassessed",
+              sourceRefs: ["course:doc:p1"]
+            }
+          ]
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).not.toContain("· 教师填写");
+  expect(rendered.textContent).toContain("科学");
+  expect(rendered.textContent).toContain("英语 · Unit1");
+});

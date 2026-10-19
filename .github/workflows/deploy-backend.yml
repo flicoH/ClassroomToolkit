@@ -86,6 +86,8 @@ jobs:
         run: pnpm --filter ClassRoomToolkitBackend exec jest --runInBand --no-watchman
 
       - name: Test backend E2E
+        env:
+          REPORT_LIST_MYSQL_TEST: "1"
         run: pnpm --filter ClassRoomToolkitBackend exec jest --config ./test/jest-e2e.json --runInBand --forceExit --no-watchman
 
       - name: Build backend

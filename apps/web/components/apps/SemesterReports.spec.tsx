@@ -47,35 +47,42 @@ describe("SemesterReports mobile workflow", () => {
   });
   describe.each(["v1", "v2"] as const)("%s default report period", version => {
     it.each([
-      ["2026-10-16", "2026-10-12"],
-      ["2026-10-19", "2026-10-19"],
-      ["2026-11-01", "2026-10-26"]
-    ])("starts at the current Monday on %s", async (today, monday) => {
+      ["2026-10-16", "2026-10-12", "2026-10-16", "2026-10-31"],
+      ["2026-10-19", "2026-10-19", "2026-10-23", "2026-10-31"],
+      ["2026-10-21", "2026-10-19", "2026-10-23", "2026-10-31"],
+      ["2026-10-31", "2026-10-26", "2026-10-30", "2026-10-31"],
+      ["2026-11-01", "2026-10-26", "2026-10-30", "2026-11-30"],
+      ["2027-01-01", "2026-12-28", "2027-01-01", "2027-01-31"],
+      ["2028-02-14", "2028-02-14", "2028-02-18", "2028-02-29"],
+      ["2027-02-15", "2027-02-15", "2027-02-19", "2027-02-28"]
+    ])("defaults to complete calendar periods on %s", async (today, monday, friday, monthEnd) => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date(`${today}T12:00:00`));
       try {
         await act(async () => root.render(<SemesterReports version={version} />));
         expect(container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')?.value).toBe("week");
-        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
-        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, today]);
+        const dates = container.querySelectorAll<HTMLInputElement>(
+          '[aria-label="周期开始日期"], [aria-label="周期结束日期"]'
+        );
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, friday]);
         const period = container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')!;
         act(() => {
           period.value = "month";
           period.dispatchEvent(new Event("change", { bubbles: true }));
         });
-        expect([...dates].slice(-2).map(input => input.value)).toEqual([`${today.slice(0, 7)}-01`, today]);
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([`${today.slice(0, 7)}-01`, monthEnd]);
         if (version === "v2") {
           act(() => {
             period.value = "term";
             period.dispatchEvent(new Event("change", { bubbles: true }));
           });
-          expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-09-01", today]);
+          expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-09-01", "2026-12-31"]);
         }
         act(() => {
           period.value = "week";
           period.dispatchEvent(new Event("change", { bubbles: true }));
         });
-        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, today]);
+        expect([...dates].slice(-2).map(input => input.value)).toEqual([monday, friday]);
       } finally {
         vi.useRealTimers();
       }
@@ -83,20 +90,61 @@ describe("SemesterReports mobile workflow", () => {
 
     it("keeps the weekly default when initial loading fails", async () => {
       vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-10-16T12:00:00"));
+      vi.setSystemTime(new Date("2026-10-19T12:00:00"));
       api.get.mockRejectedValue(new Error("学期加载失败"));
       try {
         await act(async () => root.render(<SemesterReports version={version} />));
         expect(container.querySelector('[role="status"]')?.textContent).toContain("学期加载失败");
         expect(container.querySelector<HTMLSelectElement>('[aria-label="报告周期"]')?.value).toBe("week");
-        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
-        expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-10-12", "2026-10-16"]);
+        const dates = container.querySelectorAll<HTMLInputElement>(
+          '[aria-label="周期开始日期"], [aria-label="周期结束日期"]'
+        );
+        expect([...dates].slice(-2).map(input => input.value)).toEqual(["2026-10-19", "2026-10-23"]);
       } finally {
         vi.useRealTimers();
       }
     });
   });
-  async function readyV2Generation(version: "v1" | "v2" = "v2") {
+  it("uses the selected term dates when switching terms or creating a term", async () => {
+    const originalGet = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string) =>
+      url.endsWith("report-terms")
+        ? [
+            { id: "term", name: "秋季", startDate: "2026-09-01", endDate: "2026-12-31" },
+            { id: "spring", name: "春季", startDate: "2027-02-01", endDate: "2027-06-30" }
+          ]
+        : originalGet(url)
+    );
+    await act(async () => root.render(<SemesterReports version="v2" />));
+    const choose = (label: string, value: string) =>
+      act(() => {
+        const select = container.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!;
+        select.value = value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    const dates = () =>
+      [...container.querySelectorAll<HTMLInputElement>('[aria-label="周期开始日期"], [aria-label="周期结束日期"]')].map(
+        input => input.value
+      );
+    choose("报告周期", "term");
+    choose("课程学期", "spring");
+    expect(dates()).toEqual(["2027-02-01", "2027-06-30"]);
+    const setInput = (selector: string, value: string) =>
+      act(() => {
+        const input = container.querySelector<HTMLInputElement>(selector)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    setInput('input[placeholder="学期名称（必填）"]', "新秋季");
+    setInput('[aria-label="学期开始日期（必填）"]', "2027-09-01");
+    setInput('[aria-label="学期结束日期（必填）"]', "2028-01-31");
+    api.post.mockResolvedValue({ id: "new-term", name: "新秋季", startDate: "2027-09-01", endDate: "2028-01-31" });
+    await act(async () =>
+      [...container.querySelectorAll("button")].find(button => button.textContent === "新建学期")!.click()
+    );
+    expect(dates()).toEqual(["2027-09-01", "2028-01-31"]);
+  });
+  async function readyV2Generation(version: "v1" | "v2" = "v2", withDocuments = true) {
     const originalGet = api.get.getMockImplementation()!;
     api.get.mockImplementation(async (url: string) => {
       if (url === "/api/pet-points")
@@ -117,16 +165,18 @@ describe("SemesterReports mobile workflow", () => {
           ]
         };
       if (url.endsWith("course-documents"))
-        return [
-          {
-            id: "doc",
-            termId: "term",
-            subjectId: "subject",
-            status: "ready",
-            fileName: "Reading.pdf",
-            units: ["Unit1", "Unit2"]
-          }
-        ];
+        return withDocuments
+          ? [
+              {
+                id: "doc",
+                termId: "term",
+                subjectId: "subject",
+                status: "ready",
+                fileName: "Reading.pdf",
+                units: ["Unit1", "Unit2"]
+              }
+            ]
+          : [];
       return originalGet(url);
     });
     await act(async () => root.render(<SemesterReports version={version} />));
@@ -461,60 +511,72 @@ describe("SemesterReports mobile workflow", () => {
     expect(container.querySelector('[aria-label="阅读 Unit1"]')).toBeNull();
     expect(container.textContent).not.toContain("学习内容与掌握");
   });
-  it("generates v2 reports from checked subjects without curriculum choices", async () => {
-    const scope = "";
-    vi.useFakeTimers();
-    try {
-      api.post.mockImplementation(async (url: string) => {
-        if (url.endsWith("preview-input")) return { scoreSummaries: [] };
-        if (url.endsWith("preview-scope"))
+  it.each(["2026-10-23", "2026-10-25"])(
+    "generates v2 reports with default or manually selected future end %s",
+    async end => {
+      const scope = "";
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-19T12:00:00"));
+      try {
+        api.post.mockImplementation(async (url: string) => {
+          if (url.endsWith("preview-input")) return { scoreSummaries: [] };
+          if (url.endsWith("preview-scope"))
+            return {
+              courseScope: `阅读：${scope || "本学期全部内容"}`,
+              totalPages: 1,
+              documents: [],
+              learningContents: [{ id: "goal", section: "阅读 · Unit1", text: "阅读第一课", sourceRefs: [] }],
+              totalLearningContents: 1
+            };
           return {
-            courseScope: `阅读：${scope || "本学期全部内容"}`,
-            totalPages: 1,
-            documents: [],
-            learningContents: [{ id: "goal", section: "阅读 · Unit1", text: "阅读第一课", sourceRefs: [] }],
-            totalLearningContents: 1
+            reports: [
+              {
+                id: "report",
+                reportVersion: "v2",
+                studentName: "小明",
+                className: "一班",
+                period: "term",
+                status: "queued",
+                content: null
+              }
+            ]
           };
-        return {
-          reports: [
-            {
-              id: "report",
-              reportVersion: "v2",
-              studentName: "小明",
-              className: "一班",
-              period: "term",
-              status: "queued",
-              content: null
-            }
-          ]
-        };
-      });
-      const generate = await readyV2Generation();
+        });
+        const generate = await readyV2Generation();
 
-      expect(generate.disabled).toBe(true);
-      await act(async () => vi.advanceTimersByTimeAsync(450));
-      expect(generate.disabled).toBe(false);
-      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
-      expect(generate.disabled).toBe(true);
-      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
-      expect(generate.disabled).toBe(false);
-      await act(async () => generate.click());
-      expect(api.post).toHaveBeenCalledWith(
-        "/api/semester-reports/reports/generate",
-        expect.objectContaining({
-          reportVersion: "v2",
-          period: "week",
-          start: expect.any(String),
-          end: expect.any(String),
-          studentIds: ["student"],
-          courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }]
-        })
-      );
-      expect(container.querySelector('[role="status"]')?.textContent).toContain("已提交 1 份报告");
-    } finally {
-      vi.useRealTimers();
+        const endInput = container.querySelector<HTMLInputElement>('[aria-label="周期结束日期"]')!;
+        expect(endInput.value).toBe("2026-10-23");
+        expect(endInput.max).toBe("");
+        if (end !== endInput.value)
+          act(() => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(endInput, end);
+            endInput.dispatchEvent(new Event("input", { bubbles: true }));
+          });
+        expect(generate.disabled).toBe(true);
+        await act(async () => vi.advanceTimersByTimeAsync(450));
+        expect(generate.disabled).toBe(false);
+        act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+        expect(generate.disabled).toBe(true);
+        act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 一班 小明"]')!.click());
+        expect(generate.disabled).toBe(false);
+        await act(async () => generate.click());
+        expect(api.post).toHaveBeenCalledWith(
+          "/api/semester-reports/reports/generate",
+          expect.objectContaining({
+            reportVersion: "v2",
+            period: "week",
+            start: "2026-10-19",
+            end,
+            studentIds: ["student"],
+            courseSelections: [{ subjectId: "subject", courseScope: "", manualContent: "" }]
+          })
+        );
+        expect(container.querySelector('[role="status"]')?.textContent).toContain("已提交 1 份报告");
+      } finally {
+        vi.useRealTimers();
+      }
     }
-  });
+  );
 
   it.each(["v1", "v2"] as const)(
     "shows unavailable history and a retryable read failure without substituting the current pet in %s",
@@ -540,7 +602,9 @@ describe("SemesterReports mobile workflow", () => {
         await act(async () => vi.advanceTimersByTimeAsync(450));
         expect(container.textContent).toContain("所选周期结束时的宠物形态尚无历史记录");
         expect(container.textContent).not.toContain("当前火狐");
-        const dates = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+        const dates = container.querySelectorAll<HTMLInputElement>(
+          '[aria-label="周期开始日期"], [aria-label="周期结束日期"]'
+        );
         api.post.mockImplementation(async (url: string) => {
           if (url.endsWith("preview-input")) throw new Error("历史服务失败");
           return { totalPages: 1, learningContents: [], documents: [] };
@@ -567,6 +631,249 @@ describe("SemesterReports mobile workflow", () => {
     }
   );
 
+  it.each([false, true])("generates original reports from typed content with existing PDFs=%s", async withDocuments => {
+    vi.useFakeTimers();
+    try {
+      const manualContent = "认识植物的根和叶\n观察种子发芽";
+      api.post.mockImplementation(async (url: string) =>
+        url.endsWith("/generate")
+          ? {
+              reports: [
+                {
+                  id: "manual",
+                  studentName: "小明",
+                  className: "一班",
+                  period: "week",
+                  status: "queued",
+                  content: null
+                }
+              ]
+            }
+          : url.endsWith("preview-scope")
+            ? {
+                totalPages: 0,
+                totalLearningContents: 1,
+                learningContents: [
+                  {
+                    id: "manual-goal",
+                    section: "教师填写",
+                    text: manualContent,
+                    sourceRefs: ["teacher-course:subject"]
+                  }
+                ],
+                documents: []
+              }
+            : { scoreSummaries: [] }
+      );
+      const generate = await readyV2Generation("v1", withDocuments);
+      if (withDocuments)
+        act(() => {
+          const source = container.querySelector<HTMLSelectElement>('[aria-label="教学内容来源"]')!;
+          source.value = "manual";
+          source.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      const content = container.querySelector<HTMLTextAreaElement>('[aria-label="教学内容或授课范围"]')!;
+      expect(generate.disabled).toBe(true);
+      const setContent = (value: string) =>
+        act(() => {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(content, value);
+          content.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      setContent("字");
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(true);
+      setContent(manualContent);
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      expect(container.textContent).toContain("教师手动填写");
+      await act(async () => generate.click());
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/semester-reports/reports/generate",
+        expect.objectContaining({
+          reportVersion: "v1",
+          courseSelections: [{ subjectId: "subject", courseScope: "", manualContent }]
+        })
+      );
+      expect(container.textContent).toContain("已提交 1 份报告");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("blocks failed original manual previews, retries and keeps text after generation failure", async () => {
+    vi.useFakeTimers();
+    try {
+      api.post.mockRejectedValue(new Error("预览无权限"));
+      const generate = await readyV2Generation("v1", false);
+      const content = container.querySelector<HTMLTextAreaElement>('[aria-label="教学内容或授课范围"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(content, "观察种子发芽");
+        content.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(true);
+      expect(container.querySelector('[aria-label="生成报告提示"]')?.textContent).toContain("预览无权限");
+      api.post.mockImplementation(async (url: string) => {
+        if (url.endsWith("/generate")) throw new Error("生成失败，请重试");
+        return { totalPages: 0, totalLearningContents: 0, learningContents: [], documents: [], scoreSummaries: [] };
+      });
+      act(() =>
+        [...container.querySelectorAll("button")].find(button => button.textContent === "重新加载学习内容")!.click()
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      await act(async () => generate.click());
+      expect(container.textContent).toContain("生成失败，请重试");
+      expect(content.value).toBe("观察种子发芽");
+      expect(generate.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["v1", "v2"] as const)("keeps %s course confirmation valid while pending reports poll", async version => {
+    vi.useFakeTimers();
+    try {
+      const originalGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) =>
+        url.endsWith("/reports")
+          ? [
+              {
+                id: "pending",
+                reportVersion: version,
+                studentName: "小明",
+                className: "一班",
+                period: "week",
+                status: "queued",
+                content: null
+              }
+            ]
+          : originalGet(url)
+      );
+      let resolveScope!: (value: unknown) => void;
+      api.post.mockImplementation(async (url: string) =>
+        url.endsWith("preview-scope")
+          ? new Promise(resolve => {
+              resolveScope = resolve;
+            })
+          : url.endsWith("/generate")
+            ? {
+                reports: [
+                  {
+                    id: "new",
+                    reportVersion: version,
+                    studentName: "小明",
+                    className: "一班",
+                    period: "week",
+                    status: "queued",
+                    content: null
+                  }
+                ]
+              }
+            : { scoreSummaries: [] }
+      );
+      const generate = await readyV2Generation(version);
+      if (version === "v1")
+        act(() => {
+          const scope = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="教学内容或授课范围"]')!;
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(scope, "Unit1");
+          scope.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(2100));
+      await act(async () =>
+        resolveScope({ totalPages: 1, totalLearningContents: 0, learningContents: [], documents: [] })
+      );
+      expect(generate.disabled).toBe(false);
+      await act(async () => vi.advanceTimersByTimeAsync(2500));
+      expect(generate.disabled).toBe(false);
+      expect(api.post.mock.calls.filter(([url]) => String(url).endsWith("preview-scope"))).toHaveLength(1);
+      await act(async () => generate.click());
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/semester-reports/reports/generate",
+        expect.objectContaining({ reportVersion: version, studentIds: ["student"] })
+      );
+      expect(container.textContent).toContain("已提交 1 份报告");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("invalidates the original preview when the selected course document changes", async () => {
+    vi.useFakeTimers();
+    try {
+      api.post.mockResolvedValue({
+        totalPages: 1,
+        totalLearningContents: 0,
+        learningContents: [],
+        documents: [],
+        scoreSummaries: []
+      });
+      const generate = await readyV2Generation("v1");
+      act(() => {
+        const scope = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="教学内容或授课范围"]')!;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(scope, "Unit1");
+        scope.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      const originalGet = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) => (url.endsWith("course-documents") ? [] : originalGet(url)));
+      api.post.mockRejectedValue(new Error("课程资料已不可用"));
+      const filter = container.querySelector<HTMLSelectElement>('[aria-label="筛选报告状态"]')!;
+      act(() => {
+        filter.value = "draft";
+        filter.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(container.querySelector('[aria-label="生成报告提示"]')?.textContent).toContain("课程资料已不可用");
+      expect(api.post.mock.calls.filter(([url]) => String(url).endsWith("preview-scope"))).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains why generation is disabled and shows an actionable lesson date error", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-19T12:00:00"));
+    try {
+      api.post.mockResolvedValue({
+        totalPages: 0,
+        totalLearningContents: 0,
+        learningContents: [],
+        documents: [],
+        scoreSummaries: []
+      });
+      const generate = await readyV2Generation();
+      await act(async () => vi.advanceTimersByTimeAsync(450));
+      expect(generate.disabled).toBe(false);
+      const lessonDate = container.querySelector<HTMLInputElement>('input[type="date"][min="2026-10-19"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(lessonDate, "2026-10-20");
+        lessonDate.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        const start = container.querySelector<HTMLInputElement>('[aria-label="周期开始日期"]')!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(start, "2026-10-21");
+        start.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(generate.disabled).toBe(true);
+      expect(container.querySelector('[aria-label="生成报告提示"]')?.textContent).toContain("授课日期须在周期内");
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(lessonDate, "2026-10-22");
+        lessonDate.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(generate.disabled).toBe(false);
+      act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择阅读课程"]')!.click());
+      expect(generate.disabled).toBe(true);
+      expect(container.querySelector('[aria-label="生成报告提示"]')?.textContent).toContain("选择至少一门学科");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps generation disabled for failed and stale v2 previews, then allows a successful retry", async () => {
     vi.useFakeTimers();
     try {
@@ -932,7 +1239,7 @@ describe("SemesterReports mobile workflow", () => {
       await render();
       act(() => button("填写报告").click());
       act(() => container.querySelector<HTMLInputElement>('input[aria-label="选择 示例班 示例学生"]')!.click());
-      const input = container.querySelector<HTMLTextAreaElement>('textarea[placeholder^="本周期已授课范围"]')!;
+      const input = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="教学内容或授课范围"]')!;
       act(() => {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "第3页");
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1409,6 +1716,290 @@ describe("SemesterReports mobile workflow", () => {
       expect(button("保存草稿")).toBeTruthy();
     }
   );
+
+  it.each(["v1", "v2"] as const)(
+    "searches and summarizes reports and clears hidden selections in %s",
+    async version => {
+      const first = Object.assign(publishedReport(false), {
+        reportVersion: version,
+        status: "draft",
+        subjectName: "阅读"
+      });
+      const rows = [
+        first,
+        { ...first, id: "second", studentName: "小红", className: "二班", status: "published" },
+        { ...first, id: "failed", status: "failed" }
+      ];
+      const original = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) => (url.endsWith("/reports") ? rows : original(url)));
+      await act(async () => root.render(<SemesterReports version={version} />));
+      const list = container.querySelector('[aria-label="报告列表"]')!;
+      expect(list.textContent).toContain("已加载 3 份");
+      expect(list.textContent).toContain("待审核 1");
+      expect(list.textContent).toContain("已发布 1");
+      const all = list.querySelector<HTMLInputElement>('[aria-label="全选当前结果中的可操作报告"]')!;
+      act(() => all.click());
+      expect(list.textContent).toContain("已选 2 份");
+      const search = list.querySelector<HTMLInputElement>('[aria-label="搜索报告"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, " 二班 ");
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(list.querySelectorAll("article")).toHaveLength(1);
+      expect(list.textContent).toContain("小红");
+      expect(list.textContent).toContain("已选 0 份");
+    }
+  );
+
+  it("publishes selected drafts once, preserves failures for retry and never publishes other statuses", async () => {
+    const first = Object.assign(publishedReport(false), { status: "draft" });
+    const rows = [
+      first,
+      { ...first, id: "second", studentName: "小红" },
+      { ...first, id: "published", status: "published" }
+    ];
+    const original = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string) => (url.endsWith("/reports") ? rows : original(url)));
+    api.post.mockImplementation(async (url: string) => {
+      if (url.includes("/second/")) throw new Error("没有权限发布");
+      first.status = "published";
+      return { shareId: "share", url: `https://example.test/r/${"A".repeat(43)}` };
+    });
+    await render();
+    act(() => container.querySelector<HTMLInputElement>('[aria-label="全选当前结果中的可操作报告"]')!.click());
+    await act(async () => button("批量发布（2）").click());
+    expect(api.post).not.toHaveBeenCalled();
+    act(() => button("取消").click());
+    expect(api.post).not.toHaveBeenCalled();
+    await act(async () => button("批量发布（2）").click());
+    await act(async () => button("确认发布").click());
+    expect(api.post.mock.calls.map(call => call[0])).toEqual([
+      "/api/semester-reports/reports/report/publish",
+      "/api/semester-reports/reports/second/publish"
+    ]);
+    const list = container.querySelector('[aria-label="报告列表"]')!;
+    expect(list.textContent).toContain("成功发布 1 份，失败 1 份");
+    expect(list.textContent).toContain("小红：没有权限发布");
+    expect(list.querySelector<HTMLInputElement>('[data-report-id="second"]')!.checked).toBe(true);
+    expect(list.querySelector<HTMLInputElement>('[data-report-id="report"]')!.checked).toBe(false);
+  });
+
+  it("sends debounced search and status/period filters to the server and shows an empty result", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = publishedReport(false);
+      await render();
+      const input = container.querySelector<HTMLInputElement>('[aria-label="搜索报告"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " 历史学生 ");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(container.querySelector('[aria-label="报告列表"]')!.textContent).toContain("没有符合条件的报告");
+      row.studentName = "历史学生";
+      await act(async () => vi.advanceTimersByTimeAsync(350));
+      expect(api.get).toHaveBeenCalledWith(
+        "/api/semester-reports/reports",
+        expect.objectContaining({ params: expect.objectContaining({ q: "历史学生", version: "v1", page: 1 }) })
+      );
+      const status = container.querySelector<HTMLSelectElement>('[aria-label="筛选报告状态"]')!;
+      const period = container.querySelector<HTMLSelectElement>('[aria-label="筛选报告周期"]')!;
+      await act(async () => {
+        status.value = "draft";
+        status.dispatchEvent(new Event("change", { bubbles: true }));
+        period.value = "week";
+        period.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(api.get).toHaveBeenLastCalledWith("/api/semester-reports/course-documents");
+      expect(api.get).toHaveBeenCalledWith(
+        "/api/semester-reports/reports",
+        expect.objectContaining({ params: expect.objectContaining({ status: "draft", period: "week", q: "历史学生" }) })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["v1", "v2"] as const)(
+    "filters report date overlaps inclusively and clears selection/date filters in %s",
+    async version => {
+      const template = Object.assign(publishedReport(false), {
+        reportVersion: version,
+        status: "draft",
+        start: "2026-10-11T16:00:00.000Z",
+        end: "2026-10-18T16:00:00.000Z"
+      });
+      const rows = [
+        template,
+        { ...template, id: "earlier", end: "2026-10-11T16:00:00.000Z", start: "2026-10-04T16:00:00.000Z" },
+        { ...template, id: "later", start: "2026-10-18T16:00:00.000Z", end: "2026-10-25T16:00:00.000Z" }
+      ];
+      const original = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) => (url.endsWith("/reports") ? rows : original(url)));
+      await act(async () => root.render(<SemesterReports version={version} />));
+      const list = container.querySelector('[aria-label="报告列表"]')!;
+      act(() => list.querySelector<HTMLInputElement>('[aria-label="全选当前结果中的可操作报告"]')!.click());
+      const setDate = async (label: string, value: string) => {
+        await act(async () => {
+          const input = list.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      await setDate("筛选开始日期", "2026-10-18");
+      expect(list.querySelectorAll("article")).toHaveLength(2);
+      expect(list.textContent).toContain("已选 0 份");
+      await setDate("筛选结束日期", "2026-10-18");
+      expect(list.querySelectorAll("article")).toHaveLength(1);
+      expect(list.querySelector('[data-report-id="report"]')).not.toBeNull();
+      expect(api.get).toHaveBeenCalledWith(
+        "/api/semester-reports/reports",
+        expect.objectContaining({
+          params: expect.objectContaining({ startDate: "2026-10-18", endDate: "2026-10-18", version, page: 1 })
+        })
+      );
+      await setDate("筛选开始日期", "2026-10-19");
+      expect(list.querySelector('[role="alert"]')?.textContent).toContain("开始日期不能晚于结束日期");
+      expect(button("批量发布（0）").disabled).toBe(true);
+      await act(async () => button("清除时间筛选").click());
+      expect(list.querySelectorAll("article")).toHaveLength(3);
+      expect(list.querySelector('[role="alert"]')).toBeNull();
+      expect(list.querySelector<HTMLInputElement>('[aria-label="筛选开始日期"]')!.value).toBe("");
+      expect(list.querySelector<HTMLInputElement>('[aria-label="筛选结束日期"]')!.value).toBe("");
+    }
+  );
+
+  it("keeps additional pages and their failed selections after a batch refresh", async () => {
+    const template = Object.assign(publishedReport(false), {
+      start: "2026-10-11T16:00:00.000Z",
+      end: "2026-10-18T16:00:00.000Z"
+    });
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({
+      ...template,
+      id: `r${index}`,
+      status: "published"
+    }));
+    const next = { ...template, id: "older", studentName: "较早学生", status: "draft" };
+    const original = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string, config?: { params?: { page: number } }) =>
+      url.endsWith("/reports") ? (config?.params?.page === 2 ? [next] : firstPage) : original(url)
+    );
+    await render();
+    await act(async () => {
+      for (const label of ["筛选开始日期", "筛选结束日期"]) {
+        const input = container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "2026-10-18");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    await act(async () => button("加载更多报告").click());
+    expect(api.get).toHaveBeenCalledWith(
+      "/api/semester-reports/reports",
+      expect.objectContaining({
+        params: expect.objectContaining({ startDate: "2026-10-18", endDate: "2026-10-18", page: 2 })
+      })
+    );
+    expect(container.querySelectorAll("article")).toHaveLength(201);
+    expect([...container.querySelectorAll("button")].some(item => item.textContent === "加载更多报告")).toBe(false);
+    act(() => container.querySelector<HTMLInputElement>('[data-report-id="older"]')!.click());
+    api.post.mockRejectedValueOnce(new Error("发布失败"));
+    await act(async () => button("批量发布（1）").click());
+    await act(async () => button("确认发布").click());
+    expect(container.querySelectorAll("article")).toHaveLength(201);
+    expect(container.querySelector<HTMLInputElement>('[data-report-id="older"]')!.checked).toBe(true);
+  });
+
+  it("keeps the date filter and matching loaded reports when a date query fails", async () => {
+    Object.assign(publishedReport(false), { start: "2026-10-11T16:00:00.000Z", end: "2026-10-18T16:00:00.000Z" });
+    await render();
+    const original = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string, config?: { params?: { startDate?: string } }) => {
+      if (url.endsWith("/reports") && config?.params?.startDate) throw new Error("日期查询失败，请重试");
+      return original(url);
+    });
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('[aria-label="筛选开始日期"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "2026-10-18");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("日期查询失败");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="筛选开始日期"]')!.value).toBe("2026-10-18");
+    expect(container.querySelectorAll("article")).toHaveLength(1);
+  });
+
+  it("keeps pagination available when only search whitespace changes", async () => {
+    vi.useFakeTimers();
+    try {
+      const template = publishedReport(false);
+      const original = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (url: string) =>
+        url.endsWith("/reports")
+          ? Array.from({ length: 200 }, (_, index) => ({ ...template, id: `r${index}` }))
+          : original(url)
+      );
+      await render();
+      expect(button("加载更多报告")).toBeTruthy();
+      const search = container.querySelector<HTMLInputElement>('[aria-label="搜索报告"]')!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, " ");
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(350));
+      expect(button("加载更多报告").disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("blocks repeated batch confirmation while publication is in flight", async () => {
+    Object.assign(publishedReport(false), { status: "draft" });
+    let finish!: (value: unknown) => void;
+    api.post.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    await render();
+    act(() => container.querySelector<HTMLInputElement>('[data-report-id="report"]')!.click());
+    act(() => button("批量发布（1）").click());
+    act(() => {
+      const confirm = button("确认发布");
+      confirm.click();
+      confirm.click();
+    });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(button("正在批量发布…").disabled).toBe(true);
+    await act(async () => finish({ shareId: "share", url: `https://example.test/r/${"A".repeat(43)}` }));
+  });
+
+  it("exports only the selected publications and prevents exporting a draft", async () => {
+    const first = publishedReport();
+    first.share!.url = `https://example.test/r/${"A".repeat(43)}`;
+    const rows = [
+      first,
+      { ...first, id: "draft", status: "draft" },
+      { ...first, id: "unselected", studentName: "未选择" }
+    ];
+    const original = api.get.getMockImplementation()!;
+    api.get.mockImplementation(async (url: string) => (url.endsWith("/reports") ? rows : original(url)));
+    const publicFetch = vi.fn(() => new Promise(() => undefined));
+    vi.stubGlobal("fetch", publicFetch);
+    await render();
+    expect(button("导出所选图片（0）").disabled).toBe(true);
+    act(() => container.querySelector<HTMLInputElement>('[data-report-id="draft"]')!.click());
+    expect(button("导出所选图片（1）").disabled).toBe(true);
+    act(() => {
+      container.querySelector<HTMLInputElement>('[data-report-id="draft"]')!.click();
+      container.querySelector<HTMLInputElement>('[data-report-id="report"]')!.click();
+    });
+    await act(async () => button("导出所选图片（1）").click());
+    expect(document.body.querySelector('[role="dialog"]')!.textContent).toContain("批量导出报告图片");
+    expect(publicFetch).toHaveBeenCalledTimes(1);
+    expect(publicFetch).toHaveBeenCalledWith(
+      `/api/public-reports/${"A".repeat(43)}`,
+      expect.objectContaining({ cache: "no-store" })
+    );
+  });
 
   it.each(["v1", "v2"] as const)("shows the saved edit time after each report status in %s", async version => {
     const report = publishedReport(false);

@@ -96,8 +96,8 @@ export class SemesterReportsController {
   generate(@Body() body: Record<string, unknown>) {
     return this.reports.generate(body);
   }
-  @Get('reports') listReports() {
-    return this.reports.listReports();
+  @Get('reports') listReports(@Query() filters: Record<string, unknown>) {
+    return this.reports.listReports(filters);
   }
   @Get('reports/:id') getReport(@Param('id') id: string) {
     return this.reports.getReport(id);

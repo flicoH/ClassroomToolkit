@@ -390,20 +390,16 @@ export class SemesterReportsService {
       reportSubjects: courseSubjects,
     } = await this.selectedCourses(input, termId, subjectId, period);
     subject.name = subjectName || subject.name;
-    if (
-      input.reportVersion !== 'v2' &&
-      period !== 'term' &&
-      courseScope.length < 2
-    )
+    if (!selections && period !== 'term' && courseScope.length < 2)
       throw new BadRequestException(
         '周报和月报请填写本周期已授课章节或教学范围',
       );
-    if (input.reportVersion !== 'v2' && !documents.length)
+    if (!selections && !documents.length)
       throw new BadRequestException('请先上传并确认所选学科的课程 PDF');
     if (documents.length > 20)
       throw new BadRequestException('单次最多使用 20 份课程 PDF');
     if (
-      input.reportVersion !== 'v2' &&
+      !selections &&
       !selectedCourseDocuments.some((document) => document.pages.length)
     )
       throw new BadRequestException(
@@ -595,19 +591,99 @@ export class SemesterReportsService {
     };
   }
 
-  async listReports() {
+  async listReports(filters: Record<string, unknown> = {}) {
+    const read = (key: string) => {
+      const value = filters[key] ?? '';
+      if (typeof value !== 'string')
+        throw new BadRequestException('报告筛选条件无效');
+      return value.trim();
+    };
+    const q = read('q');
+    const status = read('status');
+    const period = read('period');
+    const version = read('version');
+    const startDate = read('startDate');
+    const endDate = read('endDate');
+    const pageInput = read('page') || '1';
+    const page = Number(pageInput);
+    if (
+      q.length > 100 ||
+      (status &&
+        !['queued', 'generating', 'failed', 'draft', 'published'].includes(
+          status,
+        )) ||
+      (period && !periods.includes(period as (typeof periods)[number])) ||
+      (version && !['v1', 'v2'].includes(version)) ||
+      !/^\d+$/.test(pageInput) ||
+      !Number.isSafeInteger(page) ||
+      page < 1 ||
+      page > 1000000
+    )
+      throw new BadRequestException('报告筛选条件无效');
+    if (
+      (startDate && !this.validDate(startDate)) ||
+      (endDate && !this.validDate(endDate))
+    )
+      throw new BadRequestException('筛选日期无效，请使用 YYYY-MM-DD 格式');
+    if (startDate && endDate && startDate > endDate)
+      throw new BadRequestException('筛选开始日期不能晚于结束日期');
     // Sort IDs separately: MySQL can defer JSON projections until after filesort,
     // carrying the original 5MB photo snapshot and exhausting sort_buffer_size.
-    const ordered = await this.reports
+    const query = this.reports
       .createQueryBuilder('report')
       .select(['report.id'])
       .where('report.teacherId = :teacherId', {
         teacherId: this.teacher.teacherId,
       })
-      .andWhere('report.status != :deleted', { deleted: 'deleted' })
-      .orderBy('report.createdAt', 'DESC')
-      .take(200)
-      .getMany();
+      .andWhere('report.status != :deleted', { deleted: 'deleted' });
+    // 在教师范围内先检索再分页，保证历史报告也可查到；LIKE 通配符按老师输入的原文搜索。
+    if (q)
+      query.andWhere(
+        `(report.studentName LIKE :search ESCAPE '!' OR report.className LIKE :search ESCAPE '!' OR JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.subjectName')) LIKE :search ESCAPE '!')`,
+        { search: `%${q.replace(/[!_%]/g, '!$&')}%` },
+      );
+    if (status) query.andWhere('report.status = :status', { status });
+    if (period) query.andWhere('report.periodType = :period', { period });
+    // 报告为半开区间；按上海自然日查找有交集的报告，结束日期包含当天。
+    if (startDate)
+      query.andWhere('report.periodEnd > :startDate', {
+        startDate: parsePeriodBound(startDate, false),
+      });
+    if (endDate)
+      query.andWhere('report.periodStart < :endDate', {
+        endDate: parsePeriodBound(endDate, true),
+      });
+    if (version)
+      query.andWhere(
+        "COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportVersion')), 'null'), 'v1') = :version",
+        { version },
+      );
+    let ordered: Array<{ id: string }>;
+    if (q || version) {
+      // JSON 即使用于 WHERE，MySQL 也可能把整份照片快照带入 filesort。
+      // LIMIT 阻止派生表被合并，先物化轻量 ID/时间，再在外层排序和分页。
+      const matching = query
+        .select('report.id', 'id')
+        .addSelect('report.createdAt', 'created_at')
+        .limit(Number.MAX_SAFE_INTEGER);
+      ordered = await this.reports.manager
+        .createQueryBuilder()
+        .select('matched_reports.id', 'id')
+        .from(`(${matching.getQuery()})`, 'matched_reports')
+        .setParameters(matching.getParameters())
+        .orderBy('matched_reports.created_at', 'DESC')
+        .addOrderBy('matched_reports.id', 'DESC')
+        .offset((page - 1) * 200)
+        .limit(200)
+        .getRawMany<{ id: string }>();
+    } else {
+      ordered = await query
+        .orderBy('report.createdAt', 'DESC')
+        .addOrderBy('report.id', 'DESC')
+        .skip((page - 1) * 200)
+        .take(200)
+        .getMany();
+    }
     if (!ordered.length) return [];
     const ids = ordered.map((row) => row.id);
     const { entities, raw } = await this.reports
@@ -1504,6 +1580,13 @@ export class SemesterReportsService {
       : [];
     if (
       snapshot.reportVersion !== 'v2' &&
+      // 手填报告没有 PDF 片段，重试必须保留教师内容而不是重新匹配页面。
+      !(
+        Array.isArray(snapshot.courseSelections) &&
+        snapshot.courseSelections.some(
+          (selection: CourseSelection) => selection.manualContent !== undefined,
+        )
+      ) &&
       row.periodType !== 'term' &&
       row.courseScope &&
       Array.isArray(snapshot.courseDocuments)
@@ -1594,11 +1677,7 @@ export class SemesterReportsService {
       throw new BadRequestException('周报周期不能超过 7 天');
     if (period === 'month' && duration > 31 * 86400000)
       throw new BadRequestException('月报周期不能超过 31 天');
-    const today = new Date().toLocaleDateString('en-CA', {
-      timeZone: 'Asia/Shanghai',
-    });
-    if (end > new Date(shanghaiMidnight(today).getTime() + 86400000))
-      throw new BadRequestException('不能生成未来日期的报告');
+    // 允许完整周/月/学期的未来结束日期；预览和生成仍校验学期归属及日期边界。
     const termId = String(input.termId ?? '');
     const subjectId =
       input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
@@ -1748,9 +1827,18 @@ export class SemesterReportsService {
     studentClassId?: string,
   ) {
     let selections: CourseSelection[] | undefined;
-    if (input.reportVersion === 'v2') {
+    if (input.reportVersion === 'v2' || input.courseSelections !== undefined) {
       try {
         selections = parseCourseSelections(input.courseSelections, period);
+        // 原版仅允许当前单一学科的明确手填来源，不能借多选参数绕过学科边界。
+        if (
+          input.reportVersion !== 'v2' &&
+          (selections.length !== 1 ||
+            selections[0]!.subjectId !== subjectId ||
+            selections[0]!.manualContent === undefined ||
+            selections[0]!.manualContent.trim().length < 2)
+        )
+          throw new Error('原版手填内容须对应当前学科，且至少填写 2 个字符');
       } catch (error) {
         throw new BadRequestException(
           error instanceof Error ? error.message : '课程选择无效',
@@ -1827,7 +1915,7 @@ export class SemesterReportsService {
               .update(JSON.stringify([selection.subjectId, text, line]))
               .digest('hex')
               .slice(0, 24)}`,
-            section: `${subjects[index]!.name.slice(0, 60)} · 教师填写`,
+            section: subjects[index]!.name.slice(0, 60),
             text,
             sourceRefs: [`teacher-course:${selection.subjectId}`],
           }));

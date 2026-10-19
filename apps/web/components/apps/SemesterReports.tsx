@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clipboard,
+  Download,
   FileText,
   ImageIcon,
   LoaderCircle,
@@ -26,6 +27,7 @@ import { copyText } from "@/lib/clipboard";
 import { createUuid } from "@/lib/id";
 import {
   LearningReportView,
+  learningSectionTitle,
   reportClassroomPhotos,
   showsLearningMastery,
   masteryLabels,
@@ -34,6 +36,7 @@ import {
 } from "@/components/semester-reports/LearningReportView";
 import { ReportStudentPicker } from "@/components/semester-reports/ReportStudentPicker";
 import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
+import { BatchReportImageDialog } from "@/components/semester-reports/BatchReportImageDialog";
 import { SubjectCoursePicker, courseSelectionsFromScopes } from "@/components/semester-reports/SubjectCoursePicker";
 import { SubjectPerformanceConfig } from "@/components/semester-reports/SubjectPerformanceConfig";
 import type { PerformanceField } from "@/components/semester-reports/performance-config";
@@ -133,6 +136,23 @@ const documentStatusHints: Record<string, { title: string; description: string }
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
+/** 默认覆盖完整教学周期；未来结束日期仍由后端按所选学期范围校验。 */
+function defaultReportDates(period: string, term?: Term) {
+  const today = new Date();
+  let first = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let last = new Date(first);
+  if (period === "week") {
+    first.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+    last = new Date(first);
+    last.setDate(last.getDate() + 4);
+  } else if (period === "month") {
+    first = new Date(today.getFullYear(), today.getMonth(), 1);
+    last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  } else if (term) {
+    return { start: term.startDate.slice(0, 10), end: term.endDate.slice(0, 10) };
+  }
+  return { start: localDateString(first), end: localDateString(last) };
+}
 /** 保存时间统一按上海时区展示，避免老师与家长设备时区不同导致日期看似错位。 */
 function ReportEditTime({ value }: { value?: string | null }) {
   const date = value ? new Date(value) : null;
@@ -175,6 +195,59 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [reportSearch, setReportSearch] = useState("");
+  const [reportStatus, setReportStatus] = useState("");
+  const [reportPeriod, setReportPeriod] = useState("");
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
+  const invalidReportDateRange = Boolean(reportStartDate && reportEndDate && reportStartDate > reportEndDate);
+  const reportRangeStart = reportStartDate ? Date.parse(`${reportStartDate}T00:00:00+08:00`) : null;
+  const reportRangeEnd = reportEndDate ? Date.parse(`${reportEndDate}T00:00:00+08:00`) + 86400000 : null;
+  const [debouncedReportSearch, setDebouncedReportSearch] = useState("");
+  const reportPages = useRef(1);
+  const [hasMoreReports, setHasMoreReports] = useState(false);
+  const [loadingReports, setLoadingReports] = useState(false);
+  const reportLoadRevision = useRef(0);
+  const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
+  const [publishingReports, setPublishingReports] = useState(false);
+  const publishingInFlight = useRef(false);
+  const [confirmBatchPublish, setConfirmBatchPublish] = useState(false);
+  const [batchResult, setBatchResult] = useState("");
+  const [batchFailures, setBatchFailures] = useState<string[]>([]);
+  const [exportReports, setExportReports] = useState<Report[] | null>(null);
+  const reportSearchQuery = reportSearch.trim();
+  const visibleReports = reports.filter(
+    report =>
+      !invalidReportDateRange &&
+      (!reportStatus || report.status === reportStatus) &&
+      (!reportPeriod || report.period === reportPeriod) &&
+      (reportRangeStart === null || Date.parse(report.end ?? "") > reportRangeStart) &&
+      (reportRangeEnd === null || Date.parse(report.start ?? "") < reportRangeEnd) &&
+      (!reportSearchQuery ||
+        [report.studentName, report.className, report.subjectName].some(value =>
+          value?.toLocaleLowerCase().includes(reportSearchQuery.toLocaleLowerCase())
+        ))
+  );
+  const selectableReports = visibleReports.filter(report => report.status === "draft" || report.status === "published");
+  const selectedReports = selectableReports.filter(report => selectedReportIds.includes(report.id));
+  const selectedDrafts = selectedReports.filter(report => report.status === "draft");
+  const allReportsSelected =
+    selectableReports.length > 0 && selectableReports.every(report => selectedReportIds.includes(report.id));
+  const selectionRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectionRef.current) selectionRef.current.indeterminate = selectedReports.length > 0 && !allReportsSelected;
+  }, [selectedReports.length, allReportsSelected]);
+  useEffect(() => {
+    setSelectedReportIds([]);
+    setBatchResult("");
+    setBatchFailures([]);
+    const timer = setTimeout(() => setDebouncedReportSearch(reportSearchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [reportSearchQuery, reportStatus, reportPeriod, reportStartDate, reportEndDate, version]);
+  useEffect(() => {
+    reportPages.current = 1;
+    setHasMoreReports(false);
+  }, [debouncedReportSearch, reportStatus, reportPeriod, reportStartDate, reportEndDate, version]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [unitDrafts, setUnitDrafts] = useState<Record<string, string>>({});
   const [reviewingDocumentId, setReviewingDocumentId] = useState<string | null>(null);
@@ -184,12 +257,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const subjectRevision = useRef(0);
   const [period, setPeriod] = useState("week");
   const [generationMode] = useState("template");
-  const [start, setStart] = useState(() => {
-    const monday = new Date();
-    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
-    return localDateString(monday);
-  });
-  const [end, setEnd] = useState(localDateString(new Date()));
+  const [start, setStart] = useState(() => defaultReportDates("week").start);
+  const [end, setEnd] = useState(() => defaultReportDates("week").end);
   const [selected, setSelected] = useState<string[]>([]);
   const [keywords, setKeywords] = useState("");
   const [observation, setObservation] = useState("");
@@ -204,12 +273,29 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [feedbackStudentId, setFeedbackStudentId] = useState("");
   const [courseScope, setCourseScope] = useState("");
   const [subjectScopes, setSubjectScopes] = useState<Record<string, string>>({});
-  const courseSelections = useMemo(
-    () => courseSelectionsFromScopes(subjectScopes, documents, termId, isV2),
-    [subjectScopes, documents, termId, isV2]
+  const [courseSource, setCourseSource] = useState<"manual" | "pdf" | null>(null);
+  const hasReadyCourse = documents.some(
+    document => document.termId === termId && document.subjectId === subjectId && document.status === "ready"
   );
-  // v2 的多学科及手填来源一并参与预览标识，不能只用合并后的学科名称判断数据是否仍有效。
-  const courseSelectionKey = isV2 ? JSON.stringify(courseSelections) : subjectId;
+  const usesManualCourse = !isV2 && (courseSource === "manual" || (courseSource === null && !hasReadyCourse));
+  useEffect(() => {
+    setCourseSource(null);
+  }, [termId, subjectId]);
+  // 手填来源显式提交并保存，之后上传 PDF 或重试也不能将教师内容改成页码范围。
+  const courseSelections = useMemo(
+    () =>
+      isV2
+        ? courseSelectionsFromScopes(subjectScopes, [], termId, true)
+        : usesManualCourse
+          ? [{ subjectId, courseScope: "", manualContent: courseScope.trim() }]
+          : [],
+    [subjectScopes, termId, isV2, usesManualCourse, subjectId, courseScope]
+  );
+  const scopeDocumentKey =
+    isV2 || usesManualCourse
+      ? ""
+      : JSON.stringify(documents.filter(document => document.termId === termId && document.subjectId === subjectId));
+  const courseSelectionKey = isV2 || usesManualCourse ? JSON.stringify(courseSelections) : subjectId;
   const feedbackContext = isV2 ? "v2" : subjectId;
   const invalidCourseSelection =
     isV2 &&
@@ -227,7 +313,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     period,
     termId,
     courseSelectionKey,
-    isV2 ? null : courseScope.trim()
+    isV2 ? null : courseScope.trim(),
+    scopeDocumentKey
   ]);
   const [scopePreviewResult, setScopePreviewResult] = useState<{ key: string; data: ScopePreview } | null>(null);
   // 请求返回顺序可能落后于老师的选择；只有标识完全一致的预览才能用于当前生成表单。
@@ -327,24 +414,88 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   /** 并行读取工作台数据，按版本筛选报告；旧报告未标记版本时按原版兼容。 */
   const load = useCallback(
     async (refreshToken?: string) => {
+      const revision = ++reportLoadRevision.current;
+      if (invalidReportDateRange) {
+        setLoadingReports(false);
+        return;
+      }
+      const pages = reportPages.current;
       const loadedSubjectRevision = subjectRevision.current;
-      const [t, s, p, r, d] = await Promise.all([
-        request.get<Term[], Term[]>(`${base}/report-terms`),
-        request.get<Subject[], Subject[]>(`${base}/report-subjects`),
-        request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
-        request.get<Report[], Report[]>(
-          `${base}/reports`,
-          refreshToken ? { params: { refresh: refreshToken } } : undefined
-        ),
-        request.get<Document[], Document[]>(`${base}/course-documents`)
-      ]);
-      setTerms(t);
-      // 学科修改后递增版本号，丢弃修改前发出的列表响应，防止后台轮询撤销刚保存的配置。
-      if (loadedSubjectRevision === subjectRevision.current) setSubjects(s);
-      setStudents(p.students);
-      setReports(
-        r
-          .filter(report => (report.reportVersion ?? "v1") === version)
+      setLoadingReports(true);
+      try {
+        const [t, s, p, r, d] = await Promise.all([
+          request.get<Term[], Term[]>(`${base}/report-terms`),
+          request.get<Subject[], Subject[]>(`${base}/report-subjects`),
+          request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
+          Promise.all(
+            Array.from({ length: pages }, (_, page) =>
+              request.get<Report[], Report[]>(`${base}/reports`, {
+                params: {
+                  refresh: refreshToken,
+                  q: debouncedReportSearch,
+                  status: reportStatus,
+                  period: reportPeriod,
+                  startDate: reportStartDate,
+                  endDate: reportEndDate,
+                  version,
+                  page: page + 1
+                }
+              })
+            )
+          ),
+          request.get<Document[], Document[]>(`${base}/course-documents`)
+        ]);
+        if (revision !== reportLoadRevision.current) return;
+        setTerms(t);
+        // 学科修改后递增版本号，丢弃修改前发出的列表响应，防止后台轮询撤销刚保存的配置。
+        if (loadedSubjectRevision === subjectRevision.current) setSubjects(s);
+        setStudents(p.students);
+        setReports(
+          r
+            .flat()
+            .filter(report => (report.reportVersion ?? "v1") === version)
+            .map(report =>
+              report.share
+                ? {
+                    ...report,
+                    share: { ...report.share, url: localReportShareUrl(report.share.url, window.location.origin) }
+                  }
+                : report
+            )
+        );
+        setHasMoreReports(r.at(-1)?.length === 200);
+        setDocuments(d);
+        setDocumentRefreshFailed(false);
+        setTermId(current => current || t[0]?.id || "");
+        setSubjectId(current => current || s[0]?.id || "");
+      } finally {
+        if (revision === reportLoadRevision.current) setLoadingReports(false);
+      }
+    },
+    [version, debouncedReportSearch, reportStatus, reportPeriod, reportStartDate, reportEndDate, invalidReportDateRange]
+  );
+
+  async function loadMoreReports() {
+    if (loadingReports || invalidReportDateRange) return;
+    const revision = ++reportLoadRevision.current;
+    setLoadingReports(true);
+    try {
+      const next = await request.get<Report[], Report[]>(`${base}/reports`, {
+        params: {
+          q: debouncedReportSearch,
+          status: reportStatus,
+          period: reportPeriod,
+          startDate: reportStartDate,
+          endDate: reportEndDate,
+          version,
+          page: reportPages.current + 1
+        }
+      });
+      if (revision !== reportLoadRevision.current) return;
+      setReports(current => [
+        ...current,
+        ...next
+          .filter(report => !current.some(row => row.id === report.id))
           .map(report =>
             report.share
               ? {
@@ -353,14 +504,15 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 }
               : report
           )
-      );
-      setDocuments(d);
-      setDocumentRefreshFailed(false);
-      setTermId(current => current || t[0]?.id || "");
-      setSubjectId(current => current || s[0]?.id || "");
-    },
-    [version]
-  );
+      ]);
+      reportPages.current += 1;
+      setHasMoreReports(next.length === 200);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setLoadingReports(false);
+    }
+  }
 
   useEffect(() => {
     void load().catch((error: Error) => setMessage(error.message));
@@ -388,7 +540,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     if (
       !termId ||
       invalidCourseSelection ||
-      (!isV2 && (!subjectId || (period !== "term" && courseScope.trim().length < 2)))
+      (!isV2 && (!subjectId || ((usesManualCourse || period !== "term") && courseScope.trim().length < 2)))
     )
       return;
     let cancelled = false;
@@ -399,7 +551,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           termId,
           subjectId,
           reportVersion: version,
-          courseSelections: isV2 ? courseSelections : undefined,
+          courseSelections: isV2 || usesManualCourse ? courseSelections : undefined,
           courseScope
         })
         .then(result => {
@@ -418,12 +570,13 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     termId,
     subjectId,
     courseScope,
-    documents,
+    scopeDocumentKey,
     scopePreviewAttempt,
     scopePreviewKey,
     version,
     isV2,
     courseSelections,
+    usesManualCourse,
     invalidCourseSelection
   ]);
 
@@ -431,7 +584,15 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const scorePreviewKey = [period, termId, courseSelectionKey, start, end, ...selected].join(":");
   useEffect(() => {
     setScorePreviewError("");
-    if (!termId || invalidCourseSelection || (!isV2 && !subjectId) || !selected.length || !start || !end || end < start)
+    if (
+      !termId ||
+      invalidCourseSelection ||
+      (!isV2 && (!subjectId || (usesManualCourse && courseScope.trim().length < 2))) ||
+      !selected.length ||
+      !start ||
+      !end ||
+      end < start
+    )
       return;
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -441,7 +602,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           termId,
           subjectId,
           reportVersion: version,
-          courseSelections: isV2 ? courseSelections : undefined,
+          courseSelections: isV2 || usesManualCourse ? courseSelections : undefined,
           start,
           end,
           studentIds: selected
@@ -461,6 +622,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     period,
     termId,
     subjectId,
+    courseScope,
     start,
     end,
     selected,
@@ -469,6 +631,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     version,
     isV2,
     courseSelections,
+    usesManualCourse,
     invalidCourseSelection
   ]);
 
@@ -502,28 +665,47 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       ? scorePreview.data.scoreSummaries?.find(summary => summary.studentId === feedbackStudent?.id)
       : undefined;
 
-  /** 切换周期时给出日期初值，并截到今天，避免默认生成尚未发生的课堂记录。 */
+  // 将禁用原因与按钮状态共用，避免老师选完后只看到灰色按钮却不知道如何继续。
+  const generationBlockedReason = (() => {
+    if (busy) return "正在处理，请稍候。";
+    if (!termId) return "请先选择学期。";
+    if (!isV2 && !subjectId) return "请先选择学科。";
+    if (!selected.length) return "请选择至少一位学生。";
+    if (isV2 && !courseSelections.length) return "请选择至少一门学科。";
+    if (!start || !end) return "请填写周期开始和结束日期。";
+    if (end < start) return "周期结束日期不能早于开始日期。";
+    if (reportDetails.lessonDate && (reportDetails.lessonDate < start || reportDetails.lessonDate > end))
+      return "授课日期须在周期内，请调整授课日期或报告周期。";
+    if (
+      reportDetails.lessonNumber !== null &&
+      (!Number.isInteger(reportDetails.lessonNumber) ||
+        reportDetails.lessonNumber < 1 ||
+        reportDetails.lessonNumber > 999)
+    )
+      return "第几次课须填写 1 至 999 的整数，或留空。";
+    if (isV2 && invalidCourseSelection) return "请检查所选学科的教学内容。";
+    if (usesManualCourse && courseScope.trim().length < 2) return "请手动填写至少 2 个字符的教学内容，每行一项。";
+    if (!isV2 && !usesManualCourse && period !== "term" && courseScope.trim().length < 2)
+      return "请先选择或填写本周期已授课范围。";
+    if (scopePreviewError) return `${isV2 ? "学科确认" : "学习内容预览"}失败，请重试：${scopePreviewError}`;
+    if (!scopePreview) return isV2 ? "正在确认已选学科，请稍候。" : "正在加载所选学习内容，请稍候。";
+    if (
+      scopePreview.totalPages === 0 &&
+      !((isV2 || usesManualCourse) && courseSelections.some(selection => selection.manualContent !== undefined))
+    )
+      return "未匹配到可用课程页面，请确认资料已解析并核对授课范围。";
+    if ((scopePreview.totalLearningContents ?? 0) > 500) return "学习内容超过 500 项，请缩小授课范围。";
+    return "";
+  })();
+
   function changePeriod(nextPeriod: string, nextTermId = termId) {
     setPeriod(nextPeriod);
-    const today = new Date();
-    let first = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    let last = new Date(first);
-    if (nextPeriod === "week") {
-      first.setDate(first.getDate() - ((first.getDay() + 6) % 7));
-      last = new Date(first);
-      last.setDate(last.getDate() + 6);
-    } else if (nextPeriod === "month") {
-      first = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else {
-      const selectedTerm = terms.find(item => item.id === nextTermId);
-      if (selectedTerm) {
-        first = new Date(`${selectedTerm.startDate.slice(0, 10)}T00:00:00`);
-        last = new Date(`${selectedTerm.endDate.slice(0, 10)}T00:00:00`);
-      }
-    }
-    if (last > today) last.setTime(today.getTime());
-    setStart(localDateString(first));
-    setEnd(localDateString(last));
+    const dates = defaultReportDates(
+      nextPeriod,
+      terms.find(item => item.id === nextTermId)
+    );
+    setStart(dates.start);
+    setEnd(dates.end);
   }
 
   async function createTerm() {
@@ -542,6 +724,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       });
       setTerms(old => [row, ...old]);
       setTermId(row.id);
+      if (period === "term") {
+        const dates = defaultReportDates("term", row);
+        setStart(dates.start);
+        setEnd(dates.end);
+      }
       setNewTermName("");
     } catch (error) {
       setMessage(errorMessage(error));
@@ -687,7 +874,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         termId,
         subjectId,
         reportVersion: version,
-        courseSelections: isV2 ? courseSelections : undefined,
+        courseSelections: isV2 || usesManualCourse ? courseSelections : undefined,
         studentIds: selected,
         keywords,
         teacherObservation: observation,
@@ -725,7 +912,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   }
   /** 发布、撤销和复制均以服务端报告状态为准；前端按钮限制不能代替后端教师归属校验。 */
   async function actOnReport(report: Report, action: "publish" | "retry" | "delete" | "copy" | "revoke") {
-    if (actingReportId) return;
+    if (actingReportId || publishingInFlight.current) return;
     setActingReportId(report.id);
     setMessage("");
     try {
@@ -789,6 +976,45 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       await load().catch(() => undefined);
     } finally {
       setActingReportId(null);
+    }
+  }
+  async function publishSelectedReports() {
+    if (publishingInFlight.current || actingReportId || !selectedDrafts.length) return;
+    setConfirmBatchPublish(false);
+    publishingInFlight.current = true;
+    setPublishingReports(true);
+    setBatchResult("");
+    setBatchFailures([]);
+    const succeeded = new Set<string>();
+    const failures: string[] = [];
+    // 逐份复用发布事务与教师权限校验，避免大批量同时刷新积分和写入分享记录。
+    try {
+      for (const report of selectedDrafts) {
+        try {
+          const result = await request.post<{ shareId: string; url: string }, { shareId: string; url: string }>(
+            `${base}/reports/${report.id}/publish`
+          );
+          const url = localReportShareUrl(result.url, window.location.origin);
+          succeeded.add(report.id);
+          setReports(current =>
+            current.map(row =>
+              row.id === report.id ? { ...row, status: "published", share: { id: result.shareId, url } } : row
+            )
+          );
+        } catch (error) {
+          failures.push(`${report.className} · ${report.studentName}：${errorMessage(error)}`);
+        }
+        setBatchResult(`正在发布 ${succeeded.size + failures.length} / ${selectedDrafts.length} 份…`);
+      }
+      setSelectedReportIds(current => current.filter(id => !succeeded.has(id)));
+      setBatchFailures(failures);
+      setBatchResult(
+        `成功发布 ${succeeded.size} 份，失败 ${failures.length} 份${failures.length ? "；失败报告仍保留选择，可重试。" : "。可选择已发布报告导出图片。"}`
+      );
+      await load(createUuid()).catch(() => setMessage("批量发布已完成，列表刷新失败，请刷新后核对状态。"));
+    } finally {
+      publishingInFlight.current = false;
+      setPublishingReports(false);
     }
   }
   async function confirmDelete() {
@@ -1125,7 +1351,9 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           <div>
             <h2 className="font-semibold">{isV2 ? "学期与学科" : "课程资料"}</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {isV2 ? "选择学期并维护学科，报告中直接勾选所需学科。" : "选择学期和学科，上传并核对课程 PDF。"}
+              {isV2
+                ? "选择学期并维护学科，报告中直接勾选所需学科。"
+                : "选择学期和学科，可上传课程 PDF，也可在报告中手动填写教学内容。"}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -1563,13 +1791,16 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             )}
             <label className="space-y-1 text-sm">
               周期开始日期
-              <Input type="date" value={start} onChange={e => setStart(e.target.value)} />
+              <Input type="date" aria-label="周期开始日期" value={start} onChange={e => setStart(e.target.value)} />
             </label>
             <label className="space-y-1 text-sm">
               周期结束日期
-              <Input type="date" value={end} onChange={e => setEnd(e.target.value)} />
+              <Input type="date" aria-label="周期结束日期" value={end} onChange={e => setEnd(e.target.value)} />
             </label>
           </div>
+          <p className="text-xs text-muted-foreground">
+            结束日期可设为未来，生成时使用已有记录；周期须在所选学期范围内。
+          </p>
           <ReportStudentPicker students={students} selected={selected} onChange={setSelected} />
           {isV2 ? (
             <SubjectCoursePicker
@@ -1586,21 +1817,42 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
             />
           ) : (
             <>
+              <label className="block space-y-1 text-sm">
+                教学内容来源
+                <select
+                  aria-label="教学内容来源"
+                  className="h-9 w-full rounded-md border bg-background px-2"
+                  value={usesManualCourse ? "manual" : "pdf"}
+                  onChange={event => setCourseSource(event.target.value as "manual" | "pdf")}
+                >
+                  <option value="manual">手动输入教学内容</option>
+                  <option value="pdf">课程 PDF 授课范围</option>
+                </select>
+              </label>
+              {usesManualCourse && (
+                <p className="text-xs text-muted-foreground">
+                  无需上传课程资料。请填写实际教学内容，每行一项，生成后可逐项评价掌握情况。
+                </p>
+              )}
               <textarea
+                aria-label="教学内容或授课范围"
                 className="min-h-16 w-full rounded-md border bg-background p-2 text-sm"
                 placeholder={
-                  period === "term"
-                    ? "学期报告默认覆盖整份已确认课程资料"
-                    : "本周期已授课范围（可选单元、课时，也可填第3页或第3-5页）"
+                  usesManualCourse
+                    ? "手动输入教学内容（每行一项，至少2个字符）"
+                    : period === "term"
+                      ? "学期报告默认覆盖整份已确认课程资料"
+                      : "本周期已授课范围（可选单元、课时，也可填第3页或第3-5页）"
                 }
                 value={courseScope}
                 maxLength={1000}
                 onChange={e => {
+                  setCourseSource(usesManualCourse ? "manual" : "pdf");
                   setCourseScope(e.target.value);
                   setMessage("");
                 }}
               />
-              {period !== "term" && availableUnits.length > 0 && (
+              {!usesManualCourse && period !== "term" && availableUnits.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">从课程 PDF 选择单元、课时或页码，可选择多个：</p>
                   {/* <p className="text-xs text-muted-foreground">
@@ -1654,8 +1906,8 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                 ))
               ) : (
                 <p>
-                  {isV2 && courseSelections.some(selection => selection.manualContent !== undefined)
-                    ? "已选择手填学科，可填写成长评价和课堂表现后生成报告。"
+                  {usesManualCourse
+                    ? "教学内容来自教师手动填写，可填写掌握情况后生成报告。"
                     : "未匹配到 PDF 页面，请选择上方单元、课时或页码，也可以填写“第3页”或“第3-5页”。"}
                 </p>
               )}
@@ -1670,7 +1922,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               <div className="max-h-80 space-y-2 overflow-y-auto">
                 {scopePreview.learningContents.map(item => (
                   <div key={item.id} className="rounded-lg border bg-background p-3">
-                    <p className="mb-1 text-xs font-semibold text-indigo-600">{item.section}</p>
+                    <p className="mb-1 text-xs font-semibold text-indigo-600">{learningSectionTitle(item.section)}</p>
                     <p className="whitespace-pre-wrap text-sm leading-6">{item.text}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {item.sourceRefs
@@ -1810,31 +2062,25 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
           </label>
           <p className="text-xs text-muted-foreground">
             积分依据为周期综合评价记录，不代表所选学科的掌握程度。
-            {isV2 ? "勾选学科即可填写反馈，无需课程资料。" : "课程资料须先解析并确认。"}
+            {isV2
+              ? "勾选学科即可填写反馈，无需课程资料。"
+              : usesManualCourse
+                ? "教学内容由教师手动填写，无需上传课程资料。"
+                : "课程资料须先解析并确认，也可切换为手动输入。"}
           </p>
+          {generationBlockedReason && (
+            <p
+              id={`${sectionId}-generation-hint`}
+              aria-label="生成报告提示"
+              aria-live="polite"
+              className="text-sm text-amber-700"
+            >
+              {generationBlockedReason}
+            </p>
+          )}
           <Button
-            disabled={
-              busy ||
-              !scopePreview ||
-              !termId ||
-              (!isV2 && !subjectId) ||
-              selected.length === 0 ||
-              !start ||
-              !end ||
-              end < start ||
-              (reportDetails.lessonDate !== "" &&
-                (reportDetails.lessonDate < start || reportDetails.lessonDate > end)) ||
-              (reportDetails.lessonNumber !== null &&
-                (!Number.isInteger(reportDetails.lessonNumber) ||
-                  reportDetails.lessonNumber < 1 ||
-                  reportDetails.lessonNumber > 999)) ||
-              (isV2
-                ? invalidCourseSelection || !scopePreview || Boolean(scopePreviewError)
-                : period !== "term" && courseScope.trim().length < 2) ||
-              (scopePreview.totalPages === 0 &&
-                !(isV2 && courseSelections.some(selection => selection.manualContent !== undefined))) ||
-              (scopePreview?.totalLearningContents ?? 0) > 500
-            }
+            disabled={Boolean(generationBlockedReason)}
+            aria-describedby={generationBlockedReason ? `${sectionId}-generation-hint` : undefined}
             className="w-full sm:w-auto"
             onClick={() => void generate()}
           >
@@ -1848,13 +2094,204 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         aria-label="报告列表"
         className={`${mobileSection === "reports" ? "" : "hidden md:block"} min-w-0 rounded-2xl border bg-background p-4 md:mt-6 md:rounded-xl`}
       >
-        <h2 className="mb-3 font-semibold">报告与流程</h2>
+        <div className="mb-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">报告与流程</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={publishingReports || !!actingReportId || loadingReports || invalidReportDateRange}
+              onClick={() => void load(createUuid()).catch(error => setMessage(errorMessage(error)))}
+            >
+              刷新报告
+            </Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <Input
+              aria-label="搜索报告"
+              placeholder="搜索学生姓名、班级或学科"
+              maxLength={100}
+              value={reportSearch}
+              disabled={publishingReports}
+              onChange={event => setReportSearch(event.target.value)}
+            />
+            <select
+              aria-label="筛选报告状态"
+              className="min-h-10 rounded-md border bg-background px-3 text-sm"
+              value={reportStatus}
+              disabled={publishingReports}
+              onChange={event => setReportStatus(event.target.value)}
+            >
+              <option value="">全部状态</option>
+              {["draft", "published", "queued", "generating", "failed"].map(status => (
+                <option key={status} value={status}>
+                  {labels[status]}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="筛选报告周期"
+              className="min-h-10 rounded-md border bg-background px-3 text-sm"
+              value={reportPeriod}
+              disabled={publishingReports}
+              onChange={event => setReportPeriod(event.target.value)}
+            >
+              <option value="">全部周期</option>
+              {["week", "month", "term"].map(period => (
+                <option key={period} value={period}>
+                  {labels[period]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <fieldset className="space-y-2 rounded-xl border p-3">
+            <legend className="px-1 text-sm font-medium">报告时间筛选</legend>
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+              <label className="min-w-0 space-y-1 text-sm">
+                开始日期
+                <Input
+                  type="date"
+                  aria-label="筛选开始日期"
+                  value={reportStartDate}
+                  max={reportEndDate || undefined}
+                  disabled={publishingReports}
+                  onChange={event => setReportStartDate(event.target.value)}
+                />
+              </label>
+              <label className="min-w-0 space-y-1 text-sm">
+                结束日期
+                <Input
+                  type="date"
+                  aria-label="筛选结束日期"
+                  value={reportEndDate}
+                  min={reportStartDate || undefined}
+                  disabled={publishingReports}
+                  onChange={event => setReportEndDate(event.target.value)}
+                />
+              </label>
+              <Button
+                variant="outline"
+                disabled={publishingReports || (!reportStartDate && !reportEndDate)}
+                onClick={() => {
+                  setReportStartDate("");
+                  setReportEndDate("");
+                }}
+              >
+                清除时间筛选
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              按报告覆盖时间（北京时间）筛选，与所选日期有交集即显示；留空表示不限。
+            </p>
+            {invalidReportDateRange && (
+              <p role="alert" className="text-sm text-red-700">
+                开始日期不能晚于结束日期，请调整后再筛选。
+              </p>
+            )}
+          </fieldset>
+          <div aria-label="报告汇总" className="flex flex-wrap gap-2 text-sm">
+            <span className="rounded-lg bg-muted px-3 py-2">
+              已加载 {visibleReports.length} 份{hasMoreReports ? "，下方可继续加载" : ""}
+            </span>
+            {["draft", "published", "queued", "generating", "failed"].map(status => (
+              <span key={status} className="rounded-lg bg-muted/50 px-3 py-2">
+                {labels[status]} {visibleReports.filter(report => report.status === status).length}
+              </span>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-indigo-50/50 p-3 dark:bg-muted/40">
+            <label className="flex min-h-11 items-center gap-2 text-sm">
+              <input
+                ref={selectionRef}
+                type="checkbox"
+                aria-label="全选当前结果中的可操作报告"
+                className="h-4 w-4"
+                checked={allReportsSelected}
+                disabled={publishingReports || !selectableReports.length}
+                onChange={() =>
+                  setSelectedReportIds(allReportsSelected ? [] : selectableReports.map(report => report.id))
+                }
+              />
+              全选当前结果
+            </label>
+            <span className="text-sm">已选 {selectedReports.length} 份</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={publishingReports || !selectedReports.length}
+              onClick={() => setSelectedReportIds([])}
+            >
+              清空选择
+            </Button>
+            <Button
+              className="min-h-11"
+              disabled={publishingReports || !!actingReportId || !selectedDrafts.length}
+              onClick={() => setConfirmBatchPublish(true)}
+            >
+              {publishingReports ? "正在批量发布…" : `批量发布（${selectedDrafts.length}）`}
+            </Button>
+            <Button
+              className="min-h-11"
+              variant="outline"
+              disabled={
+                publishingReports ||
+                !!actingReportId ||
+                !selectedReports.length ||
+                selectedReports.some(report => report.status !== "published")
+              }
+              onClick={() => setExportReports(selectedReports)}
+            >
+              <Download />
+              导出所选图片（{selectedReports.length}）
+            </Button>
+            <p className="w-full text-xs text-muted-foreground">
+              汇总和全选针对当前筛选中已加载的报告；切换筛选会清空选择。批量发布只处理草稿；导出前请先发布所选草稿，每份报告生成一张
+              PNG，统一下载 ZIP。
+            </p>
+            {batchResult && (
+              <p role="status" className="w-full break-words text-sm">
+                {batchResult}
+              </p>
+            )}
+            {batchFailures.length > 0 && (
+              <ul role="alert" className="w-full space-y-1 break-words text-sm text-red-700">
+                {batchFailures.map((failure, index) => (
+                  <li key={index}>{failure}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
         <div className="space-y-2">
-          {reports.map(report => (
+          {visibleReports.map(report => (
             <article key={report.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-3">
-              <div className="min-w-0 basis-full break-words sm:flex-1 sm:basis-auto">
+              <label className="flex min-h-11 min-w-11 items-center justify-center">
+                <input
+                  type="checkbox"
+                  aria-label={`选择 ${report.className} ${report.studentName} 的${labels[report.period] ?? "报告"}`}
+                  data-report-id={report.id}
+                  className="h-4 w-4"
+                  disabled={publishingReports || !["draft", "published"].includes(report.status)}
+                  checked={selectedReports.some(row => row.id === report.id)}
+                  onChange={event =>
+                    setSelectedReportIds(current =>
+                      event.target.checked ? [...current, report.id] : current.filter(id => id !== report.id)
+                    )
+                  }
+                />
+              </label>
+              <div className="min-w-0 flex-1 break-words">
                 <p className="font-medium">
                   {report.className} · {report.studentName} · {labels[report.period] ?? report.period}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {report.subjectName}
+                  {report.start
+                    ? ` · ${new Date(report.start).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}`
+                    : ""}
+                  {report.end
+                    ? ` 至 ${new Date(new Date(report.end).getTime() - 1).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}`
+                    : ""}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {labels[report.status] ?? report.status}
@@ -1873,14 +2310,18 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!loadingReportId || !!actingReportId}
+                    disabled={!!loadingReportId || !!actingReportId || publishingReports}
                     onClick={() => void openEdit(report)}
                   >
                     {report.status === "draft" ? "预览 / 编辑" : "查看流程"}
                   </Button>
                 )}
                 {report.status === "draft" && (
-                  <Button size="sm" disabled={!!actingReportId} onClick={() => void actOnReport(report, "publish")}>
+                  <Button
+                    size="sm"
+                    disabled={!!actingReportId || publishingReports}
+                    onClick={() => void actOnReport(report, "publish")}
+                  >
                     发布并复制链接
                   </Button>
                 )}
@@ -1888,7 +2329,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!actingReportId}
+                    disabled={!!actingReportId || publishingReports}
                     onClick={() => void actOnReport(report, "retry")}
                   >
                     重试
@@ -1898,7 +2339,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!actingReportId}
+                    disabled={!!actingReportId || publishingReports}
                     onClick={() => void actOnReport(report, "copy")}
                   >
                     <Clipboard />
@@ -1909,7 +2350,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!actingReportId || !!loadingReportId}
+                    disabled={!!actingReportId || !!loadingReportId || publishingReports}
                     onClick={() => setImageReport({ studentName: report.studentName, url: report.share!.url })}
                   >
                     <ImageIcon />
@@ -1920,7 +2361,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!!actingReportId || !!loadingReportId}
+                    disabled={!!actingReportId || !!loadingReportId || publishingReports}
                     onClick={() => void actOnReport(report, "revoke")}
                   >
                     {report.share ? "撤销链接并编辑" : "重新编辑"}
@@ -1930,7 +2371,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                   size="sm"
                   variant="ghost"
                   aria-label="删除报告"
-                  disabled={!!actingReportId}
+                  disabled={!!actingReportId || publishingReports}
                   onClick={() => setDeleteTarget({ kind: "report", report })}
                 >
                   <Trash2 />
@@ -1950,9 +2391,34 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
               )}
             </article>
           ))}
-          {reports.length === 0 && <p className="text-sm text-muted-foreground">还没有报告。</p>}
+          {visibleReports.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              {reportSearch || reportStatus || reportPeriod || reportStartDate || reportEndDate
+                ? "没有符合条件的报告，请调整搜索或筛选。"
+                : "还没有报告。"}
+            </p>
+          )}
+          {hasMoreReports && (
+            <Button
+              className="mt-3 w-full"
+              variant="outline"
+              disabled={loadingReports || publishingReports || reportSearchQuery !== debouncedReportSearch}
+              onClick={() => void loadMoreReports()}
+            >
+              {loadingReports ? "正在加载…" : "加载更多报告"}
+            </Button>
+          )}
         </div>
       </section>
+      <ConfirmDialog
+        open={confirmBatchPublish}
+        title={`发布所选 ${selectedDrafts.length} 份草稿`}
+        description="请确认已经核对所选报告的内容。发布后会为每份报告生成家长访问链接，失败的报告保留选择以便重试。"
+        confirmText="确认发布"
+        onCancel={() => setConfirmBatchPublish(false)}
+        onConfirm={() => void publishSelectedReports()}
+      />
+      {exportReports && <BatchReportImageDialog reports={exportReports} onClose={() => setExportReports(null)} />}
       {imageReport && (
         <ReportImageDialog
           studentName={imageReport.studentName}
@@ -2229,10 +2695,12 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                         {(draft.learningContents ?? []).map((item, index) => (
                           <div key={item.id} className="space-y-2 rounded-lg border p-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-sm font-semibold text-indigo-600">{item.section}</p>
+                              <p className="text-sm font-semibold text-indigo-600">
+                                {learningSectionTitle(item.section)}
+                              </p>
                               {showsLearningMastery(item) && (
                                 <select
-                                  aria-label={`${item.section} 学习内容 ${index + 1} 掌握情况`}
+                                  aria-label={`${learningSectionTitle(item.section)} 学习内容 ${index + 1} 掌握情况`}
                                   className="h-9 rounded-md border bg-background px-2 text-sm"
                                   value={item.mastery}
                                   onChange={event =>

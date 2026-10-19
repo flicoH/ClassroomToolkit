@@ -339,6 +339,180 @@ describe('report generation input', () => {
       expect.objectContaining({ studentId: 'two', positive: 5, negative: 0 }),
     ]);
   });
+  it.each(['week', 'month', 'term'])(
+    'generates original %s reports from explicit manual content without PDFs',
+    async (period) => {
+      const { service, internals, reports } = setup();
+      internals.findUsableDocuments.mockResolvedValue([]);
+      const manualContent = '认识植物的根和叶\n观察种子发芽';
+      const input = {
+        ...request,
+        period,
+        studentFeedback: [],
+        courseSelections: [
+          { subjectId: 'subject', courseScope: '', manualContent },
+        ],
+      };
+      const preview = await service.previewCourseScope(input);
+      expect(preview.totalPages).toBe(0);
+      expect(preview.learningContents.map((item) => item.text)).toEqual([
+        '认识植物的根和叶',
+        '观察种子发芽',
+      ]);
+      await service.preview(input);
+      await service.generate(input);
+      const row = reports.save.mock.calls[0]![0];
+      expect(row.snapshot.reportVersion).toBe('v1');
+      expect(
+        row.snapshot.learningContents.map(
+          (item: { section: string }) => item.section,
+        ),
+      ).toEqual(['英语', '英语']);
+      expect(row.snapshot.courseDocuments).toEqual([]);
+      expect(row.snapshot.allowedReferences).toContain(
+        'teacher-course:subject',
+      );
+      expect(row.snapshot.courseSelections[0].manualContent).toBe(
+        manualContent,
+      );
+      const content = generateTemplateReport(row);
+      expect(content.learningContents).toHaveLength(2);
+      expect(() =>
+        validateGeneratedReportContent(content, row.snapshot),
+      ).not.toThrow();
+      // 后续上传 PDF 也不能改变已保存报告的教师手填来源。
+      internals.findUsableDocuments.mockResolvedValue([course]);
+      jest.spyOn(internals, 'findReport').mockResolvedValue(row);
+      await service.regenerate(row.id);
+      expect(
+        reports.save.mock.calls.at(-1)![0].snapshot.courseDocuments,
+      ).toEqual([]);
+      row.status = 'failed';
+      jest
+        .spyOn(
+          service as unknown as { currentReportDto: () => Promise<unknown> },
+          'currentReportDto',
+        )
+        .mockResolvedValue({});
+      await service.retryReport(row.id);
+      expect(row.status).toBe('queued');
+      expect(row.snapshot.courseSelections[0].manualContent).toBe(
+        manualContent,
+      );
+    },
+  );
+
+  it.each([
+    [{ subjectId: 'subject', courseScope: '', manualContent: '' }],
+    [{ subjectId: 'subject', courseScope: '', manualContent: '字' }],
+    [
+      {
+        subjectId: 'subject',
+        courseScope: '',
+        manualContent: '字'.repeat(1001),
+      },
+    ],
+    [{ subjectId: 'foreign', courseScope: '', manualContent: '实际内容' }],
+    [{ subjectId: 'subject', courseScope: 'Unit1' }],
+    [
+      { subjectId: 'subject', courseScope: '', manualContent: '实际内容' },
+      { subjectId: 'other', courseScope: '', manualContent: '其他内容' },
+    ],
+  ])(
+    'rejects invalid or mismatched original manual selections %j',
+    async (...courseSelections) => {
+      const { service, reports } = setup();
+      const input = { ...request, courseSelections, studentFeedback: [] };
+      await expect(service.previewCourseScope(input)).rejects.toThrow();
+      await expect(service.generate(input)).rejects.toThrow();
+      expect(reports.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it('requires ownership of manually entered original report subjects', async () => {
+    const { service, internals, reports } = setup();
+    internals.requireSubject.mockRejectedValue(new Error('学科不存在'));
+    const input = {
+      ...request,
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '实际内容' },
+      ],
+    };
+    await expect(service.generate(input)).rejects.toThrow('学科不存在');
+    expect(reports.save).not.toHaveBeenCalled();
+  });
+
+  describe.each(['v1', 'v2'])('%s future report end', (reportVersion) => {
+    it.each([
+      ['week', '2026-09-21', '2026-09-25', '2026-09-25T16:00:00.000Z'],
+      ['month', '2026-09-01', '2026-09-30', '2026-09-30T16:00:00.000Z'],
+      ['term', '2026-09-01', '2026-12-31', '2026-12-31T16:00:00.000Z'],
+    ])(
+      'previews and saves the full %s range even before it ends',
+      async (period, start, end, exclusiveEnd) => {
+        jest.setSystemTime(new Date('2026-09-21T12:00:00+08:00'));
+        const { service, internals, reports } = setup();
+        const input = {
+          ...request,
+          reportVersion,
+          period,
+          start,
+          end,
+          reportDetails: undefined,
+          studentFeedback: [],
+          courseSelections: [
+            {
+              subjectId: 'subject',
+              courseScope: '',
+              manualContent: '学习内容',
+            },
+          ],
+        };
+        const preview = await service.preview(input);
+        expect(preview.end.toISOString()).toBe(exclusiveEnd);
+        await service.generate(input);
+        expect(reports.save).toHaveBeenCalledTimes(2);
+        for (const [row] of reports.save.mock.calls) {
+          expect(row.periodEnd.toISOString()).toBe(exclusiveEnd);
+        }
+        expect(internals.scoreSummary).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'one' }),
+          preview.start,
+          preview.end,
+        );
+      },
+    );
+
+    it.each([
+      ['week', '2026-09-21', '2026-09-28', '周报周期不能超过 7 天'],
+      ['month', '2026-09-01', '2026-10-02', '月报周期不能超过 31 天'],
+      ['term', '2026-12-01', '2027-01-01', '报告周期必须在学期日期范围内'],
+      ['week', '2026-09-25', '2026-09-21', '报告周期无效'],
+    ])(
+      'still rejects invalid %s ranges %s to %s',
+      async (period, start, end, message) => {
+        const { service, reports } = setup();
+        const input = { ...request, reportVersion, period, start, end };
+        await expect(service.preview(input)).rejects.toThrow(message);
+        await expect(service.generate(input)).rejects.toThrow(message);
+        expect(reports.save).not.toHaveBeenCalled();
+      },
+    );
+
+    it('still enforces term ownership before saving future reports', async () => {
+      const { service, internals, reports } = setup();
+      internals.requireTerm.mockRejectedValue(new Error('学期不存在'));
+      const input = {
+        ...request,
+        reportVersion,
+        period: 'term',
+        end: '2026-12-31',
+      };
+      await expect(service.preview(input)).rejects.toThrow('学期不存在');
+      await expect(service.generate(input)).rejects.toThrow('学期不存在');
+      expect(reports.save).not.toHaveBeenCalled();
+    });
+  });
   it('queries only the current teacher and selected student within the half-open report period', async () => {
     const { internals } = setup();
     internals.scoreSummary.mockRestore();

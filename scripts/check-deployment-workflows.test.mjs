@@ -15,6 +15,7 @@ const smallHost = yaml.load(
   readFileSync(new URL("../.github/workflows/publish-2c2g-images.yml", import.meta.url), "utf8")
 );
 const frontend = yaml.load(readFileSync(new URL("../.github/workflows/deploy-frontend.yml", import.meta.url), "utf8"));
+const ci = yaml.load(readFileSync(new URL("../.github/workflows/deploy.yml", import.meta.url), "utf8"));
 const builds = backend.jobs.publish.steps.filter(step => step.uses?.startsWith("docker/build-push-action@"));
 const parser = builds.find(step => step.with?.target === "docling-parser");
 
@@ -62,6 +63,29 @@ test("the small-host release publishes only backend, web and admin runtime image
       ["admin", "runner"]
     ]
   );
+});
+
+for (const [name, workflow] of [
+  ["backend release", backend],
+  ["CI", ci]
+]) {
+  test(`${name} runs the real MySQL report regression instead of silently skipping it`, () => {
+    const step = workflow.jobs.verify.steps.find(item => item.name === "Test backend E2E");
+    assert.equal(step.env?.REPORT_LIST_MYSQL_TEST, "1");
+    assert.notEqual(step["continue-on-error"], true);
+    assert.ok(workflow.jobs.verify.services.mysql);
+  });
+}
+
+test("manual image publishing waits for a real MySQL report regression", () => {
+  assert.ok(smallHost.jobs.publish.needs.includes("verify-reports"));
+  const job = smallHost.jobs["verify-reports"];
+  assert.equal(job.env.REPORT_LIST_MYSQL_TEST, "1");
+  assert.equal(job.services.mysql.env.MYSQL_DATABASE, job.env.MYSQL_DATABASE);
+  const install = job.steps.findIndex(step => step.run === "pnpm install --frozen-lockfile");
+  const integration = job.steps.findIndex(step => step.run?.includes("jest --config ./test/jest-e2e.json report-list"));
+  assert.ok(install >= 0 && integration > install);
+  assert.notEqual(job.steps[integration]["continue-on-error"], true);
 });
 
 test("repairing backend deployment also schedules a frontend deployment so blocked releases recover", () => {

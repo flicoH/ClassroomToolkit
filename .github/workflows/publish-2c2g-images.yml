@@ -16,8 +16,46 @@ jobs:
           bash -n deploy/2c2g-deploy.sh
           python3 -m unittest discover -s deploy/tests -v
 
+  verify-reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_password
+          MYSQL_DATABASE: classroom_toolkit
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ci_password
+      MYSQL_DATABASE: classroom_toolkit
+      REPORT_LIST_MYSQL_TEST: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 报告测试只建连接内临时表，不需要初始化业务表或运行迁移。
+      - name: Test report search, date filtering and photo snapshot sorting
+        run: pnpm --filter ClassRoomToolkitBackend exec jest --config ./test/jest-e2e.json report-list --runInBand --no-watchman
+
   publish:
-    needs: verify
+    needs: [verify, verify-reports]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

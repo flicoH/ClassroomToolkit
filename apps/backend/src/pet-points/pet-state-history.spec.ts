@@ -90,6 +90,22 @@ describe('period-end pet history', () => {
         .petHistoryStatus,
     ).toBe('unavailable');
   });
+  it('uses only recorded history as of generation when the period ends in the future', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-09T08:00:00Z'));
+    const { repo } = repository();
+    expect(
+      await petAppearanceAtReportEnd(
+        repo,
+        'teacher',
+        'student',
+        new Date('2026-12-31T16:00:00Z'),
+      ),
+    ).toEqual({
+      pet: egg,
+      petAsOf: '2026-10-09T08:00:00.000Z',
+      petHistoryStatus: 'recorded',
+    });
+  });
   it('carries the last known form forward and freezes an unfinished day at generation time', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-10-09T08:00:00Z'));
     const { repo } = repository();

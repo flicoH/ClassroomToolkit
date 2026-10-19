@@ -107,6 +107,11 @@ function Entries({ entries, empty }: { entries: ReportEntry[]; empty: string }) 
   );
 }
 
+/** 兼容已保存的手填标题；仅隐藏来源后缀，不改写报告内容或引用。 */
+export function learningSectionTitle(section: string) {
+  return section.replace(/\s*·\s*教师填写\s*$/u, "");
+}
+
 /** 教师预览、家长页和完整图片导出共用此视图，确保照片位置、空区块隐藏和版本兼容一致。 */
 export function LearningReportView({ report }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
@@ -115,9 +120,10 @@ export function LearningReportView({ report }: { report: LearningReportData; for
   const photoCount = classroomPhotos.filter(Boolean).length;
   const sections = new Map<string, LearningContent[]>();
   for (const item of content.learningContents ?? []) {
-    const items = sections.get(item.section) ?? [];
+    const section = learningSectionTitle(item.section);
+    const items = sections.get(section) ?? [];
     items.push(item);
-    sections.set(item.section, items);
+    sections.set(section, items);
   }
   const isV2 = content.reportVersion === "v2";
   const showClassroomPerformance =
