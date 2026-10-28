@@ -197,35 +197,35 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 
 ## 常用接口
 
-| 方法             | 路径                                        | 说明                 |
-| ---------------- | ------------------------------------------- | -------------------- |
-| `POST`           | `/auth/teacher/register`                    | 注册教师             |
-| `POST`           | `/auth/teacher/login`                       | 登录并创建会话       |
-| `GET`            | `/auth/teacher/me`                          | 获取当前教师         |
-| `POST`           | `/auth/teacher/logout`                      | 注销当前会话         |
-| `GET / POST`     | `/classes`                                  | 查询或创建班级       |
-| `POST`           | `/classes/:classroomId/students`            | 新增学生             |
-| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId` | 编辑或删除学生       |
-| `GET / POST`     | `/task-stats`                               | 查询或创建任务       |
-| `GET / POST`     | `/seating-charts`                           | 查询或创建座位表     |
-| `POST`           | `/random-picker/pick`                       | 执行随机点名         |
-| `GET / PATCH`    | `/countdown`                                | 读取或更新倒计时     |
-| `GET / POST`     | `/sticky-notes`                             | 查询或创建便签       |
-| `GET`            | `/pet-points`                               | 获取宠物积分完整状态 |
-| `POST`           | `/pet-points/scores/adjust`                 | 调整学生积分         |
-| `GET`            | `/gacha-machine`                            | 获取扭蛋机奖励与记录 |
-| `POST`           | `/gacha-machine/draw`                       | 执行抽奖             |
-| `POST`           | `/gacha-machine/rewards`                    | 新增奖励             |
-| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`          | 编辑或删除奖励       |
-| `POST`           | `/feedback`                                 | 提交教师意见反馈     |
-| `GET / POST`     | `/semester-reports/report-terms`            | 查询或创建报告学期   |
-| `GET / POST`     | `/semester-reports/report-subjects`         | 查询或创建报告学科   |
-| `GET / POST`     | `/semester-reports/course-documents`        | 查询或上传课程资料   |
-| `POST`           | `/semester-reports/reports/generate`        | 生成学生报告         |
-| `GET`            | `/semester-reports/reports`                 | 筛选和分页查询报告   |
-| `PATCH`          | `/semester-reports/reports/:id/draft`       | 编辑报告草稿         |
-| `POST`           | `/semester-reports/reports/:id/publish`     | 发布报告并创建分享   |
-| `GET`            | `/semester-reports/public/reports/:token`   | 获取公开报告快照     |
+| 方法             | 路径                                        | 说明                                                       |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| `POST`           | `/auth/teacher/register`                    | 注册教师                                                   |
+| `POST`           | `/auth/teacher/login`                       | 登录并创建会话                                             |
+| `GET`            | `/auth/teacher/me`                          | 获取当前教师                                               |
+| `POST`           | `/auth/teacher/logout`                      | 注销当前会话                                               |
+| `GET / POST`     | `/classes`                                  | 查询或创建班级                                             |
+| `POST`           | `/classes/:classroomId/students`            | 新增学生                                                   |
+| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId` | 编辑或删除学生                                             |
+| `GET / POST`     | `/task-stats`                               | 查询或创建任务                                             |
+| `GET / POST`     | `/seating-charts`                           | 查询或创建座位表                                           |
+| `POST`           | `/random-picker/pick`                       | 执行随机点名                                               |
+| `GET / PATCH`    | `/countdown`                                | 读取或更新倒计时                                           |
+| `GET / POST`     | `/sticky-notes`                             | 查询或创建便签                                             |
+| `GET`            | `/pet-points`                               | 获取宠物积分完整状态（含学生、规则、四系共 23 只宠物模板） |
+| `POST`           | `/pet-points/scores/adjust`                 | 调整学生积分                                               |
+| `GET`            | `/gacha-machine`                            | 获取扭蛋机奖励与记录                                       |
+| `POST`           | `/gacha-machine/draw`                       | 执行抽奖                                                   |
+| `POST`           | `/gacha-machine/rewards`                    | 新增奖励                                                   |
+| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`          | 编辑或删除奖励                                             |
+| `POST`           | `/feedback`                                 | 提交教师意见反馈                                           |
+| `GET / POST`     | `/semester-reports/report-terms`            | 查询或创建报告学期                                         |
+| `GET / POST`     | `/semester-reports/report-subjects`         | 查询或创建报告学科                                         |
+| `GET / POST`     | `/semester-reports/course-documents`        | 查询或上传课程资料                                         |
+| `POST`           | `/semester-reports/reports/generate`        | 生成学生报告                                               |
+| `GET`            | `/semester-reports/reports`                 | 筛选和分页查询报告                                         |
+| `PATCH`          | `/semester-reports/reports/:id/draft`       | 编辑报告草稿                                               |
+| `POST`           | `/semester-reports/reports/:id/publish`     | 发布报告并创建分享                                         |
+| `GET`            | `/semester-reports/public/reports/:token`   | 获取公开报告快照                                           |
 
 具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；公开报告仅通过高熵分享 Token 访问。
 

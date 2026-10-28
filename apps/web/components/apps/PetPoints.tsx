@@ -7,7 +7,7 @@
 "use client";
 import { petOptions, PetSprite, formStages } from "@/components/semester-reports/ReportPetView";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createUuid } from "@/lib/id";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PetCertificate } from "./pet-points/PetCertificate";
@@ -24,6 +24,8 @@ import {
   Droplets,
   Flame,
   Gift,
+  Grid2X2,
+  Grid3X3,
   History,
   Leaf,
   Medal,
@@ -127,6 +129,7 @@ interface RedemptionRecord {
 }
 
 type SortMode = "分数降序" | "分数升序" | "姓名排序" | "学号排序";
+type DisplayMode = "normal" | "compact";
 type SettingsPanel = "指标配置" | "奖品配置" | "等级规则" | "宠物统计" | "最近评分" | "积分统计";
 type ScoreAdjustMode = "add" | "subtract";
 
@@ -416,6 +419,8 @@ function CompletedPetPortrait({ petId }: { petId: string }) {
   return pet ? <PetSprite pet={pet} stageIndex={9} className="mb-2 w-20" /> : null;
 }
 
+const emptySubscribe = () => () => {};
+
 /** 宠物积分主界面，串联学生筛选、批量评分、宠物选择、兑换和报表弹窗。 */
 export function PetPoints() {
   const [completed, setCompleted] = useState<CompletedPetView[]>([]);
@@ -444,10 +449,15 @@ export function PetPoints() {
   const [rubrics, setRubrics] = useState<RubricItem[]>([]);
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   const [redemptions, setRedemptions] = useState<RedemptionRecord[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+  const hydrated = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState("全部分组");
   const [sortMode, setSortMode] = useState<SortMode>("分数降序");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("normal");
   const [studentDataLoading, setStudentDataLoading] = useState(false);
   const [studentDataError, setStudentDataError] = useState("");
   const studentRequestIdRef = useRef(0);
@@ -467,7 +477,6 @@ export function PetPoints() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel | null>(null);
   const settingsPanelRef = useRef(settingsPanel);
-  settingsPanelRef.current = settingsPanel;
   const [rewardStoreOpen, setRewardStoreOpen] = useState(false);
   const [rewardStoreTab, setRewardStoreTab] = useState<"商品列表" | "兑换记录">("商品列表");
   const [rewardStudentId, setRewardStudentId] = useState(initialStudents[0]?.id ?? "");
@@ -497,8 +506,8 @@ export function PetPoints() {
   } | null>(null);
 
   useEffect(() => {
-    setHydrated(true);
-  }, []);
+    settingsPanelRef.current = settingsPanel;
+  }, [settingsPanel]);
 
   useEffect(() => {
     if (!notice) return;
@@ -686,7 +695,16 @@ export function PetPoints() {
 
   useEffect(() => {
     if (!hydrated) return;
-    requestClassrooms();
+    // The first client render initializes remote classroom state; later changes use explicit handlers.
+    let ignore = false;
+    void Promise.resolve().then(() => {
+      if (!ignore) {
+        requestClassrooms();
+      }
+    });
+    return () => {
+      ignore = true;
+    };
   }, [hydrated, requestClassrooms]);
 
   const classStudents = useMemo(
@@ -1278,6 +1296,29 @@ export function PetPoints() {
               <SlidersHorizontal className="h-5 w-5" />
               高级
             </Button>
+            <div className="flex h-11 items-center rounded-xl bg-slate-100 p-1" aria-label="卡片显示模式">
+              {(
+                [
+                  ["normal", "普通模式", Grid2X2],
+                  ["compact", "紧凑模式", Grid3X3]
+                ] as const
+              ).map(([mode, label, ModeIcon]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-label={label}
+                  aria-pressed={displayMode === mode}
+                  title={label}
+                  onClick={() => setDisplayMode(mode)}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-lg transition",
+                    displayMode === mode ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                  )}
+                >
+                  <ModeIcon className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
             <div className="relative">
               <Button
                 variant="ghost"
@@ -1331,7 +1372,16 @@ export function PetPoints() {
           </div>
         )}
       </header>
-      <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-y-auto p-4 sm:grid-cols-2 lg:gap-5 lg:p-5 2xl:grid-cols-3">
+      <main
+        aria-label="宠物积分学生列表"
+        data-display-mode={displayMode}
+        className={cn(
+          "grid min-h-0 flex-1 content-start overflow-y-auto",
+          displayMode === "compact"
+            ? "grid-cols-2 gap-1.5 p-1.5 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] sm:gap-2 sm:p-2"
+            : "grid-cols-1 gap-4 p-3 sm:grid-cols-2 sm:p-4 lg:gap-5 lg:p-5"
+        )}
+      >
         {filteredStudents.map(student => {
           const pet = petOptions.find(item => item.id === student.petId);
           const genericEvolutionIndex = getEvolutionIndex(student.petExperience);
@@ -1344,13 +1394,21 @@ export function PetPoints() {
           return (
             <section
               data-pet-dialog
+              data-student-card
               key={student.id}
               className={cn(
-                "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                "border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                displayMode === "compact" ? "rounded-xl p-2" : "rounded-2xl p-4",
                 selectedStudentIds.includes(student.id) && "border-orange-400 ring-2 ring-orange-200"
               )}
             >
-              <div className="relative flex h-48 items-center justify-center overflow-hidden rounded-2xl border border-slate-100 bg-[radial-gradient(circle_at_center,#ffffff_0%,#f8fafc_72%)]">
+              <div
+                data-pet-preview
+                className={cn(
+                  "relative flex items-center justify-center overflow-hidden border border-slate-100 bg-[radial-gradient(circle_at_center,#ffffff_0%,#f8fafc_72%)]",
+                  displayMode === "compact" ? "h-28 rounded-xl" : "h-48 rounded-2xl"
+                )}
+              >
                 {batchMode && (
                   <span
                     className={cn(
@@ -1368,14 +1426,20 @@ export function PetPoints() {
                     {Math.floor(student.trophies / 2) > 0 && (
                       <Badge
                         aria-label={`奖杯 ${Math.floor(student.trophies / 2)}`}
-                        className="gap-1 border border-yellow-200 bg-white px-2 py-1 text-yellow-700 shadow-none"
+                        className={cn(
+                          "gap-1 border border-yellow-200 bg-white text-yellow-700 shadow-none",
+                          displayMode === "compact" ? "px-1 py-0.5 text-[10px]" : "px-2 py-1"
+                        )}
                       >
                         <Trophy className="h-4 w-4" aria-hidden="true" />×{Math.floor(student.trophies / 2)}
                       </Badge>
                     )}
                     <Badge
                       aria-label={`成长徽章 ${student.trophies}`}
-                      className="gap-1 border border-orange-200 bg-white px-2 py-1 text-orange-500 shadow-none"
+                      className={cn(
+                        "gap-1 border border-orange-200 bg-white text-orange-500 shadow-none",
+                        displayMode === "compact" ? "px-1 py-0.5 text-[10px]" : "px-2 py-1"
+                      )}
                     >
                       <Medal className="h-4 w-4" aria-hidden="true" />×{student.trophies}
                     </Badge>
@@ -1398,14 +1462,17 @@ export function PetPoints() {
                         pet={pet}
                         stageIndex={petEvolutionIndex}
                         className={cn(
-                          "mx-auto w-36 animate-in fade-in zoom-in-75 duration-500 group-hover:scale-105",
+                          "mx-auto animate-in fade-in zoom-in-75 duration-500 group-hover:scale-105",
+                          displayMode === "compact" ? "w-20" : "w-36",
                           petEffect && "pet-evolution-pop"
                         )}
                       />
                       <div className="flex items-center justify-center gap-1.5">
-                        <span className={cn("rounded-full px-2 py-1 text-[11px] font-black", pet.badge)}>
-                          {pet.family}
-                        </span>
+                        {displayMode === "normal" && (
+                          <span className={cn("rounded-full px-2 py-1 text-[11px] font-black", pet.badge)}>
+                            {pet.family}
+                          </span>
+                        )}
                         <span className="rounded-full bg-white/90 px-2 py-1 text-xs font-black text-slate-600 shadow-sm">
                           {currentFormName}
                         </span>
@@ -1417,13 +1484,19 @@ export function PetPoints() {
                       pet={pet}
                       progress={student.petExperience}
                       hatchThreshold={getNextPetThreshold(1, maxPetLevel, maxPetEnergy)!}
-                      className="w-40 transition duration-300 group-hover:scale-105"
+                      className={cn(
+                        "transition duration-300 group-hover:scale-105",
+                        displayMode === "compact" ? "w-24" : "w-40"
+                      )}
                     />
                   ) : (
                     <IncubatingEgg
                       key={`egg-${student.petExperience}`}
                       score={student.petExperience}
-                      className="w-40 transition duration-300 group-hover:scale-105"
+                      className={cn(
+                        "transition duration-300 group-hover:scale-105",
+                        displayMode === "compact" ? "w-24" : "w-40"
+                      )}
                     />
                   )}
                 </button>
@@ -1446,11 +1519,19 @@ export function PetPoints() {
                   </div>
                 )}
                 {!batchMode && (
-                  <div className="absolute right-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-3">
+                  <div
+                    className={cn(
+                      "absolute top-1/2 z-10 flex -translate-y-1/2 flex-col",
+                      displayMode === "compact" ? "right-1.5 gap-1" : "right-3 gap-3"
+                    )}
+                  >
                     <Button
                       variant="outline"
                       size="icon"
-                      className="h-11 w-11 rounded-xl bg-white/90"
+                      className={cn(
+                        "bg-white/90",
+                        displayMode === "compact" ? "h-8 w-8 rounded-lg" : "h-11 w-11 rounded-xl"
+                      )}
                       onClick={() => setRecordStudentId(student.id)}
                       aria-label="评价记录"
                     >
@@ -1459,7 +1540,10 @@ export function PetPoints() {
                     <Button
                       variant="outline"
                       size="icon"
-                      className="h-11 w-11 rounded-xl bg-white/90"
+                      className={cn(
+                        "bg-white/90",
+                        displayMode === "compact" ? "h-8 w-8 rounded-lg" : "h-11 w-11 rounded-xl"
+                      )}
                       onClick={() => setHistoryStudentId(student.id)}
                       aria-label="养成记录"
                     >
@@ -1469,25 +1553,51 @@ export function PetPoints() {
                 )}
               </div>
 
-              <div className="mt-3 flex items-end justify-between gap-3">
-                <div>
-                  <h3 className="text-lg font-black leading-5">{student.name}</h3>
-                  <p className="font-black tracking-wide text-black">#{student.studentNo}</p>
+              <div
+                className={cn(
+                  displayMode === "compact" ? "mt-2 grid gap-1.5" : "mt-3 flex items-end justify-between gap-3"
+                )}
+              >
+                <div className="min-w-0">
+                  <h3
+                    className={cn(
+                      "font-black",
+                      displayMode === "compact" ? "truncate text-sm leading-4 sm:text-base" : "text-lg leading-5"
+                    )}
+                  >
+                    {student.name}
+                  </h3>
+                  <p className={cn("font-black tracking-wide text-black", displayMode === "compact" && "text-xs")}>
+                    #{student.studentNo}
+                  </p>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div
+                  className={cn(
+                    "items-center gap-1.5",
+                    displayMode === "compact" ? "grid grid-cols-[28px_minmax(0,1fr)_28px]" : "flex"
+                  )}
+                >
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 rounded-lg bg-rose-50 text-rose-500"
+                    className={cn(
+                      "rounded-lg bg-rose-50 text-rose-500",
+                      displayMode === "compact" ? "h-7 w-7" : "h-8 w-8"
+                    )}
                     onClick={() => openScoreAdjust(student.id, "subtract")}
                     disabled={batchMode || busy}
                     aria-label={`为${student.name}扣分`}
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
-                  <div className="text-right">
+                  <div className={cn("min-w-0", displayMode === "compact" ? "text-center" : "text-right")}>
                     <span className="block text-[11px] font-bold text-slate-400">本轮经验</span>
-                    <div className="text-3xl font-black text-slate-950">
+                    <div
+                      className={cn(
+                        "truncate font-black text-slate-950",
+                        displayMode === "compact" ? "text-lg sm:text-xl" : "text-3xl"
+                      )}
+                    >
                       {student.petExperience}
                       <span className="text-sm text-slate-400">/{nextPetThreshold ?? maxPetEnergy}</span>
                     </div>
@@ -1496,7 +1606,10 @@ export function PetPoints() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600"
+                    className={cn(
+                      "rounded-lg bg-emerald-50 text-emerald-600",
+                      displayMode === "compact" ? "h-7 w-7" : "h-8 w-8"
+                    )}
                     onClick={() => openScoreAdjust(student.id, "add")}
                     disabled={batchMode || busy}
                     aria-label={`为${student.name}加分`}
@@ -1511,7 +1624,10 @@ export function PetPoints() {
                 </Button>
               )}
               <div
-                className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100"
+                className={cn(
+                  "overflow-hidden rounded-full bg-slate-100",
+                  displayMode === "compact" ? "mt-2 h-1.5" : "mt-3 h-2.5"
+                )}
                 aria-label={`${pet ? "宠物等级经验" : "孵化"}进度${percent}%`}
               >
                 <div
@@ -1519,7 +1635,7 @@ export function PetPoints() {
                   style={{ width: `${percent}%` }}
                 />
               </div>
-              {pet && (
+              {pet && displayMode === "normal" && (
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-xs font-bold text-slate-500">
                   <span>
                     本轮经验 {student.petExperience}/{nextPetThreshold ?? maxPetEnergy}
@@ -1531,14 +1647,20 @@ export function PetPoints() {
                   </span>
                 </div>
               )}
-              <div className="mt-2 flex items-center gap-3">
+              <div className={cn("flex items-center", displayMode === "compact" ? "mt-1.5 gap-2" : "mt-2 gap-3")}>
                 <Badge className="bg-orange-100 text-orange-600 hover:bg-orange-100">
                   {pet ? `Lv.${student.level}` : "未绑定"}
                 </Badge>
-                <span className="text-sm font-black text-slate-500">
+                <span className="min-w-0 truncate text-sm font-black text-slate-500">
                   {pet ? currentFormName : eggStages[genericEvolutionIndex]}
                 </span>
-                <span className={cn("ml-auto text-xs font-bold", pet ? "text-emerald-600" : "text-amber-600")}>
+                <span
+                  className={cn(
+                    "ml-auto text-xs font-bold",
+                    displayMode === "compact" && "hidden",
+                    pet ? "text-emerald-600" : "text-amber-600"
+                  )}
+                >
                   {pet
                     ? nextPetThreshold !== null
                       ? `还需 ${Math.max(0, nextPetThreshold - student.petExperience)} 经验进化`

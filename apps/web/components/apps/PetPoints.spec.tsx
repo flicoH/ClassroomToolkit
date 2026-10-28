@@ -156,6 +156,69 @@ describe("PetPoints persisted workflows", () => {
     container.remove();
     vi.unstubAllGlobals();
   });
+  it("shows any number of student cards in a mobile-safe responsive two-column grid", async () => {
+    const original = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      if (typeof args === "string" && args === "/api/pet-points") {
+        const overview = await original(args);
+        return {
+          ...overview,
+          students: [
+            student,
+            { ...student, id: "two", name: "测试乙", studentNo: "2" },
+            { ...student, id: "three", name: "测试丙", studentNo: "3" }
+          ]
+        };
+      }
+      return original(args);
+    });
+
+    await mount();
+
+    const list = container.querySelector('[aria-label="宠物积分学生列表"]')!;
+    expect(list.className).toContain("grid-cols-1");
+    expect(list.className).toContain("sm:grid-cols-2");
+    expect(list.className).not.toContain("2xl:grid-cols-3");
+    expect(list.children).toHaveLength(3);
+    expect(list.textContent).toContain("测试甲");
+    expect(list.textContent).toContain("测试乙");
+    expect(list.textContent).toContain("测试丙");
+  });
+  it("switches between compact and normal cards without losing the two-column list", async () => {
+    await mount();
+    const list = container.querySelector<HTMLElement>('[aria-label="宠物积分学生列表"]')!;
+    const card = list.querySelector<HTMLElement>("[data-student-card]")!;
+    const preview = card.querySelector<HTMLElement>("[data-pet-preview]")!;
+    const normalMode = container.querySelector<HTMLButtonElement>('[aria-label="普通模式"]')!;
+    const compactMode = container.querySelector<HTMLButtonElement>('[aria-label="紧凑模式"]')!;
+
+    expect(list.dataset.displayMode).toBe("normal");
+    expect(list.className).toContain("gap-4");
+    expect(card.className).toContain("p-4");
+    expect(preview.className).toContain("h-48");
+    expect(normalMode.getAttribute("aria-pressed")).toBe("true");
+    expect(normalMode.querySelector("svg")).not.toBeNull();
+
+    await click(compactMode);
+    expect(list.dataset.displayMode).toBe("compact");
+    expect(list.className).toContain("grid-cols-2");
+    expect(list.className).toContain("sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]");
+    expect(list.className).toContain("gap-2");
+    expect(card.className).toContain("p-2");
+    expect(preview.className).toContain("h-28");
+    expect(compactMode.getAttribute("aria-pressed")).toBe("true");
+    expect(compactMode.querySelector("svg")).not.toBeNull();
+
+    await click(normalMode);
+    expect(list.dataset.displayMode).toBe("normal");
+    expect(list.className).toContain("grid-cols-1");
+    expect(list.className).toContain("sm:grid-cols-2");
+    expect(list.className).not.toContain("sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]");
+    expect(list.className).toContain("gap-4");
+    expect(card.className).toContain("p-4");
+    expect(preview.className).toContain("h-48");
+    expect(normalMode.getAttribute("aria-pressed")).toBe("true");
+  });
   it("opens manual scoring from the pet and preserves a failed restock draft and operation", async () => {
     await mount();
     await click(container.querySelector('[aria-label="为测试甲评分"]')!);

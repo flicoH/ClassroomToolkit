@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -36,5 +36,49 @@ describe("PetSprite", () => {
     const html = renderToStaticMarkup(<PetSprite pet={fox!} stageIndex={5} />);
 
     expect(html).toContain("/pets/starling/star-compass-fox-3.png");
+  });
+
+  it("contains 23 pets across four series and uses every physical form asset", () => {
+    expect(petOptions).toHaveLength(23);
+    expect(new Set(petOptions.map(pet => pet.id)).size).toBe(petOptions.length);
+
+    const seriesCounts = {
+      萌芽系: petOptions.filter(p => p.family === "萌芽系").length,
+      焰岩系: petOptions.filter(p => p.family === "焰岩系").length,
+      潮汐系: petOptions.filter(p => p.family === "潮汐系").length,
+      星辉系: petOptions.filter(p => p.family === "星辉系").length
+    };
+
+    expect(seriesCounts).toEqual({
+      萌芽系: 6,
+      焰岩系: 6,
+      潮汐系: 6,
+      星辉系: 5
+    });
+
+    const spriteDirectory = resolve(process.cwd(), "public/pets/starling");
+    const usedAssets = new Set<string>();
+
+    for (const pet of petOptions) {
+      expect(pet.evolutions).toHaveLength(4);
+      expect(pet.description.length).toBeGreaterThan(10);
+
+      // Each pair of growth levels shares one physical form, for four images per pet.
+      for (const stageIndex of [1, 3, 5, 7]) {
+        const html = renderToStaticMarkup(<PetSprite pet={pet} stageIndex={stageIndex} />);
+        const assetName = /src="\/pets\/starling\/([^"]+\.png)"/.exec(html)?.[1];
+        expect(assetName).toBeDefined();
+        const assetPath = resolve(spriteDirectory, assetName!);
+        expect(existsSync(assetPath)).toBe(true);
+        usedAssets.add(assetName!);
+      }
+    }
+
+    expect(usedAssets.size).toBe(petOptions.length * 4);
+    expect(
+      readdirSync(spriteDirectory)
+        .filter(file => file.endsWith(".png"))
+        .sort()
+    ).toEqual([...usedAssets].sort());
   });
 });

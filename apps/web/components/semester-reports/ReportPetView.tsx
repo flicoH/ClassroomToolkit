@@ -158,6 +158,78 @@ export const petOptions: PetOption[] = [
     badge: "bg-violet-100 text-violet-700",
     evolutions: ["星芽貂", "星纹貂", "银河灵貂", "天幕星貂"],
     description: "额间长着星芽的灵巧伙伴，会把每个灵感连接成独一无二的银河轨迹。"
+  },
+  {
+    id: "bamboo-panda",
+    name: "竹萌宝",
+    family: "萌芽系",
+    tone: "from-emerald-50 to-teal-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["竹萌宝", "青竹团", "翠竹灵熊", "竹皇圣尊"],
+    description: "抱着嫩绿翠竹的憨萌小熊猫，善于耐心倾听与专注学习，每次认真完成任务都会让头顶的竹芽泛起生机绿意。"
+  },
+  {
+    id: "clover-koala",
+    name: "桉小萌",
+    family: "萌芽系",
+    tone: "from-lime-50 to-emerald-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["桉小萌", "抱叶考拉", "古森灵考拉", "世界树考拉"],
+    description: "喜欢紧紧抱住桉树枝桠的温和考拉，性情平和沉稳，团队协作与互助会让它背上的幸运四叶草绽放清香。"
+  },
+  {
+    id: "flame-dino",
+    name: "炽炎龙",
+    family: "焰岩系",
+    tone: "from-orange-50 to-red-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["炽炎龙", "熔鳞战龙", "烈岩暴龙", "灭世曜焱神龙"],
+    description: "背生火焰纹路的可爱小霸龙，遇到难题勇敢探索从不退缩，积极发言会点燃它胸膛中的赤红熔晶之火。"
+  },
+  {
+    id: "lava-hedgehog",
+    name: "熔火猬",
+    family: "焰岩系",
+    tone: "from-amber-50 to-orange-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["熔火猬", "焰刺兽", "金焰刺王", "烈曜金甲猬"],
+    description: "背负赤晶熔刺的机敏小刺猬，越是有挑战性的小目标越能激发斗志，进阶后浑身金焰刺甲璀璨耀眼。"
+  },
+  {
+    id: "frost-penguin",
+    name: "冰晶企",
+    family: "潮汐系",
+    tone: "from-cyan-50 to-sky-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["冰晶企", "踏冰小企", "极地帝企灵", "极光冰渊帝企"],
+    description: "戴着冰晶围巾在冰面上滑行的小企鹅，憨态可掬且毅力十足，每次坚持不懈的进步都会凝结出纯净的极地冰晶。"
+  },
+  {
+    id: "wave-dolphin",
+    name: "跃浪豚",
+    family: "潮汐系",
+    tone: "from-sky-50 to-blue-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["跃浪豚", "乘波小豚", "碧海灵豚", "苍澜海皇豚"],
+    description: "跃出海面的欢快蓝海豚，最擅长在知识的海洋中破浪前行，活跃的课堂互动会让它激起晶莹绚烂的潮汐浪花。"
+  },
+  {
+    id: "star-owl",
+    name: "星辉鸮",
+    family: "星辉系",
+    tone: "from-violet-50 to-indigo-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["星辉鸮", "星羽小鸮", "夜幕星瞳鸮", "宙天星冠神鸮"],
+    description: "双眸蕴含璀璨星海的静谧夜鸮，博学深邃，能把零散的知识梳理得井井有条，羽翼间常随思考流淌银河微光。"
+  },
+  {
+    id: "galaxy-shiba",
+    name: "星光柴",
+    family: "星辉系",
+    tone: "from-indigo-50 to-fuchsia-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["星光柴", "曜芒柴", "极星灵柴", "天穹织星神犬"],
+    description: "系着星宿方巾的元气柴犬，奔跑时四蹄踏着星轨尘埃，乐观开朗的活力总能点亮整个班级的星空。"
   }
 ];
 
