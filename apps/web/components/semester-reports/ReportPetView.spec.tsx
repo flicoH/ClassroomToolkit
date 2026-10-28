@@ -38,8 +38,8 @@ describe("PetSprite", () => {
     expect(html).toContain("/pets/starling/star-compass-fox-3.png");
   });
 
-  it("contains 23 pets across four series and uses every physical form asset", () => {
-    expect(petOptions).toHaveLength(23);
+  it("contains 27 pets across four series and uses every physical form asset", () => {
+    expect(petOptions).toHaveLength(27);
     expect(new Set(petOptions.map(pet => pet.id)).size).toBe(petOptions.length);
 
     const seriesCounts = {
@@ -50,10 +50,10 @@ describe("PetSprite", () => {
     };
 
     expect(seriesCounts).toEqual({
-      萌芽系: 6,
-      焰岩系: 6,
-      潮汐系: 6,
-      星辉系: 5
+      萌芽系: 7,
+      焰岩系: 7,
+      潮汐系: 7,
+      星辉系: 6
     });
 
     const spriteDirectory = resolve(process.cwd(), "public/pets/starling");

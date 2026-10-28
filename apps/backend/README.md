@@ -211,7 +211,7 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 | `POST`           | `/random-picker/pick`                       | 执行随机点名                                               |
 | `GET / PATCH`    | `/countdown`                                | 读取或更新倒计时                                           |
 | `GET / POST`     | `/sticky-notes`                             | 查询或创建便签                                             |
-| `GET`            | `/pet-points`                               | 获取宠物积分完整状态（含学生、规则、四系共 23 只宠物模板） |
+| `GET`            | `/pet-points`                               | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板） |
 | `POST`           | `/pet-points/scores/adjust`                 | 调整学生积分                                               |
 | `GET`            | `/gacha-machine`                            | 获取扭蛋机奖励与记录                                       |
 | `POST`           | `/gacha-machine/draw`                       | 执行抽奖                                                   |

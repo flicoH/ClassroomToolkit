@@ -539,16 +539,20 @@ describe('PetPointsService transactional workflows', () => {
     await expect(
       t.service.bindPet('one', { ...t.meta(), petId: 'fake' }),
     ).rejects.toThrow();
-    // 验证新加入的四系8只宠物均可正常绑定
+    // 验证新加入的四系12只宠物均可正常绑定
     const newPetIds = [
       'bamboo-panda',
       'clover-koala',
+      'clover-sheep',
       'flame-dino',
       'lava-hedgehog',
+      'lava-pig',
       'frost-penguin',
       'wave-dolphin',
+      'tide-dragon',
       'star-owl',
       'galaxy-shiba',
+      'astral-horse',
     ];
     for (const petId of newPetIds) {
       await t.service.bindPet('one', { ...t.meta(), petId });

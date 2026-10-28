@@ -29,7 +29,7 @@ import {
 import { petThresholds, petRewards } from './pet-progression';
 
 const categories = ['课堂表现', '作业情况', '品德修养', '纪律常规'];
-/** 四系允许领养的宠物模板ID集合，保持与前端petOptions配置一致（共23只）。 */
+/** 四系允许领养的宠物模板ID集合，保持与前端petOptions配置一致（共27只）。 */
 const petIds = [
   // 萌芽系
   'sprout-puff',
@@ -38,6 +38,7 @@ const petIds = [
   'vine-wing-bird',
   'bamboo-panda',
   'clover-koala',
+  'clover-sheep',
   // 焰岩系
   'amber-horn',
   'coal-tail-fox',
@@ -45,6 +46,7 @@ const petIds = [
   'ash-lion',
   'flame-dino',
   'lava-hedgehog',
+  'lava-pig',
   // 潮汐系
   'cloud-bear',
   'ink-dot-cat',
@@ -52,12 +54,14 @@ const petIds = [
   'coral-whale',
   'frost-penguin',
   'wave-dolphin',
+  'tide-dragon',
   // 星辉系
   'moon-bell-rabbit',
   'star-compass-fox',
   'star-sprout-marten',
   'star-owl',
   'galaxy-shiba',
+  'astral-horse',
 ];
 function integer(value: number, min: number, max: number) {
   if (!Number.isInteger(value) || value < min || value > max)

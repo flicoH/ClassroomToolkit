@@ -230,6 +230,43 @@ export const petOptions: PetOption[] = [
     badge: "bg-violet-100 text-violet-700",
     evolutions: ["星光柴", "曜芒柴", "极星灵柴", "天穹织星神犬"],
     description: "系着星宿方巾的元气柴犬，奔跑时四蹄踏着星轨尘埃，乐观开朗的活力总能点亮整个班级的星空。"
+  },
+  {
+    id: "clover-sheep",
+    name: "翠灵羊",
+    family: "萌芽系",
+    tone: "from-emerald-50 to-teal-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["草绒小羊", "翠角灵羊", "云森青羊", "万木神角仙羊"],
+    description: "头顶抽出生机幼芽的温和绵羊，善于安静倾听与耐心思考，每次互助合作都会让羊角上的灵木抽出翠绿新枝。"
+  },
+  {
+    id: "lava-pig",
+    name: "熔宝豚",
+    family: "焰岩系",
+    tone: "from-orange-50 to-amber-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["熔火小猪", "炽炎宝豚", "金焰战甲豕", "煌炎镇岳神豕"],
+    description:
+      "背负熔岩宝甲的敦厚小猪，如储蓄罐般记录每次努力，不畏艰难挫折，越是遇到难题越能燃起炽金熔岩的勇气之火。"
+  },
+  {
+    id: "tide-dragon",
+    name: "沧澜龙",
+    family: "潮汐系",
+    tone: "from-sky-50 to-blue-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["潜水小龙", "踏浪游龙", "沧渊苍龙", "九霄沧澜神龙"],
+    description: "从潮汐微澜中苏醒的东方灵龙，举手投足引动甘霖甘露，以包容万物的大智慧陪伴学生在知识海洋中乘风破浪。"
+  },
+  {
+    id: "astral-horse",
+    name: "踏星驹",
+    family: "星辉系",
+    tone: "from-violet-50 to-indigo-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["星尘小驹", "极光骏马", "星轨天马", "天穹宙光神驹"],
+    description: "四蹄踏着星轨尘埃的银河天马，志在浩瀚星海，一马当先的昂扬朝气总能激励同伴勇往直前、追寻心中梦想。"
   }
 ];
 
