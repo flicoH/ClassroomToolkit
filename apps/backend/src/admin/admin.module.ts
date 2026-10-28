@@ -9,6 +9,7 @@ import { AdminAuthModule } from './auth/admin-auth.module';
 import { AdminDatabase } from './admin.database';
 import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
+import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 /** 管理接口遵循 Controller / Service / Database 分层，认证模块独立注册。 */
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AdminController } from './admin.controller';
       ClassroomEntity,
       AnalyticsEventEntity,
       AnalyticsSettingEntity,
+      FeedbackEntity,
     ]),
   ],
   controllers: [AdminController],

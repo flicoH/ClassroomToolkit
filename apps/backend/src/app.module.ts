@@ -3,6 +3,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'node:path';
+import { migrationFiles } from './database/migration-files';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import './common/load-env';
@@ -15,6 +16,8 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { StudentsModule } from './students/students.module';
 import { TaskStatsModule } from './task-stats/task-stats.module';
 import { AuthModule } from './auth/auth.module';
+import { FeedbackModule } from './feedback/feedback.module';
+import { SemesterReportsModule } from './semester-reports/semester-reports.module';
 import { WhiteboardsModule } from './whiteboards/whiteboards.module';
 
 @Module({
@@ -28,13 +31,16 @@ import { WhiteboardsModule } from './whiteboards/whiteboards.module';
       database: process.env.MYSQL_DATABASE ?? 'classroom_toolkit',
       autoLoadEntities: true,
       synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',
-      migrations: [join(__dirname, 'database/migrations/*{.js,.ts}')],
+      migrations: migrationFiles(join(__dirname, 'database/migrations'), [
+        __filename.endsWith('.ts') ? 'ts' : 'js',
+      ]),
       migrationsRun: process.env.TYPEORM_MIGRATIONS_RUN === 'true',
       charset: 'utf8mb4',
     }),
     AnalyticsModule,
     AdminModule,
     AuthModule,
+    FeedbackModule,
     StudentsModule,
     TaskStatsModule,
     SeatingChartModule,
@@ -43,6 +49,7 @@ import { WhiteboardsModule } from './whiteboards/whiteboards.module';
     StickyNotesModule,
     PetPointsModule,
     GachaMachineModule,
+    SemesterReportsModule,
     WhiteboardsModule,
   ],
   controllers: [AppController],

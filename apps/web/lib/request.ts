@@ -61,6 +61,10 @@ function createRequestKey(config: AxiosRequestConfig) {
 }
 
 function sendDedupedRequest<T = unknown, R = AxiosResponse<T>, D = unknown>(config: AxiosRequestConfig<D>) {
+  // Binary bodies cannot share the generic FormData key: another photo or an
+  // immediate retry must reach the server. Upload UIs already guard in-flight clicks.
+  if (typeof FormData !== "undefined" && config.data instanceof FormData)
+    return requestInstance.request<T, R, D>(config);
   const key = createRequestKey(config);
   const cached = dedupedRequests.get(key);
   if (cached) return cached.promise as Promise<R>;
@@ -94,6 +98,9 @@ function createMethodWithData(method: string) {
 }
 
 function startGlobalLoading(config: InternalAxiosRequestConfig) {
+  // Axios serializes FormData into JSON under the shared JSON default. Clear
+  // it before transformation so the browser can send bytes with its boundary.
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) config.headers.delete("Content-Type");
   if (!["get", "head"].includes((config.method || "get").toLowerCase()) && !config.headers["x-analytics-event-id"]) {
     config.headers["x-analytics-event-id"] = createUuid();
   }

@@ -1,6 +1,32 @@
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 describe('AnalyticsService', () => {
+  it('accepts semester report opens but rejects client-supplied use events and unknown features', async () => {
+    const db = { saveEvent: jest.fn().mockResolvedValue({}) };
+    const service = new AnalyticsService(db as never);
+    const body = {
+      feature: 'semester-reports',
+      kind: 'open',
+      eventId: '11111111-1111-4111-8111-111111111111',
+    };
+    await expect(service.recordOpen('teacher', body)).resolves.toEqual({
+      accepted: true,
+    });
+    expect(db.saveEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teacherId: 'teacher',
+        feature: 'semester-reports',
+        kind: 'open',
+      }),
+    );
+    await expect(
+      service.recordOpen('teacher', { ...body, kind: 'use' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.recordOpen('teacher', { ...body, feature: 'unknown' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.saveEvent).toHaveBeenCalledTimes(1);
+  });
   it('deduplicates retries while isolating teachers and actions', async () => {
     const db = { saveEvent: jest.fn().mockResolvedValue({}) };
     const service = new AnalyticsService(db as never);

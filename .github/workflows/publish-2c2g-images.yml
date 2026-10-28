@@ -1,0 +1,109 @@
+name: Publish 2C2G Docker Images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify deployment scripts
+        run: |
+          bash -n deploy/2c2g-deploy.sh
+          python3 -m unittest discover -s deploy/tests -v
+
+  verify-reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_password
+          MYSQL_DATABASE: classroom_toolkit
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ci_password
+      MYSQL_DATABASE: classroom_toolkit
+      REPORT_LIST_MYSQL_TEST: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 报告测试只建连接内临时表，不需要初始化业务表或运行迁移。
+      - name: Test report search, date filtering and photo snapshot sorting
+        run: pnpm --filter ClassRoomToolkitBackend exec jest --config ./test/jest-e2e.json report-list --runInBand --no-watchman
+
+  publish:
+    needs: [verify, verify-reports]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: backend
+            dockerfile: deploy/docker/backend.Dockerfile
+            target: runner
+          - app: web
+            dockerfile: deploy/docker/web.Dockerfile
+            target: runner
+          - app: admin
+            dockerfile: deploy/docker/admin.Dockerfile
+            target: runner
+    steps:
+      - uses: actions/checkout@v6
+      - name: Normalize image namespace
+        id: image
+        shell: bash
+        run: echo "namespace=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and publish ${{ matrix.app }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.namespace }}-${{ matrix.app }}:sha-${{ github.sha }}
+          build-args: NEXT_PUBLIC_SITE_URL=${{ vars.PRODUCTION_SITE_URL }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: Record release tag
+        env:
+          IMAGE_NAMESPACE: ${{ steps.image.outputs.namespace }}
+        run: |
+          printf 'Image: `%s-%s:sha-%s`\n' "$IMAGE_NAMESPACE" '${{ matrix.app }}' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Use `BACKEND_IMAGE_TAG=sha-%s FRONTEND_IMAGE_TAG=sha-%s bash deploy/2c2g-deploy.sh deploy` on the server.\n' "$GITHUB_SHA" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

@@ -204,6 +204,10 @@ export class AdminService {
       kind === 'teachers' && (q.start || q.end) ? dateRange(q) : undefined;
     return this.database.findDirectory(kind, q, pagination, range);
   }
+  /** 校验分页后读取教师意见列表。 */
+  feedback(q: AdminQueryDto) {
+    return this.database.findFeedback(q, pageQuery(q));
+  }
   /** 详情只暴露展示字段，并将登录与功能查询限定到指定教师。 */
   async teacher(id: string, q: AdminQueryDto) {
     const [profile] = await this.database.findTeacherById(id);

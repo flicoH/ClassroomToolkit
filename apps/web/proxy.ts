@@ -13,7 +13,8 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(TOKEN_KEY)?.value;
   const isAuthRoute = authRoutes.has(pathname);
-  const isPublicRoute = isAuthRoute || publicSeoRoutes.has(pathname);
+  const isPublicReportRoute = /^\/r\/[A-Za-z0-9_-]{40,50}$/.test(pathname);
+  const isPublicRoute = isAuthRoute || isPublicReportRoute || publicSeoRoutes.has(pathname);
 
   if (!token && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
@@ -29,7 +30,13 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(homeUrl);
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  if (isPublicReportRoute) {
+    response.headers.set("Cache-Control", "no-store, private");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  }
+  return response;
 }
 
 export const config = {

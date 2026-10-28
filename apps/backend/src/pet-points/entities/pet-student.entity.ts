@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import type { PetGrant } from '../pet-points.types';
 
 @Entity('pet_points_students')
 export class PetStudentEntity {
@@ -29,18 +30,14 @@ export class PetStudentEntity {
   @Column({ name: 'max_score', type: 'int', default: 30 })
   maxScore!: number;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'double', default: 0 })
   trophies!: number;
 
   @Column({ name: 'level_num', type: 'int', default: 1 })
   level!: number;
 
-  @Column({
-    type: 'enum',
-    enum: ['初始形态', '成长形态', '进阶形态', '终极形态'],
-    default: '初始形态',
-  })
-  stage!: '初始形态' | '成长形态' | '进阶形态' | '终极形态';
+  @Column({ type: 'varchar', length: 32, default: '初始形态' })
+  stage!: string;
 
   @Column({ name: 'pet_id', type: 'varchar', length: 64, nullable: true })
   petId!: string | null;
@@ -59,4 +56,31 @@ export class PetStudentEntity {
 
   @Column({ name: 'completed_pets', type: 'int', default: 0 })
   completedPets!: number;
+
+  @Column({ name: 'logical_id', type: 'varchar', length: 64, nullable: true })
+  logicalId!: string | null;
+
+  @Column({ name: 'roster_active', type: 'boolean', default: true })
+  rosterActive!: boolean;
+
+  @Column({ name: 'pet_experience', type: 'int', default: 0 })
+  petExperience!: number;
+  @Column({ name: 'cycle_id', length: 64 })
+  cycleId!: string;
+  @Column({ type: 'int', default: 0 })
+  revision!: number;
+  @Column({ name: 'completion_pending', type: 'boolean', default: false })
+  completionPending!: boolean;
+  @Column({ name: 'cycle_rules_version', type: 'int', default: 1 })
+  cycleRulesVersion!: number;
+  @Column({ name: 'reward_grants', type: 'json' })
+  rewardGrants!: PetGrant[];
+  @Column({ name: 'reward_protection', type: 'json' })
+  rewardProtection!: number[];
+  @Column({ name: 'migration_evidence', type: 'json', nullable: true })
+  migrationEvidence!: {
+    score: number;
+    level: number;
+    experience: number;
+  } | null;
 }

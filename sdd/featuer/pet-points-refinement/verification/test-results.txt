@@ -1,0 +1,55 @@
+2026-10-15 宠物积分分支交付验证
+分支：featuer/pet-points-refinement
+
+pnpm verify：退出0；ESLint无错误；规范24项、既有Python/PDF回归、全部测试与三端构建通过。
+Test Suites: 48 passed, 48 total
+Tests:       392 passed, 392 total
+ Test Files  19 passed (19)
+      Tests  172 passed (172)
+ Test Files  5 passed (5)
+      Tests  11 passed (11)
+
+隔离MySQL专项（仅pet_test_数据库，端口33316）：
+Test Suites: 1 passed, 1 total
+Tests:       9 passed, 9 total
+Snapshots:   0 total
+Time:        1.617 s, estimated 3 s
+Ran all test suites matching pet-growth.
+
+隔离HTTP E2E：
+
+Test Suites: 2 passed, 2 total
+Tests:       12 passed, 12 total
+Snapshots:   0 total
+Time:        2.296 s, estimated 3 s
+Ran all test suites matching app.e2e-spec|admin.e2e-spec.
+
+修复前失败证据：长标识期望2条独立身份、实际1条；规则2级→10级同轮自动奖励期望50、实际99。
+浏览器：桌面、320px、375px；满级/结转/换宠/重置/兑换/徽章历史/PNG生成核对。
+未验证：内置浏览器下载落盘事件；未执行业务库迁移及发布。
+
+2026-10-15 本机500修复：开发库缺少PetGrowthCycles20261014000000，已备份后应用；学生总数11→11，无待执行迁移。真实开发库同步服务返回2名学生，总览返回11条；事务回滚验证写入。未执行生产部署。
+
+HTTP randomUUID兼容修复：回归先失败后通过；模拟仅getRandomValues的浏览器，失败重试操作编号和载荷一致。pnpm verify退出0（/tmp/pet-uuid-verify.log），Backend392、Web172、Admin11、ESLint无错误及三端构建通过。未进行真实局域网浏览器点击复测。
+
+满级弹窗操作锁修复：真实Chrome发现旧randomUUID异常遗留busy；刷新后领取、完成本轮、确认弹窗取消均可操作，未执行用户奖励领取。新增编号准备异常回归先失败后通过。pnpm verify退出0（/tmp/pet-lock-verify.log），Backend392、Web173、Admin11，ESLint及三端构建通过。截图completion-dialog-recovered.png。
+
+加减分与奖品补货：pnpm verify退出0（/tmp/pet-restock-verify.log），Backend393、Web174、Admin11，ESLint无错误及三端构建通过。回归覆盖普通宠物进入常用项目/自定义分值弹窗、补货失败保留输入且复用幂等编号、成功清理输入、重复补货只执行一次、未知奖品/非法数量/溢出拒绝。真实浏览器核对奖品配置布局，截图reward-config-restock.png；未修改真实奖品库存。新增接口未登录401用例已加入app.e2e，未在本轮单独运行MySQL HTTP E2E。
+
+自定义分值清空：回归先失败（/tmp/pet-score-input-before.log）后通过；空值、0、负数、小数、201保留草稿且不可提交，重新输入12正确发送delta12。pnpm verify退出0（/tmp/pet-score-input-verify.log），Backend393、Web175、Admin11、ESLint无错误及三端构建通过。
+
+奖品删除：pnpm verify退出0（/tmp/pet-delete-verify.log），Backend394、Web176、Admin11，ESLint无错误及三端构建通过。覆盖确认取消不写入、删除失败保留确认并复用操作重试、成功移除、兑换历史保留、全部删除不重生默认奖品、外部奖品拒绝及删除后禁止补货兑换。
+
+兑换站布局：实际查看参考链接商品兑换页，改为限宽880px/限高80dvh弹窗、暖色标题和商品卡片。商品/记录/管理切换及原刷新流程回归通过；pnpm verify退出0（/tmp/pet-shop-verify.log），Backend394、Web177、Admin11，ESLint及三端构建通过。真实浏览器核对积分不足禁用及非全屏布局，截图shop-cards.png；未执行真实兑换写入。
+
+高级评分弹窗：真实Chrome测得视口1503×1430时弹窗1000×680，已核对居中及背景留白，截图advanced-modal.png。pnpm verify退出0（/tmp/pet-advanced-modal-verify.log），ESLint、自动回归及三端构建通过。
+
+移动端兼容：320×568时高级弹窗286×454，clientWidth/scrollWidth均284，确认按钮可见；375×812时clientWidth/scrollWidth均339。真实选择学生与指标后确认可用，未提交评分；兑换站320px下clientWidth/scrollWidth均284。已恢复浏览器尺寸。截图advanced-mobile-320.png。pnpm verify退出0（/tmp/pet-mobile-verify.log），ESLint、自动回归及三端构建通过。
+
+满级领取徽章：pnpm verify退出0（/tmp/pet-completion-verify.log），Backend396、Web178、Admin11，ESLint无错误及三端构建通过。覆盖默认1、配置奖励、0奖励、不逐级发放、重复领取一次、配置非法值拒绝、手动增减及旧历史保留、归档失败回滚。已备份本机库并迁移PetCompletionBadges20261015000000；真实数据库事务设置4、满级不加、领取一次加4、手动加1通过，所有验证写入回滚。网页重载无学生同步失败提示，设置默认1，截图completion-badge-setting.png。生产未部署，MySQL隔离E2E期望已同步但本轮未另行运行全套。
+
+半枚徽章：pnpm verify退出0（/tmp/pet-half-verify.log），Backend397、Web178、Admin11，全量ESLint及三端构建通过。半枚正负调整、负余额拒绝、0.25拒绝、含半枚余额评分、0.5满级奖励与重试一次通过。本机库备份后迁移HalfPetBadges20261015010000，原12条记录/徽章总额26不变；真实DB配置0.5、手动+0.5、领取+0.5只执行一次、手动-0.5读取准确，事务全部回滚。生产未部署。
+
+奖杯徽章展示：用户确认奖杯floor(徽章总数/2)、徽章仍显示总数。回归0/0.5/1.5/2/5.5与正确图标通过；pnpm verify退出0（/tmp/pet-trophy-verify.log），ESLint、全部自动测试及三端构建通过。真实浏览器28徽章显示14奖杯、手动区使用Medal，截图card-trophies-badges.png及history-trophies-badges.png。未改数据库或余额。
+
+成长历程固定标题：桌面滚动到底scrollTop112，标题top110.3984375不变；375px手机scrollTop1095，标题top60.9609375不变，内容clientWidth/scrollWidth均341。截图history-fixed-header.png。pnpm verify退出0（/tmp/pet-history-header-verify.log），最终单文件ESLint亦通过。浏览器视口已恢复。

@@ -15,6 +15,7 @@ import {
 } from './students.dto';
 import { StudentsDatabase } from './students.database';
 import { Classroom, Gender, Student } from './students.types';
+import { studentPhotoDataUrl, type StudentPhotoFile } from './student-photo';
 
 interface ClassroomStudentQuery {
   group?: string;
@@ -138,16 +139,31 @@ export class StudentsService {
     this.assertStudentNoAvailable(classroom.students, studentNo, index);
     classroom.students[index] = {
       ...currentStudent,
-      ...dto,
       id: studentId,
       name: dto.name?.trim() || currentStudent.name,
       studentNo,
+      gender: dto.gender ?? currentStudent.gender,
+      group: dto.group === undefined ? currentStudent.group : dto.group,
     };
     const savedClassroom = await this.database.saveClassroom(classroom);
     return (
       savedClassroom.students.find((student) => student.id === studentId) ??
       classroom.students[index]
     );
+  }
+
+  /** 照片仅由专用接口更新；普通资料编辑不能注入外部图片地址或覆盖已有照片。 */
+  async setStudentPhoto(
+    classroomId: string,
+    studentId: string,
+    file?: StudentPhotoFile,
+  ) {
+    const classroom = await this.database.findClassroom(classroomId);
+    if (!classroom) throw new NotFoundException('班级不存在');
+    if (!classroom.students.some((student) => student.id === studentId))
+      throw new NotFoundException('学生不存在');
+    const photo = file ? await studentPhotoDataUrl(file) : null;
+    return this.database.setStudentPhoto(classroomId, studentId, photo);
   }
 
   /** 从班级中删除学生。 */

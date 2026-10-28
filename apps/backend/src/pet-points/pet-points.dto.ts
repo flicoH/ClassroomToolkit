@@ -1,3 +1,19 @@
+export class PetWriteDto {
+  operationId!: string;
+  revisions!: Record<string, number>;
+}
+export class EvaluatePetsDto extends PetWriteDto {
+  studentIds!: string[];
+  rubricIds!: string[];
+  note?: string;
+}
+export class PetFlagDto extends PetWriteDto {
+  absent!: boolean;
+}
+export class PetTrophyDto extends PetWriteDto {
+  delta!: number;
+}
+
 import { EvaluationCategory } from './pet-points.types';
 
 export class SyncPetStudentDto {
@@ -9,11 +25,11 @@ export class SyncPetStudentDto {
 
 export class SyncPetClassDto {
   classId!: string;
-  className!: string;
-  students!: SyncPetStudentDto[];
+  className?: string;
+  students?: SyncPetStudentDto[];
 }
 
-export class AdjustScoreDto {
+export class AdjustScoreDto extends PetWriteDto {
   studentIds!: string[];
   delta!: number;
   label!: string;
@@ -21,24 +37,42 @@ export class AdjustScoreDto {
   note?: string;
 }
 
-export class BindPetDto {
+export class BindPetDto extends PetWriteDto {
   petId!: string;
   petName?: string;
 }
 
-export class CreateRubricDto {
+export class CreateRubricDto extends PetWriteDto {
   category!: EvaluationCategory;
   label!: string;
   score!: number;
 }
 
-export class CreateRewardDto {
+export class UpdateRubricDto extends PetWriteDto {
+  category?: EvaluationCategory;
+  label?: string;
+  score?: number;
+  enabled?: boolean;
+}
+
+export class CreateRewardDto extends PetWriteDto {
   name!: string;
   cost!: number;
   stock!: number;
 }
 
-export class RedeemRewardDto {
+export class AddRewardStockDto extends PetWriteDto {
+  quantity!: number;
+}
+
+export class RedeemRewardDto extends PetWriteDto {
   studentId!: string;
   rewardId!: string;
+}
+
+export class UpdatePetSettingsDto extends PetWriteDto {
+  completionBadges?: number;
+  maxLevel?: number;
+  finalEnergy?: number;
+  expectedVersion!: number;
 }

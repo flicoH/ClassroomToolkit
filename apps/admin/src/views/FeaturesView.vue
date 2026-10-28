@@ -57,47 +57,98 @@ function selectFeature(key: string) {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">FEATURE INSIGHTS</p>
+      <p class="eyebrow">
+        FEATURE INSIGHTS
+      </p>
       <h1>热门功能分析</h1>
-      <p class="muted">从使用覆盖与使用频率，了解教师的课堂习惯。</p>
+      <p class="muted">
+        从使用覆盖与使用频率，了解教师的课堂习惯。
+      </p>
     </div>
   </div>
   <DateRange @change="changeRange" />
-  <p v-if="data?.hasCoverage === false" class="empty">所选日期早于数据采集时间，暂无统计数据。</p>
-  <p v-if="error" class="error" role="alert">{{ error }} <button @click="load">重试</button></p>
-  <p v-if="loading" class="muted" role="status">正在更新数据…</p>
-  <div v-if="data && data.hasCoverage !== false" class="two-columns">
+  <p
+    v-if="data?.hasCoverage === false"
+    class="empty"
+  >
+    所选日期早于数据采集时间，暂无统计数据。
+  </p>
+  <p
+    v-if="error"
+    class="error"
+    role="alert"
+  >
+    {{ error }} <button @click="load">
+      重试
+    </button>
+  </p>
+  <p
+    v-if="loading"
+    class="muted"
+    role="status"
+  >
+    正在更新数据…
+  </p>
+  <div
+    v-if="data && data.hasCoverage !== false"
+    class="two-columns"
+  >
     <section class="panel">
       <div class="toolbar">
-        <h2 style="margin: 0">功能排行</h2>
-        <label
-          >排序<select v-model="sort" @change="load">
-            <option value="teachers">使用教师数</option>
-            <option value="uses">使用次数</option>
-          </select></label
+        <h2 style="margin: 0">
+          功能排行
+        </h2>
+        <label>排序<select
+          v-model="sort"
+          @change="load"
         >
+          <option value="teachers">使用教师数</option>
+          <option value="uses">使用次数</option>
+        </select></label>
       </div>
-      <BaseChart :option="ranking" label="课堂功能使用排行" />
+      <BaseChart
+        :option="ranking"
+        label="课堂功能使用排行"
+      />
     </section>
     <section class="panel">
       <div class="toolbar">
-        <h2 style="margin: 0">使用趋势</h2>
-        <label
-          >功能<select v-model="selected" @change="load">
-            <option v-for="feature in data.items" :key="feature.key" :value="feature.key">
-              {{ feature.name }}
-            </option>
-          </select></label
+        <h2 style="margin: 0">
+          使用趋势
+        </h2>
+        <label>功能<select
+          v-model="selected"
+          @change="load"
         >
+          <option
+            v-for="feature in data.items"
+            :key="feature.key"
+            :value="feature.key"
+          >
+            {{ feature.name }}
+          </option>
+        </select></label>
       </div>
-      <BaseChart :option="chart" label="所选功能的每日使用教师数和次数趋势" />
+      <BaseChart
+        :option="chart"
+        label="所选功能的每日使用教师数和次数趋势"
+      />
     </section>
   </div>
-  <section v-if="data && data.hasCoverage !== false" class="panel">
+  <section
+    v-if="data && data.hasCoverage !== false"
+    class="panel"
+  >
     <h2>功能使用明细</h2>
     <p class="muted footnote">
       同期活跃教师 {{ data.activeTeachers }} 位。使用率 = 功能使用教师数 ÷
       同期活跃教师数；变化对比上一等长周期的使用教师数。
+    </p>
+    <p
+      v-if="data.items.some((feature) => feature.key === 'semester-reports')"
+      class="muted footnote"
+    >
+      学期报告按教师成功提交的操作次数统计，批量生成一次只计一次；后台解析、状态刷新和家长查看不计入。
     </p>
     <div class="table-scroll">
       <table>
@@ -112,9 +163,15 @@ function selectFeature(key: string) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="feature in data.items" :key="feature.key">
+          <tr
+            v-for="feature in data.items"
+            :key="feature.key"
+          >
             <td>
-              <button class="text-button link" @click="selectFeature(feature.key)">
+              <button
+                class="text-button link"
+                @click="selectFeature(feature.key)"
+              >
                 {{ feature.name }}
               </button>
             </td>
@@ -127,9 +184,17 @@ function selectFeature(key: string) {
         </tbody>
       </table>
     </div>
-    <p v-if="!data.activeTeachers" class="empty">当前范围尚无有效功能使用记录</p>
+    <p
+      v-if="!data.activeTeachers"
+      class="empty"
+    >
+      当前范围尚无有效功能使用记录
+    </p>
   </section>
-  <p v-if="data" class="muted footnote">
+  <p
+    v-if="data"
+    class="muted footnote"
+  >
     数据采集自 {{ formatTime(data.startedAt) }}。采集前的趋势为空白，首日可能不完整。更新于
     {{ formatTime(data.updatedAt) }}。
   </p>

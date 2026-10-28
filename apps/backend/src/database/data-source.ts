@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 import '../common/load-env';
+import { migrationFiles } from './migration-files';
 
 export default new DataSource({
   type: 'mysql',
@@ -12,6 +13,6 @@ export default new DataSource({
   charset: 'utf8mb4',
   synchronize: false,
   entities: [join(__dirname, '../**/*.entity.js')],
-  migrations: [join(__dirname, 'migrations/*.js')],
+  migrations: migrationFiles(join(__dirname, 'migrations'), ['js']),
   migrationsTableName: 'typeorm_migrations',
 });

@@ -16,9 +16,8 @@
  */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getBackendUrl } from "./backend-url";
 import { AUTH_COOKIE_NAME, clearAuthCookie } from "./auth-cookie";
-
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3000";
 
 export interface ProxyRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -28,8 +27,18 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
   const { path = [] } = await context.params;
   const suffix = path.map(segment => encodeURIComponent(segment)).join("/");
   const query = new URL(request.url).search;
-  const targetUrl = `${BACKEND_URL}/${resource}${suffix ? `/${suffix}` : ""}${query}`;
-  const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
+  const targetUrl = `${getBackendUrl()}/${resource}${suffix ? `/${suffix}` : ""}${query}`;
+  const isMultipart = request.headers.get("content-type")?.startsWith("multipart/form-data");
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  if (isMultipart && contentLength > 31 * 1024 * 1024) {
+    return NextResponse.json({ message: "文件不能超过 30MB" }, { status: 413 });
+  }
+  const body =
+    request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : isMultipart
+        ? request.body
+        : await request.text();
   const token = (await cookies()).get(AUTH_COOKIE_NAME)?.value;
 
   if (!token) {
@@ -37,7 +46,7 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
   }
 
   try {
-    const response = await fetch(targetUrl, {
+    const init: RequestInit & { duplex?: "half" } = {
       method: request.method,
       headers: {
         "content-type": request.headers.get("content-type") || "application/json",
@@ -46,7 +55,9 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
         "x-countdown-start": request.headers.get("x-countdown-start") || ""
       },
       body
-    });
+    };
+    if (isMultipart) init.duplex = "half";
+    const response = await fetch(targetUrl, init);
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
     if (response.status === 401) clearAuthCookie(result, request);

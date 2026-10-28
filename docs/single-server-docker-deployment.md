@@ -1,5 +1,7 @@
 # 2C2G 单服务器 Docker 部署
 
+包含学期报告和 Docling 的部署请使用 [新版 2C2G Docker 部署](deployment-2c2g.md)。下面保留原前后端分离部署的说明；当前后端配置已增加 Docling，不适合将原配置中的全部服务一起放在 2GB 主机上。
+
 本方案面向一台 2 核 2GB Linux 服务器。GitHub Actions 在云端完成测试和镜像构建，服务器只负责拉取镜像与运行容器。
 
 ## CentOS 7.8 重要说明
@@ -286,13 +288,35 @@ PRODUCTION_SITE_URL=https://classroom.example.com
 | `SSH_PRIVATE_KEY`    | Actions 登录服务器的完整私钥 |
 | `SERVER_KNOWN_HOSTS` | 已核验的服务器 SSH 主机公钥  |
 
+报告分享地址单独读取服务器 `deploy/.env.backend` 的 `REPORT_PUBLIC_BASE_URL`，不会由上述 `PRODUCTION_SITE_URL` 自动注入。按当前网站入口填写，如 `http://119.23.147.212` 或实际 HTTPS 域名根地址；修改后重新创建后端容器，刷新报告列表并重新复制链接。原有活跃令牌保留，无需重新生成报告。生产配置缺失、使用 localhost 或示例域名时拒绝生成链接；Compose 要求填写此变量，后端 CI 部署还会校验运行容器中的值，错误不覆盖上一版发布标记。本地开发默认值与生产配置分开，详见 [报告分享地址](semester-reports-setup.md#报告分享地址)。
+
 Workflow 分工：
 
 - `CI`：推送到 `main`、目标为 `main` 的 PR 及手动触发时执行测试和构建，不部署。
 - `Deploy Backend`：Backend 变化时测试、构建镜像、Migration、更新 Backend。
-- `Deploy Frontend`：Web/Admin 变化时测试、构建镜像、更新前端。
+- `Deploy Frontend`：Web/Admin 变化时测试、构建镜像、更新前端；后端部署脚本或工作流修复也触发前端发布，补发此前因后端失败而跳过的前端。
 
-两个部署 Job 使用同一个 `classroom-production-server` 并发锁，不会同时占用服务器资源；该锁不保证后端先执行。首次引入管理接口或新增前后端依赖时，应协调发布，确认 `Deploy Backend` 成功后再运行 `Deploy Frontend`；若前端先部署，应在后端完成后重新验收。
+两个部署 Job 使用同一个 `classroom-production-server` 并发锁，不会同时占用服务器资源。前端在进入该锁前等待同一提交的后端发布结果；后端失败则前端部署跳过。仅前端发生变化、无对应后端运行时，沿用现有后端并通过路由预检。首次引入管理接口或新增前后端依赖时，仍需确认两端发布及实际访问均成功。
+
+### SSH 脚本执行与版本验收
+
+Actions 先将完整部署脚本写入服务器上 `mktemp` 创建的私有临时文件，再以空标准输入执行，结束时删除临时文件并保留失败退出码。不能将脚本直接通过 `bash -s` 执行且让子进程共用标准输入：`docker compose run` 默认读取标准输入，迁移可能读走后续启动和验收命令，导致日志止于 `COMMIT`、任务显示成功、线上容器仍旧。迁移自身也使用 `-T` 与 `</dev/null`，便于独立执行脚本时保持相同行为。
+
+CI 显式传入 `DEPLOY_COMMIT`，在拉取镜像和迁移前核对服务器快进后的提交与本次镜像提交；旧运行遇到已更新的 `main` 会失败，应运行最新提交的工作流。该变量由 Actions 设置，无需写入服务器环境文件。人工执行固定 SHA 镜像的回滚不传此变量，保留原有回滚入口。
+
+两端脚本使用 `git fetch --prune origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"` 明确更新目标远程分支，再执行快进合并。只写 `git fetch origin main` 时，服务器受限的 `remote.origin.fetch` 配置可能使拉取仅更新 `FETCH_HEAD`；随后合并旧 `origin/main` 会误报已是最新，并触发 `Release mismatch`。不改服务器 Git 配置、不重置本地分支；拉取失败、历史分叉或真实 CI 提交不一致仍会终止部署。`deploy/tests/test_deploy_git_update.py` 使用真实本地 Git 仓库覆盖这一情况，验证环境文件、远程映射与分叉的本地提交得到保留，纳入两端 CI 与 `pnpm verify`。此修复无接口、权限、数据库或 PDF 解析行为变化。
+
+发布日志记录目标主机、Docker context、仓库路径，以及运行容器的镜像标签、revision 和 image ID。Backend、Web、Admin 均需核对运行容器的 revision 与目标 SHA、运行 image ID 与已拉取镜像 ID，再完成原有接口验收并更新发布标记；只检查本地镜像标签不足以证明新代码已运行。失败保留上一版发布标记，不承诺自动回滚已启动的容器或已执行的迁移。
+
+回归位于 `scripts/check-deployment-workflows.test.mjs` 和 `deploy/tests/test_{backend,frontend}_deploy_script.py`，覆盖读取标准输入、失败退出码和临时文件清理、旧容器伪装相同标签、权限失败、旧 CI 提交及人工回滚。测试使用本地 SSH/Git/Docker 替身，纳入两端 CI 和 `pnpm verify`；真实服务器上的迁移、网络和容器版本仍需发布后核对。此修复仅调整部署行为，无业务 API、数据结构、权限或数据库迁移变更。
+
+### PDF 上传存储权限
+
+后端镜像以 `node`（uid/gid 1000）运行，PDF 原件保存到 `classroom_reports_data` 卷。旧版 Compose 缺少卷目录权限初始化时，上传可能在保存原件阶段因 `EACCES` 返回 500；Kimi 解析由入队后的 worker 执行，不能仅凭上传 HTTP 状态断定云端失败。
+
+后端部署在拉取镜像后、停止旧服务及迁移前执行 `tools` profile 的 `init-storage`：同一后端镜像、临时 root 用户、禁用网络、不传数据库或 AI 环境变量，仅设置卷根目录归属为 1000:1000、权限为 0750，不递归修改已有 PDF。后端仍以普通用户运行；启动后在实际容器中创建临时私有目录、写入测试文件并清理，验证失败不更新发布标记。存量文件若曾由其他用户以 0600 写入，需要按备份/恢复流程单独核对归属；目录初始化不会擅自重写这些文件。
+
+如果线上上传返回 500，在重试后查看 `docker logs --since 5m --tail 120 classroom-backend-backend-1`。出现目录 `EACCES` 时可提交上述部署修复后发布；数据库异常、代理连接失败或内存终止应根据对应堆栈处理。不要删除 `classroom_reports_data` 或 MySQL 卷来排障。部署回归覆盖初始化顺序、初始化失败、运行用户写入失败、同一持久卷与权限边界，纳入 `pnpm verify`；此变更无新增数据库迁移、业务 API、权限模型或 PDF 解析内容变化。
 
 ## 8. 首次部署
 
@@ -305,12 +329,12 @@ cd /opt/classroom-toolkit
 
 APP_DIR=/opt/classroom-toolkit \
 IMAGE_NAMESPACE=ghcr.io/flicoh/classroomtoolkit \
-BACKEND_IMAGE_TAG=latest \
+BACKEND_IMAGE_TAG=sha-完整40位commit \
 bash deploy/backend-deploy.sh
 
 APP_DIR=/opt/classroom-toolkit \
 IMAGE_NAMESPACE=ghcr.io/flicoh/classroomtoolkit \
-FRONTEND_IMAGE_TAG=latest \
+FRONTEND_IMAGE_TAG=sha-完整40位commit \
 bash deploy/frontend-deploy.sh
 ```
 
@@ -413,7 +437,7 @@ docker inspect classroom-frontend-admin-1 \
   --format 'admin image={{.Config.Image}} imageID={{.Image}} created={{.Created}}'
 ```
 
-`*.release.env` 里的 `sha-...` 必须等于本次 Actions 页面显示的 commit SHA。`docker inspect` 的 `image=` 也应显示同一个 `sha-...` 标签；如果还是旧 sha，说明部署脚本没有跑成功或服务器没有拉到新镜像。
+`*.release.env` 里的 `sha-...` 必须等于对应 Actions 页面显示的 commit SHA。`docker inspect` 的 `image=` 也应显示同一个 `sha-...` 标签；如果还是旧 sha，说明该容器没有更新。日志应包含 `Backend deployment complete` 或 `Frontend deployment complete` 及 `deployed revision`，不能以迁移的 `COMMIT` 或任务绿色状态代替运行版本核对。提交修复后查看新提交的 Actions，重跑旧任务仍会使用旧工作流。
 
 ## 管理平台通过 IP:8080 访问
 

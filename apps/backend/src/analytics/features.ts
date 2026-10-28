@@ -8,5 +8,7 @@ export const FEATURES: Record<string, string> = {
   'sticky-notes': '便签',
   'pet-points': '宠物积分',
   'gacha-machine': '扭蛋机',
+  'semester-reports': '学期报告',
+  feedback: '意见反馈',
   whiteboard: '互动白板',
 };

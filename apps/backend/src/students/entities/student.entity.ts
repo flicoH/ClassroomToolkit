@@ -32,6 +32,9 @@ export class StudentEntity {
   @Column({ name: 'group_name', type: 'varchar', length: 64, nullable: true })
   groupName!: string | null;
 
+  @Column({ type: 'mediumtext', nullable: true })
+  photo!: string | null;
+
   @ManyToOne(() => ClassroomEntity, (classroom) => classroom.students, {
     onDelete: 'CASCADE',
   })

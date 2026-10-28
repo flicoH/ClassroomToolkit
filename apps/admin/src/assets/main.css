@@ -28,7 +28,8 @@ a {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -60,7 +61,8 @@ button.text-button {
   padding: 8px;
 }
 input,
-select {
+select,
+textarea {
   padding: 10px 12px;
   border: 1px solid #d5dfed;
   border-radius: 7px;
@@ -69,7 +71,8 @@ select {
   color: #263751;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid #aac3ff;
   outline-offset: 1px;
 }
@@ -347,6 +350,101 @@ table {
   font-size: 0.875rem;
   text-align: left;
 }
+.feedback-table {
+  table-layout: fixed;
+  white-space: normal;
+}
+.feedback-table th:first-child,
+.feedback-table td:first-child {
+  width: 190px;
+}
+.feedback-table th:last-child,
+.feedback-table td:last-child {
+  width: 110px;
+}
+.feedback-table th:nth-last-child(2),
+.feedback-table td:nth-last-child(2) {
+  width: 190px;
+}
+.feedback-summary {
+  display: -webkit-box;
+  min-width: 280px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  padding: 6px 0;
+}
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 24, 46, 0.52);
+}
+.feedback-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: 14px;
+  background: white;
+  padding: 26px;
+  box-shadow: 0 24px 70px rgba(9, 28, 58, 0.28);
+}
+.dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+}
+.dialog-heading h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+.feedback-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.feedback-meta div {
+  min-width: 0;
+}
+.feedback-meta dt,
+.feedback-detail > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.feedback-meta dd {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+}
+.feedback-meta a {
+  color: var(--blue);
+}
+.feedback-detail {
+  border-radius: 10px;
+  background: #f6f8fc;
+  padding: 18px;
+}
+.feedback-detail p {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
 th {
   background: #f6f8fc;
   color: #627088;
@@ -495,6 +593,16 @@ td small {
   }
 }
 @media (max-width: 700px) {
+  .feedback-meta {
+    grid-template-columns: 1fr;
+  }
+  .dialog-backdrop {
+    padding: 12px;
+  }
+  .feedback-dialog {
+    max-height: calc(100vh - 24px);
+    padding: 20px;
+  }
   .shell {
     display: block;
   }

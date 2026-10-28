@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 23:12:59
+ * @LastEditTime: 2026-10-23 16:51:23
  */
 "use client";
 
@@ -17,7 +17,7 @@ import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
 import { Taskbar } from "@/components/Taskbar";
 import { CountdownTimer } from "@/components/CountdownTimer";
-import { GraduationCap } from "lucide-react";
+import { GraduationCap, MessageSquareHeart } from "lucide-react";
 import { type MenuItemData } from "@/components/MenuItem";
 import { GachaMachine } from "@/components/apps/GachaMachine";
 import { RandomPicker } from "@/components/apps/RandomPicker";
@@ -26,6 +26,9 @@ import { SeatingChart } from "@/components/apps/SeatingChart";
 import { StickyNoteQuick, StickyNotes } from "@/components/apps/StickyNotes";
 import { StudentManagement } from "@/components/apps/StudentManagement";
 import { TaskStats } from "@/components/apps/TaskStats";
+import { Feedback } from "@/components/apps/Feedback";
+import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
+import { SemesterReports } from "@/components/apps/SemesterReports";
 import { Whiteboard } from "@/components/apps/Whiteboard";
 import {
   CartoonCountdownIcon,
@@ -33,6 +36,7 @@ import {
   CartoonPetPointsIcon,
   CartoonRandomPickerIcon,
   CartoonSeatingIcon,
+  CartoonSemesterReportIcon,
   CartoonStickyNoteIcon,
   CartoonStudentsIcon,
   CartoonTaskStatsIcon,
@@ -47,8 +51,11 @@ const menuItems: MenuItemData[] = [
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
+  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
+  { name: "学期报告v2", icon: CartoonSemesterReportIcon, contentKey: "semesterReportsV2" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
-  { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" }
+  { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
+  { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
 ];
 
 /** 桌面窗口内容路由：菜单只保存 contentKey，实际组件在这里集中映射。 */
@@ -64,12 +71,18 @@ function WindowContent({ contentKey, onOpenTool }: { contentKey: string; onOpenT
       return <SeatingChart />;
     case "petPoints":
       return <PetPoints />;
+    case "semesterReportsV2":
+      return <SemesterReportsV2 />;
+    case "semesterReports":
+      return <SemesterReports />;
     case "gachaMachine":
       return <GachaMachine />;
     case "stickyNotesList":
       return <StickyNotes />;
     case "studentManagement":
       return <StudentManagement />;
+    case "feedback":
+      return <Feedback />;
     case "whiteboard":
       return <Whiteboard onOpenTool={onOpenTool} />;
     default:

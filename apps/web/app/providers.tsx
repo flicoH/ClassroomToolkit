@@ -7,6 +7,7 @@
  */
 "use client";
 
+import { usePathname } from "next/navigation";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { queryClient } from "@/lib/queryClient";
@@ -16,6 +17,9 @@ import { GlobalRequestLoading } from "@/components/GlobalRequestLoading";
 
 /** 全局客户端 Provider：React Query、开发工具和 toast 都在这里统一挂载。 */
 export function Providers({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  // Parent links use their own loading/error states and need no desktop browser tooling.
+  if (pathname?.startsWith("/r/")) return <>{children}</>;
   return (
     <QueryClientProvider client={queryClient}>
       {children}

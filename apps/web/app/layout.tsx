@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Background } from "@/components/Background";
@@ -19,6 +19,8 @@ export const metadata: Metadata = {
   category: "education",
   referrer: "strict-origin-when-cross-origin",
   formatDetection: {
+    date: false,
+    url: false,
     email: false,
     address: false,
     telephone: false
@@ -45,6 +47,9 @@ export const metadata: Metadata = {
       }
     : undefined
 };
+
+// Let iOS expose safe-area insets while preserving normal pinch zoom.
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 /** 应用根布局：挂载背景和全局 Provider。 */
 export default function RootLayout({

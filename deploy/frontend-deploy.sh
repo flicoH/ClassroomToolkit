@@ -5,18 +5,25 @@ APP_DIR=${APP_DIR:-/opt/classroom-toolkit}
 BRANCH=${BRANCH:-main}
 IMAGE_NAMESPACE=${IMAGE_NAMESPACE:-ghcr.io/flicoh/classroomtoolkit}
 FRONTEND_IMAGE_TAG=${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
+EXPECTED_REVISION=${FRONTEND_IMAGE_TAG#sha-}
 COMPOSE_FILE=deploy/compose.frontend.yml
 ENV_FILE=deploy/.env.frontend
 RELEASE_FILE=deploy/.frontend-release.env
 CANDIDATE_FILE=deploy/.frontend-candidate.env
 NETWORK_NAME=classroom_internal
+preflight_container=''
 
 log() {
   printf '[frontend-deploy] %s\n' "$*"
 }
 
-restore_managed_deploy_scripts() {
-  local files=(deploy/backend-deploy.sh deploy/frontend-deploy.sh)
+restore_managed_deploy_files() {
+  local files=(
+    deploy/backend-deploy.sh
+    deploy/frontend-deploy.sh
+    deploy/compose.frontend.yml
+    deploy/docker/admin.nginx.conf
+  )
   local dirty=()
 
   for file in "${files[@]}"; do
@@ -26,7 +33,7 @@ restore_managed_deploy_scripts() {
   done
 
   if (( ${#dirty[@]} > 0 )); then
-    log "Restoring local changes in managed deploy scripts: ${dirty[*]}"
+    log "Restoring local changes in managed deploy files: ${dirty[*]}"
     git checkout -- "${dirty[@]}"
   fi
 }
@@ -39,10 +46,18 @@ fi
 cd "$APP_DIR"
 
 log "Updating origin/$BRANCH"
-git fetch --prune origin "$BRANCH"
+# Explicitly update the tracking ref even when the server maps a different branch.
+git fetch --prune origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 git checkout "$BRANCH"
-restore_managed_deploy_scripts
+restore_managed_deploy_files
 git merge --ff-only "origin/$BRANCH"
+
+# Refuse a stale CI run before it can replace a newer frontend release.
+server_revision=$(git rev-parse HEAD)
+if [[ -n "${DEPLOY_COMMIT:-}" && ( "$server_revision" != "$DEPLOY_COMMIT" || "$EXPECTED_REVISION" != "$DEPLOY_COMMIT" ) ]]; then
+  log "Release mismatch: server checkout=$server_revision, requested frontend=$FRONTEND_IMAGE_TAG. Run deployment for the current branch commit."
+  exit 1
+fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   log "Missing $APP_DIR/$ENV_FILE"
@@ -62,9 +77,19 @@ fi
 
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME" >/dev/null
 
+deployment_host=$(hostname)
+docker_context=$(docker context show)
+log "Deployment target: host=$deployment_host docker-context=$docker_context repository=$APP_DIR revision=$EXPECTED_REVISION"
+
 umask 077
 printf 'IMAGE_NAMESPACE=%s\nFRONTEND_IMAGE_TAG=%s\n' "$IMAGE_NAMESPACE" "$FRONTEND_IMAGE_TAG" > "$CANDIDATE_FILE"
-trap 'rm -f "$CANDIDATE_FILE"' EXIT
+cleanup() {
+  if [[ -n "$preflight_container" ]]; then
+    docker rm -f "$preflight_container" >/dev/null 2>&1 || true
+  fi
+  rm -f "$CANDIDATE_FILE"
+}
+trap cleanup EXIT
 
 compose() {
   docker compose \
@@ -78,18 +103,86 @@ compose() {
 log "Validating Compose configuration"
 compose config --quiet
 
-log "Pulling frontend image $FRONTEND_IMAGE_TAG"
-compose pull web admin
+pull_with_retry() {
+  local target=$1
+  local max_attempts=5
+  local delay=6
+  local attempt=1
 
-log "Starting frontend services"
-compose up -d --wait --remove-orphans --pull=never web admin
+  log "Pulling $target image with retry support..."
+  until compose pull "$target"; do
+    if (( attempt >= max_attempts )); then
+      log "Failed to pull $target image after $max_attempts attempts"
+      return 1
+    fi
+    log "Pull failed (attempt $attempt/$max_attempts). Retrying in ${delay}s..."
+    sleep "$delay"
+    (( attempt++ ))
+  done
+  log "Successfully pulled $target image"
+}
+
+log "Pulling frontend images ($FRONTEND_IMAGE_TAG) sequentially"
+pull_with_retry web
+pull_with_retry admin
 
 expected_web_image="${IMAGE_NAMESPACE}-web:${FRONTEND_IMAGE_TAG}"
+expected_backend_url=http://classroom-backend-backend-1:3000
+
+log "Checking candidate Web-to-Backend route before replacing the live Web container"
+backend_pet_settings_status=$(docker run --rm --network "$NETWORK_NAME" \
+  -e BACKEND_URL="$expected_backend_url" --entrypoint node "$expected_web_image" -e "
+fetch(process.env.BACKEND_URL + '/pet-points/settings', { method: 'PATCH' })
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
+")
+if [[ "$backend_pet_settings_status" != "401" ]]; then
+  log "Candidate backend route check failed: expected 401, got $backend_pet_settings_status"
+  exit 1
+fi
+
+preflight_container="classroom-web-preflight-$$"
+docker run -d --name "$preflight_container" --network "$NETWORK_NAME" \
+  --memory=512m -e BACKEND_URL="$expected_backend_url" \
+  -e NODE_ENV=production -e PORT=3001 "$expected_web_image" >/dev/null
+pet_settings_preflight_status=''
+for _ in {1..12}; do
+  pet_settings_preflight_status=$(docker exec "$preflight_container" node -e "
+fetch('http://127.0.0.1:3001/api/pet-points/settings', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json', cookie: 'auth_token=invalid-deploy-route-probe' },
+  body: JSON.stringify({ maxLevel: 10, finalEnergy: 200 }),
+})
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch(() => { process.exit(1); });
+" 2>/dev/null || true)
+  [[ "$pet_settings_preflight_status" == "401" ]] && break
+  sleep 2
+done
+if [[ "$pet_settings_preflight_status" != "401" ]]; then
+  docker logs --tail 40 "$preflight_container" || true
+  log "Candidate Web proxy route check failed: expected 401, got ${pet_settings_preflight_status:-connection error}"
+  exit 1
+fi
+docker rm -f "$preflight_container" >/dev/null
+preflight_container=''
+
+log "Starting frontend services"
+compose up -d --wait --force-recreate --remove-orphans --pull=never web admin
+
 expected_admin_image="${IMAGE_NAMESPACE}-admin:${FRONTEND_IMAGE_TAG}"
 web_container_id=$(compose ps -q web)
 admin_container_id=$(compose ps -q admin)
 web_image=$(docker inspect "$web_container_id" --format '{{.Config.Image}}')
 admin_image=$(docker inspect "$admin_container_id" --format '{{.Config.Image}}')
+actual_backend_url=$(docker inspect "$web_container_id" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^BACKEND_URL=//p')
 
 if [[ "$web_image" != "$expected_web_image" ]]; then
   log "Web image mismatch: expected $expected_web_image, got $web_image"
@@ -101,6 +194,115 @@ if [[ "$admin_image" != "$expected_admin_image" ]]; then
   exit 1
 fi
 
+if [[ "$actual_backend_url" != "$expected_backend_url" ]]; then
+  log "Web backend URL mismatch: expected $expected_backend_url, got ${actual_backend_url:-unset}"
+  exit 1
+fi
+
+# Tags alone do not prove which image is running after recreation.
+for service in web admin; do
+  container_id=$web_container_id
+  [[ "$service" != admin ]] || container_id=$admin_container_id
+  expected_image="${IMAGE_NAMESPACE}-${service}:${FRONTEND_IMAGE_TAG}"
+  actual_revision=$(docker inspect "$container_id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+  running_image_id=$(docker inspect "$container_id" --format '{{.Image}}')
+  pulled_image_id=$(docker image inspect "$expected_image" --format '{{.Id}}')
+  if [[ "$actual_revision" != "$EXPECTED_REVISION" || "$running_image_id" != "$pulled_image_id" ]]; then
+    log "$service running image mismatch: expected revision=$EXPECTED_REVISION image-id=$pulled_image_id; got revision=$actual_revision image-id=$running_image_id"
+    exit 1
+  fi
+  label=Web
+  [[ "$service" != admin ]] || label=Admin
+  log "$label deployed revision: $actual_revision image=$expected_image container=$container_id image-id=$running_image_id"
+done
+
+log "Checking Web-to-Backend network route"
+backend_feedback_status=''
+for _ in {1..6}; do
+  backend_feedback_status=$(docker exec "$web_container_id" node -e "
+fetch(process.env.BACKEND_URL + '/feedback', {
+  method: 'POST',
+  headers: {
+    authorization: 'Bearer invalid-deploy-route-probe',
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({ content: 'deploy-route-probe' }),
+})
+  .then((response) => { console.log(response.status); })
+  .catch((error) => { console.error(error); process.exit(1); });
+" || true)
+  [[ "$backend_feedback_status" == "401" ]] && break
+  sleep 5
+done
+if [[ "$backend_feedback_status" != "401" ]]; then
+  backend_feedback_details=$(docker exec "$web_container_id" node -e "
+const url = new URL(process.env.BACKEND_URL + '/feedback');
+const dns = require('node:dns').promises;
+Promise.all([
+  dns.lookup(url.hostname, { all: true }),
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer invalid-deploy-route-probe',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ content: 'deploy-route-probe' }),
+  }).then(async (response) => ({ status: response.status, body: await response.text() })),
+])
+  .then(([addresses, response]) => { console.log(JSON.stringify({ url: url.href, addresses, response })); })
+  .catch((error) => { console.log(JSON.stringify({ url: url.href, error: error.message })); });
+" || true)
+  log "Backend feedback diagnostics: $backend_feedback_details"
+  log "Backend feedback route check failed: expected 401, got ${backend_feedback_status:-connection error}"
+  exit 1
+fi
+
+log "Checking Web feedback proxy route"
+feedback_proxy_status=$(docker exec "$web_container_id" node -e "
+fetch('http://127.0.0.1:3001/api/feedback', {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    cookie: 'auth_token=invalid-deploy-route-probe',
+  },
+  body: JSON.stringify({ content: 'deploy-route-probe' }),
+})
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
+")
+if [[ "$feedback_proxy_status" != "401" ]]; then
+  log "Web feedback proxy route check failed: expected 401, got $feedback_proxy_status"
+  exit 1
+fi
+
+log "Checking Web pet settings proxy route"
+pet_settings_proxy_status=$(docker exec "$web_container_id" node -e "
+fetch('http://127.0.0.1:3001/api/pet-points/settings', {
+  method: 'PATCH',
+  headers: {
+    'content-type': 'application/json',
+    cookie: 'auth_token=invalid-deploy-route-probe',
+  },
+  body: JSON.stringify({ maxLevel: 10, finalEnergy: 200 }),
+})
+  .then(async (response) => {
+    console.log(response.status);
+    if (response.status !== 401) console.error(await response.text());
+  })
+  .catch((error) => { console.error(error); process.exit(1); });
+")
+if [[ "$pet_settings_proxy_status" != "401" ]]; then
+  log "Web pet settings proxy route check failed: expected 401, got $pet_settings_proxy_status"
+  exit 1
+fi
+
 mv "$CANDIDATE_FILE" "$RELEASE_FILE"
 trap - EXIT
-log "Frontend deployment complete: $(git rev-parse --short HEAD)"
+
+log "Pruning dangling images to save disk space"
+docker image prune -f || true
+
+log "Frontend deployment complete: $EXPECTED_REVISION (server checkout: $server_revision)"

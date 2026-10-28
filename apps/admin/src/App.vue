@@ -13,6 +13,7 @@ const links = [
   { path: '/teachers', label: '教师管理', icon: '人' },
   { path: '/students', label: '学生档案', icon: '册' },
   { path: '/classrooms', label: '班级管理', icon: '班' },
+  { path: '/feedback', label: '意见反馈', icon: '言' },
 ]
 async function logout() {
   try {
@@ -26,13 +27,20 @@ async function logout() {
 </script>
 <template>
   <RouterView v-if="route.path === '/login'" />
-  <div v-else class="shell">
+  <div
+    v-else
+    class="shell"
+  >
     <aside class="sidebar">
-      <RouterLink to="/" class="brand"
-        ><span class="brand-mark">课</span
-        ><span>课堂小组件<small>管理后台</small></span></RouterLink
+      <RouterLink
+        to="/"
+        class="brand"
       >
-      <p class="nav-label">平台管理</p>
+        <span class="brand-mark">课</span><span>课堂小组件<small>管理后台</small></span>
+      </RouterLink>
+      <p class="nav-label">
+        平台管理
+      </p>
       <nav aria-label="主导航">
         <RouterLink
           v-for="link in links"
@@ -41,24 +49,34 @@ async function logout() {
           :class="{
             selected: link.path === '/' ? route.path === '/' : route.path.startsWith(link.path),
           }"
-          ><span aria-hidden="true">{{ link.icon }}</span
-          >{{ link.label }}</RouterLink
         >
+          <span aria-hidden="true">{{ link.icon }}</span>{{ link.label }}
+        </RouterLink>
       </nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span>教师与课堂，一目了然</div>
+      <div class="sidebar-bottom">
+        <span class="status-dot" />教师与课堂，一目了然
+      </div>
     </aside>
     <div class="workspace">
       <header class="topbar">
-        <span
-          >工作台 <span class="muted">/ {{ route.meta.title }}</span></span
-        >
+        <span>工作台 <span class="muted">/ {{ route.meta.title }}</span></span>
         <div class="account">
-          <span class="avatar">管</span><span>{{ profile?.username }}</span
-          ><button class="text-button" @click="logout">退出登录</button>
+          <span class="avatar">管</span><span>{{ profile?.username }}</span><button
+            class="text-button"
+            @click="logout"
+          >
+            退出登录
+          </button>
         </div>
       </header>
       <main>
-        <p v-if="error" role="alert" class="error">{{ error }}</p>
+        <p
+          v-if="error"
+          role="alert"
+          class="error"
+        >
+          {{ error }}
+        </p>
         <RouterView :key="route.path" />
       </main>
     </div>

@@ -19,6 +19,7 @@ import type {
   AdminDateRange,
 } from './admin.types';
 import { teacherSqlTime, teacherUtcOffset } from './analytics/teacher-time';
+import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 
 const eventDay =
   "DATE_FORMAT(DATE_ADD(e.createdAt, INTERVAL 8 HOUR), '%Y-%m-%d')";
@@ -54,7 +55,36 @@ export class AdminDatabase {
     private readonly events: Repository<AnalyticsEventEntity>,
     @InjectRepository(AnalyticsSettingEntity)
     private readonly settings: Repository<AnalyticsSettingEntity>,
+    @InjectRepository(FeedbackEntity)
+    private readonly feedback: Repository<FeedbackEntity>,
   ) {}
+
+  /** 关联教师展示信息并按提交时间倒序返回意见。 */
+  async findFeedback(q: AdminQueryDto, page: AdminPagination) {
+    const query = this.feedback
+      .createQueryBuilder('f')
+      .leftJoin(TeacherEntity, 't', 't.id = f.teacherId');
+    if (q.search) {
+      query.andWhere(
+        '(f.content LIKE :search OR t.name LIKE :search OR t.username LIKE :search)',
+        { search: `%${q.search.slice(0, 100)}%` },
+      );
+    }
+    const total = await query.getCount();
+    const items = await query
+      .select('f.id', 'id')
+      .addSelect('f.teacherId', 'teacherId')
+      .addSelect('t.name', 'teacherName')
+      .addSelect('t.username', 'teacherUsername')
+      .addSelect('f.content', 'content')
+      .addSelect(isoDate('f.createdAt'), 'createdAt')
+      .orderBy('f.createdAt', 'DESC')
+      .addOrderBy('f.id', 'DESC')
+      .limit(page.pageSize)
+      .offset(page.offset)
+      .getRawMany<AdminDatabaseRow>();
+    return { items, total, page: page.page, pageSize: page.pageSize };
+  }
 
   /** 在同一事务中更新密码并撤销会话；教师不存在时不修改任何数据。 */
   async resetTeacherPassword(
