@@ -13,6 +13,8 @@
 - `gacha_machine_*`：扭蛋奖励与抽取记录
 - `teacher_feedback`：教师反馈
 - `semester_report_*`、`semester_reports`：学期、学科、课程资料、报告、分享与流程记录
+- `admin_accounts`、`admin_sessions`：独立管理员账号与会话
+- `analytics_events`、`analytics_settings`：注册、登录和功能使用事件及统计设置
 
 ## 连接配置
 

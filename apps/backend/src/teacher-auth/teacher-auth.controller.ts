@@ -15,15 +15,18 @@ export class TeacherAuthController {
   /** 注册教师账号并返回登录态。 */
   @Post('register')
   @Public()
-  register(@Body() dto: RegisterTeacherDto) {
-    return this.teacherAuthService.register(dto);
+  register(
+    @Body() dto: RegisterTeacherDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.teacherAuthService.register(dto, request.ip ?? 'unknown');
   }
 
   /** 教师账号登录。 */
   @Post('login')
   @Public()
-  login(@Body() dto: LoginTeacherDto) {
-    return this.teacherAuthService.login(dto);
+  login(@Body() dto: LoginTeacherDto, @Req() request: AuthenticatedRequest) {
+    return this.teacherAuthService.login(dto, request.ip ?? 'unknown');
   }
 
   /** 返回当前教师登录资料。 */

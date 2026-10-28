@@ -80,10 +80,12 @@ export class StudentsService {
 
   /** 创建一个空班级，分组来自请求体。 */
   createClassroom(dto: CreateClassroomDto) {
+    const name = this.requiredText(dto?.name, '班级名称', 64);
+    const groups = this.optionalGroups(dto?.groups);
     const classroom: Classroom = {
       id: createEntityId('class'),
-      name: dto.name.trim(),
-      groups: dto.groups ?? [],
+      name,
+      groups,
       students: [],
     };
     return this.database.saveClassroom(classroom);
@@ -92,7 +94,10 @@ export class StudentsService {
   /** 更新班级名称，空名称不会覆盖原值。 */
   async updateClassroom(classroomId: string, dto: UpdateClassroomDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
-    const name = dto.name?.trim();
+    const name =
+      dto?.name === undefined
+        ? undefined
+        : this.requiredText(dto.name, '班级名称', 64);
     if (name) classroom.name = name;
     return this.database.saveClassroom(classroom);
   }
@@ -100,15 +105,21 @@ export class StudentsService {
   /** 新增学生，并在未传学号时自动生成不重复学号。 */
   async addStudent(classroomId: string, dto: CreateStudentDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
+    const name = this.requiredText(dto?.name, '学生姓名', 64);
     const studentNo =
-      dto.studentNo?.trim() || this.createNextStudentNo(classroom.students);
+      this.optionalText(dto?.studentNo, '学号', 64) ||
+      this.createNextStudentNo(classroom.students);
+    const gender = this.gender(dto?.gender);
+    const group = this.optionalText(dto?.group, '分组名称', 64) || undefined;
+    if (group && !classroom.groups.includes(group))
+      throw new BadRequestException('分组不存在');
     this.assertStudentNoAvailable(classroom.students, studentNo);
     const student: Student = {
       id: studentNo,
-      name: dto.name.trim(),
+      name,
       studentNo,
-      gender: dto.gender ?? '',
-      group: dto.group,
+      gender,
+      group,
     };
     classroom.students.push(student);
     const savedClassroom = await this.database.saveClassroom(classroom);
@@ -125,6 +136,7 @@ export class StudentsService {
     studentId: string,
     dto: UpdateStudentDto,
   ) {
+    const input = dto ?? {};
     const classroom = await this.getClassroomOrThrow(classroomId);
     const index = classroom.students.findIndex(
       (student) => student.id === studentId,
@@ -132,18 +144,32 @@ export class StudentsService {
     if (index < 0) throw new NotFoundException('学生不存在');
     const currentStudent = classroom.students[index]!;
     const studentNo =
-      dto.studentNo === undefined
+      input.studentNo === undefined
         ? currentStudent.studentNo
-        : dto.studentNo.trim() ||
+        : this.optionalText(input.studentNo, '学号', 64) ||
           this.createNextStudentNo(classroom.students, index);
+    const name =
+      input.name === undefined
+        ? currentStudent.name
+        : this.requiredText(input.name, '学生姓名', 64);
+    const gender =
+      input.gender === undefined
+        ? currentStudent.gender
+        : this.gender(input.gender);
+    const group =
+      input.group === undefined
+        ? currentStudent.group
+        : this.optionalText(input.group, '分组名称', 64) || undefined;
+    if (group && !classroom.groups.includes(group))
+      throw new BadRequestException('分组不存在');
     this.assertStudentNoAvailable(classroom.students, studentNo, index);
     classroom.students[index] = {
       ...currentStudent,
       id: studentId,
-      name: dto.name?.trim() || currentStudent.name,
+      name,
       studentNo,
-      gender: dto.gender ?? currentStudent.gender,
-      group: dto.group === undefined ? currentStudent.group : dto.group,
+      gender,
+      group,
     };
     const savedClassroom = await this.database.saveClassroom(classroom);
     return (
@@ -182,8 +208,9 @@ export class StudentsService {
     dto: ImportStudentsDto,
   ): Promise<ImportStudentsResult> {
     const classroom = await this.getClassroomOrThrow(classroomId);
+    const text = this.requiredText(dto?.text, '导入内容', 100_000, false);
     const { students, skipped } = this.parseImportRows(
-      dto.text,
+      text,
       classroom.students,
     );
     if (!students.length) return { imported: [], skipped };
@@ -204,7 +231,7 @@ export class StudentsService {
   /** 给班级追加分组；已存在的分组保持不变。 */
   async addGroup(classroomId: string, dto: CreateGroupDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);
-    const name = dto.name.trim();
+    const name = this.requiredText(dto?.name, '分组名称', 64);
     if (name && !classroom.groups.includes(name)) classroom.groups.push(name);
     await this.database.saveClassroom(classroom);
     return classroom.groups;
@@ -220,7 +247,7 @@ export class StudentsService {
     const student = classroom.students.find((item) => item.id === studentId);
     if (!student) throw new NotFoundException('学生不存在');
 
-    const group = dto.group?.trim();
+    const group = this.optionalText(dto?.group, '分组名称', 64);
     if (group && !classroom.groups.includes(group)) {
       throw new NotFoundException('分组不存在');
     }
@@ -373,5 +400,47 @@ export class StudentsService {
     ) {
       throw new BadRequestException(`学生学号 ${studentNo} 已存在`);
     }
+  }
+
+  private requiredText(
+    value: unknown,
+    label: string,
+    maxLength: number,
+    trim = true,
+  ) {
+    if (typeof value !== 'string')
+      throw new BadRequestException(`${label}格式无效`);
+    const normalized = trim ? value.trim() : value;
+    if (!normalized.trim()) throw new BadRequestException(`${label}不能为空`);
+    if (normalized.length > maxLength)
+      throw new BadRequestException(`${label}不能超过 ${maxLength} 个字符`);
+    return normalized;
+  }
+
+  private optionalText(value: unknown, label: string, maxLength: number) {
+    if (value === undefined || value === null) return '';
+    if (typeof value !== 'string')
+      throw new BadRequestException(`${label}格式无效`);
+    const normalized = value.trim();
+    if (normalized.length > maxLength)
+      throw new BadRequestException(`${label}不能超过 ${maxLength} 个字符`);
+    return normalized;
+  }
+
+  private optionalGroups(value: unknown) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 50)
+      throw new BadRequestException('分组格式无效');
+    const groups = value.map((group) =>
+      this.requiredText(group, '分组名称', 64),
+    );
+    return [...new Set(groups)];
+  }
+
+  private gender(value: unknown): Gender {
+    if (value === undefined || value === '') return '';
+    if (value !== '男' && value !== '女')
+      throw new BadRequestException('性别格式无效');
+    return value;
   }
 }

@@ -1,4 +1,8 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { TeacherAuthService } from './teacher-auth.service';
 import { Teacher, TeacherSession } from './teacher-auth.types';
 
@@ -58,5 +62,48 @@ describe('TeacherAuthService', () => {
     await expect(
       service.register({ username: 'teacher1', password: 'secret1' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects malformed and oversized public authentication input as bad requests', async () => {
+    const database = { findTeacherByUsername: jest.fn() };
+    const service = new TeacherAuthService(database as never);
+
+    await expect(
+      service.login({ username: 1, password: 'secret1' } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.register({ username: 'x'.repeat(65), password: 'secret1' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(database.findTeacherByUsername).not.toHaveBeenCalled();
+  });
+
+  it('rate limits repeated failed logins from the same client', async () => {
+    const database = {
+      findTeacherByUsername: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new TeacherAuthService(database as never);
+    (
+      service as unknown as {
+        hashPassword: jest.Mock<Promise<string>, [string, string]>;
+      }
+    ).hashPassword = jest.fn().mockResolvedValue('00'.repeat(64));
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(
+        service.login(
+          { username: 'missing', password: 'secret1' },
+          '192.0.2.1',
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+    await expect(
+      service.login(
+        { username: 'another-user', password: 'secret1' },
+        '192.0.2.1',
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(
+      service.login({ username: 'missing', password: 'secret1' }, '192.0.2.1'),
+    ).rejects.toMatchObject<HttpException>({ status: 429 });
   });
 });

@@ -13,17 +13,21 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 
 ## 功能模块
 
-| 模块       | 路由前缀          | 说明                             |
-| ---------- | ----------------- | -------------------------------- |
-| 教师认证   | `/auth/teacher`   | 注册、登录、当前教师、退出登录   |
-| 班级与学生 | `/classes`        | 班级、学生、分组与批量导入       |
-| 任务统计   | `/task-stats`     | 任务及学生完成状态               |
-| 座位表     | `/seating-charts` | 座位表、座位分配与随机打乱       |
-| 随机点名   | `/random-picker`  | 班级数据、抽取与历史记录         |
-| 倒计时     | `/countdown`      | 教师独立的倒计时状态             |
-| 便签       | `/sticky-notes`   | 便签新增、编辑、置顶与删除       |
-| 宠物积分   | `/pet-points`     | 积分调整、宠物、规则、奖励与兑换 |
-| 扭蛋奖励   | `/gacha-machine`  | 奖励 CRUD、抽奖与抽奖记录        |
+| 模块       | 路由前缀            | 说明                                          |
+| ---------- | ------------------- | --------------------------------------------- |
+| 教师认证   | `/auth/teacher`     | 注册、登录、当前教师、退出登录                |
+| 班级与学生 | `/classes`          | 班级、学生、分组与批量导入                    |
+| 任务统计   | `/task-stats`       | 任务及学生完成状态                            |
+| 座位表     | `/seating-charts`   | 座位表、座位分配与随机打乱                    |
+| 随机点名   | `/random-picker`    | 班级数据、抽取与历史记录                      |
+| 倒计时     | `/countdown`        | 教师独立的倒计时状态                          |
+| 便签       | `/sticky-notes`     | 便签新增、编辑、置顶与删除                    |
+| 宠物积分   | `/pet-points`       | 积分调整、宠物、规则、奖励与兑换              |
+| 扭蛋奖励   | `/gacha-machine`    | 奖励 CRUD、抽奖与抽奖记录                     |
+| 学期报告   | `/semester-reports` | 学期/学科、课程资料解析、报告流程、分享与历史 |
+| 意见反馈   | `/feedback`         | 校验并保存当前教师的意见反馈                  |
+| 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                    |
+| 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置        |
 
 教师业务接口经过全局教师鉴权，查询和写入按 `teacher_id` 限定当前教师。`/admin/*` 使用独立管理员身份域，可查询全平台数据，但教师令牌不能访问；`/analytics/events` 仍要求教师身份，仅接收功能打开事件。
 
@@ -72,6 +76,25 @@ curl http://127.0.0.1:3000/
 | `TYPEORM_SYNCHRONIZE`        | `false`             | TypeORM 自动同步；生产环境必须保持关闭       |
 | `TYPEORM_MIGRATIONS_RUN`     | `false`             | 服务启动时是否自动执行 Migration             |
 | `LEGACY_DATA_OWNER_USERNAME` | 空                  | 旧库首次迁移时，历史业务数据归属的教师用户名 |
+
+学期报告与课程解析配置：
+
+| 变量                              | 默认值 / 用途                                                             |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `SEMESTER_REPORT_PARSER_PROVIDER` | `kimi`；可设为 `docling`                                                  |
+| `KIMI_API_KEY`                    | Kimi 文件解析密钥；使用默认解析器时必填                                   |
+| `KIMI_BASE_URL`                   | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
+| `SEMESTER_REPORT_PARSER_URL`      | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
+| `SEMESTER_REPORT_PARSER_API_KEY`  | 可选的 Docling Bearer 密钥                                                |
+| `SEMESTER_REPORT_STORAGE_DIR`     | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
+| `REPORT_GENERATION_MODE`          | `auto`；可设 `template` 或 `ai`                                           |
+| `REPORT_AI_BASE_URL`              | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
+| `REPORT_AI_API_KEY`               | AI 报告生成服务密钥                                                       |
+| `REPORT_AI_MODEL`                 | AI 报告生成模型名                                                         |
+| `REPORT_PUBLIC_BASE_URL`          | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
+| `REPORT_SHARE_ENCRYPTION_KEY`     | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
+
+`REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
 
 管理员相关配置：
 
@@ -156,7 +179,21 @@ curl http://127.0.0.1:3000/auth/teacher/me \
 
 Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过同源 `/api/*` BFF 将会话保存在 `HttpOnly`、`SameSite=Lax` 的安全 Cookie 中，并由服务端代理附加 Bearer Token。
 
-教师密码使用带随机盐的 PBKDF2-SHA512 哈希保存，会话也以哈希形式持久化。注册密码至少 6 位。
+教师密码使用带随机盐的 PBKDF2-SHA512 哈希保存，并通过异步密码派生避免阻塞 Node.js 事件循环；会话也以哈希形式持久化。注册密码为 6–256 位，用户名最长 64 个字符。
+
+公开认证接口在单进程内按“来源地址 + 用户名”限流：登录 15 分钟最多连续失败 10 次，成功后清除登录计数；注册每小时最多尝试 5 次。不存在的用户名仍执行固定成本密码派生，避免通过响应耗时枚举账号。多副本部署时应将限流状态迁移到 Redis 等共享存储。
+
+教师认证及班级、学生、分组接口会在写入数据库前校验必填字段、数据类型和数据库字段长度。非法输入返回 `400 Bad Request`，认证尝试超限返回 `429 Too Many Requests`。主要边界如下：
+
+| 字段               | 限制                                      |
+| ------------------ | ----------------------------------------- |
+| 教师用户名、姓名   | 最长 64 个字符                            |
+| 教师密码           | 6–256 位                                  |
+| 教师邮箱           | 最长 128 个字符                           |
+| 班级、学生、分组名 | 最长 64 个字符                            |
+| 单个班级初始分组   | 最多 50 个，重复名称会合并                |
+| 学生性别           | `男`、`女` 或空值                         |
+| 学生批量导入文本   | 最长 100,000 个字符，格式仍为每行一名学生 |
 
 ## 常用接口
 
@@ -180,8 +217,17 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 | `POST`           | `/gacha-machine/draw`                       | 执行抽奖             |
 | `POST`           | `/gacha-machine/rewards`                    | 新增奖励             |
 | `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`          | 编辑或删除奖励       |
+| `POST`           | `/feedback`                                 | 提交教师意见反馈     |
+| `GET / POST`     | `/semester-reports/report-terms`            | 查询或创建报告学期   |
+| `GET / POST`     | `/semester-reports/report-subjects`         | 查询或创建报告学科   |
+| `GET / POST`     | `/semester-reports/course-documents`        | 查询或上传课程资料   |
+| `POST`           | `/semester-reports/reports/generate`        | 生成学生报告         |
+| `GET`            | `/semester-reports/reports`                 | 筛选和分页查询报告   |
+| `PATCH`          | `/semester-reports/reports/:id/draft`       | 编辑报告草稿         |
+| `POST`           | `/semester-reports/reports/:id/publish`     | 发布报告并创建分享   |
+| `GET`            | `/semester-reports/public/reports/:token`   | 获取公开报告快照     |
 
-具体请求体以对应模块的 `*.dto.ts` 为准。
+具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；公开报告仅通过高熵分享 Token 访问。
 
 ## 测试与质量检查
 
@@ -246,7 +292,9 @@ apps/backend/
 │   ├── countdown/            # 倒计时
 │   ├── sticky-notes/         # 便签
 │   ├── pet-points/           # 宠物积分
-│   └── gacha-machine/        # 扭蛋奖励
+│   ├── gacha-machine/        # 扭蛋奖励
+│   ├── feedback/             # 教师意见反馈
+│   └── semester-reports/     # 课程解析、报告、分享和后台 Worker
 └── test/                     # E2E 测试
 ```
 
@@ -255,6 +303,10 @@ apps/backend/
 ### `401 Unauthorized`
 
 教师接口确认请求携带有效的 `Authorization: Bearer <session-token>`。管理接口则检查独立的 `classroom_admin` Cookie，不使用教师 Bearer Token。通过 Web 调用时，确认浏览器已登录、请求走同源 `/api/*`，且没有绕过 Next.js BFF 直接访问 Backend。
+
+### `429 Too Many Requests`
+
+同一来源对同一用户名连续登录失败 10 次后，需要等待 15 分钟再试；注册尝试达到每小时 5 次后，需要等待当前窗口结束。登录成功会立即清除该账号的失败登录计数。单进程开发环境重启后计数会清空，多副本生产环境应使用共享限流存储。
 
 ### 无法连接 MySQL
 

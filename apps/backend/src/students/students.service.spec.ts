@@ -1,7 +1,38 @@
 import { StudentsService } from './students.service';
 import { Classroom } from './students.types';
+import { BadRequestException } from '@nestjs/common';
 
 describe('StudentsService', () => {
+  it('rejects malformed classroom and student bodies before persistence', async () => {
+    const database = {
+      findClassroom: jest.fn().mockResolvedValue({
+        id: 'class-1',
+        name: '一年级',
+        groups: ['一组'],
+        students: [],
+      }),
+      saveClassroom: jest.fn(),
+    };
+    const service = new StudentsService(database as never);
+
+    expect(() => service.createClassroom({ name: 1 } as never)).toThrow(
+      BadRequestException,
+    );
+    await expect(
+      service.addStudent('class-1', {
+        name: '张三',
+        gender: '未知',
+      } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.addStudent('class-1', {
+        name: '张三',
+        group: '不存在的分组',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(database.saveClassroom).not.toHaveBeenCalled();
+  });
+
   it('creates default classrooms when a teacher has no classroom data', async () => {
     const database = {
       findClassrooms: jest.fn().mockResolvedValue([]),
