@@ -63,6 +63,19 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+login_proxy_secret=$(sed -n 's/^LOGIN_PROXY_SECRET=//p' "$ENV_FILE" | tail -n 1)
+if (( ${#login_proxy_secret} < 32 )); then
+  log "LOGIN_PROXY_SECRET in $ENV_FILE must contain at least 32 characters"
+  exit 1
+fi
+if [[ -f deploy/.env.frontend ]]; then
+  frontend_login_proxy_secret=$(sed -n 's/^LOGIN_PROXY_SECRET=//p' deploy/.env.frontend | tail -n 1)
+  if [[ "$login_proxy_secret" != "$frontend_login_proxy_secret" ]]; then
+    log "LOGIN_PROXY_SECRET must be identical in deploy/.env.backend and deploy/.env.frontend"
+    exit 1
+  fi
+fi
+
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   log "Docker Engine with the Compose plugin is required"
   exit 1

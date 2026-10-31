@@ -8,7 +8,7 @@
 
 迁移增加 blocked_login_ips 主键表及 analytics_events.login_ip/ip_location 可空字段，保留现有数据。部署前执行 Backend migration:run。
 
-Web 和 Backend 设置相同的高强度 LOGIN_PROXY_SECRET。入口 Nginx 必须覆盖 X-Real-IP 为 remote_addr，Web 服务端口只允许该入口访问，禁止公网绕过 Nginx。BFF 携带密钥转交来源；Backend 仅验证密钥成功时采用该来源，否则使用连接地址，忽略客户端转发头。未配置时记录连接地址，不应在代理部署中据此添加封禁。密钥不能使用 NEXT_PUBLIC_ 前缀。现有 Nginx 示例已经覆盖 X-Real-IP。Docker 部署需分别向两个容器注入该变量。
+Web 和 Backend 设置相同的高强度 LOGIN_PROXY_SECRET。入口 Nginx 必须覆盖 X-Real-IP 为 remote_addr，Web 服务端口只允许该入口访问，禁止公网绕过 Nginx。BFF 携带密钥转交来源；Backend 仅验证密钥成功时采用该来源，否则使用连接地址，忽略客户端转发头。密钥不能使用 NEXT_PUBLIC_ 前缀。现有 Nginx 示例已经覆盖 X-Real-IP。Docker Compose 将该密钥设为必填；分离部署的 frontend/backend 环境文件必须填写同一个 32 字符以上随机值，避免缺失时静默记录容器内网地址。
 
 验收覆盖地址规范化、伪造来源头、封禁登录和注册、解封、非法输入、管理员权限及所在地失败。必须执行 pnpm verify。
 

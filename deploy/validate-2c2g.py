@@ -30,6 +30,10 @@ def validate(config):
     if services['mysql'].get('ports'):
         raise ValueError('MySQL must not publish a host port')
     env = services['backend']['environment']
+    proxy_secret = env.get('LOGIN_PROXY_SECRET', '')
+    web_proxy_secret = services['web']['environment'].get('LOGIN_PROXY_SECRET', '')
+    if len(proxy_secret) < 32 or 'CHANGE_ME' in proxy_secret or proxy_secret != web_proxy_secret:
+        raise ValueError('Backend and Web need the same 32+ character LOGIN_PROXY_SECRET')
     for field in ['MYSQL_PASSWORD', 'REPORT_SHARE_ENCRYPTION_KEY']:
         value = env.get(field, '')
         if not value or 'CHANGE_ME' in value:
@@ -96,6 +100,7 @@ def initialize(template, target):
         'CHANGE_ME_ADMIN_PASSWORD': secrets.token_hex(24),
         'CHANGE_ME_PARSER_KEY': secrets.token_hex(32),
         'CHANGE_ME_REPORT_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
+        'CHANGE_ME_LOGIN_PROXY_SECRET': secrets.token_hex(32),
     }
     text = Path(template).read_text()
     for before, after in replacements.items():

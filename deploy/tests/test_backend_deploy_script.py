@@ -72,7 +72,7 @@ class BackendDeploymentTests(unittest.TestCase):
             work = Path(directory)
             (work / '.git').mkdir()
             (work / 'deploy').mkdir()
-            (work / 'deploy/.env.backend').write_text('# mock only\n')
+            (work / 'deploy/.env.backend').write_text('LOGIN_PROXY_SECRET=' + 'x' * 32 + '\n')
             release = work / 'deploy/.backend-release.env'
             release.write_text('BACKEND_IMAGE_TAG=previous-release\n')
             binary = work / 'bin'; binary.mkdir()

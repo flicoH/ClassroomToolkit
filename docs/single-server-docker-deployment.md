@@ -212,6 +212,15 @@ cp deploy/.env.backend.example deploy/.env.backend
 chmod 600 deploy/.env.frontend deploy/.env.backend
 ```
 
+生成一次登录代理密钥，并把同一个值分别写入两份环境文件。缺失或两边不一致时，Backend 只能看到 Docker 容器内网 IP：
+
+```bash
+LOGIN_PROXY_SECRET_VALUE="$(openssl rand -hex 32)"
+sed -i "s/^LOGIN_PROXY_SECRET=.*/LOGIN_PROXY_SECRET=${LOGIN_PROXY_SECRET_VALUE}/" deploy/.env.frontend
+sed -i "s/^LOGIN_PROXY_SECRET=.*/LOGIN_PROXY_SECRET=${LOGIN_PROXY_SECRET_VALUE}/" deploy/.env.backend
+unset LOGIN_PROXY_SECRET_VALUE
+```
+
 编辑 `deploy/.env.backend`，替换数据库密码并配置首次使用的管理员账号：
 
 ```dotenv
@@ -392,6 +401,8 @@ docker compose -p classroom-backend \
 
 检查 Web 登录 Cookie 与业务接口代理：
 
+宿主机 Nginx 必须使用示例配置中的 `X-Real-IP $remote_addr`。如果宿主机前面还有 CDN、负载均衡或另一层反向代理，应先在宿主机 Nginx 中仅信任该代理地址，并通过 `real_ip_header`/`set_real_ip_from` 还原 `$remote_addr`；不要信任任意客户端传入的 `X-Forwarded-For`。
+
 ```bash
 # 使用 HTTP + IP 临时访问时，必须显式关闭 Secure Cookie。
 grep AUTH_COOKIE_SECURE deploy/.env.frontend || echo 'AUTH_COOKIE_SECURE=false' >> deploy/.env.frontend
@@ -406,7 +417,13 @@ docker compose -p classroom-frontend \
   --env-file deploy/.env.frontend \
   --env-file deploy/.frontend-release.env \
   -f deploy/compose.frontend.yml \
-  exec web node -e "console.log(process.env.BACKEND_URL, process.env.AUTH_COOKIE_SECURE)"
+  exec web node -e "console.log(process.env.BACKEND_URL, process.env.AUTH_COOKIE_SECURE, Boolean(process.env.LOGIN_PROXY_SECRET))"
+
+# 两个容器必须输出相同的非空密钥摘要；摘要可比对，不打印原始密钥。
+docker inspect classroom-frontend-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^LOGIN_PROXY_SECRET=//p' | sha256sum
+docker inspect classroom-backend-backend-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^LOGIN_PROXY_SECRET=//p' | sha256sum
 ```
 
 确认每次 GitHub Actions 部署后的服务器镜像版本：

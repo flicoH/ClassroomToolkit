@@ -46,7 +46,7 @@ class FrontendDeploymentTests(unittest.TestCase):
             work = Path(directory)
             (work / '.git').mkdir()
             (work / 'deploy').mkdir()
-            (work / 'deploy/.env.frontend').write_text('# mock only\n')
+            (work / 'deploy/.env.frontend').write_text('LOGIN_PROXY_SECRET=' + 'x' * 32 + '\n')
             release = work / 'deploy/.frontend-release.env'
             release.write_text('FRONTEND_IMAGE_TAG=previous-release\n')
             binary = work / 'bin'

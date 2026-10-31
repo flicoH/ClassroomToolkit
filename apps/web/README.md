@@ -43,6 +43,7 @@ OPEN_BROWSER=0 pnpm --filter ClassRoomToolkitWeb dev
 | 变量                      | 用途                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------- |
 | `BACKEND_URL`             | Next.js BFF 在运行时访问的 Backend 根地址；生产环境必填，例如 `http://backend:3000`。 |
+| `LOGIN_PROXY_SECRET`      | Web 与 Backend 共用的服务端随机密钥，用于可信转交入口代理提供的登录 IP。              |
 | `NEXT_PUBLIC_BACKEND_URL` | 仅开发环境的后端地址回退值；生产环境不会用它替代缺失的 `BACKEND_URL`。                |
 | `AUTH_COOKIE_SECURE`      | 显式控制教师 Cookie 的 `Secure` 属性；未设置时根据请求协议或代理协议自动判断。        |
 
