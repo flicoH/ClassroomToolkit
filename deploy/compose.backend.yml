@@ -9,6 +9,7 @@ x-logging: &default-logging
 x-backend-environment: &backend-environment
   NODE_ENV: production
   NODE_OPTIONS: --max-old-space-size=256
+  LOGIN_PROXY_SECRET: ${LOGIN_PROXY_SECRET:-}
   HOST: 0.0.0.0
   PORT: 3000
   MYSQL_HOST: mysql

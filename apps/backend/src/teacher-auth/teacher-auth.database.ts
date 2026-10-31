@@ -1,3 +1,4 @@
+import { BlockedIpEntity } from './entities/blocked-ip.entity';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,6 +14,11 @@ export class TeacherAuthDatabase {
     @InjectRepository(TeacherSessionEntity)
     private readonly sessions: Repository<TeacherSessionEntity>,
   ) {}
+
+  /** 每次登录读取封禁表，使管理员解封立即生效。 */
+  async isIpBlocked(ip: string) {
+    return this.teachers.manager.existsBy(BlockedIpEntity, { ip });
+  }
 
   /** 按用户名查询教师账号。 */
   async findTeacherByUsername(username: string) {

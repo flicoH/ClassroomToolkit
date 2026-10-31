@@ -1,3 +1,4 @@
+import { loginIp } from '../common/login-ip';
 import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/teacher-auth.guard';
 import { Public } from '../auth/public.decorator';
@@ -19,14 +20,14 @@ export class TeacherAuthController {
     @Body() dto: RegisterTeacherDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.teacherAuthService.register(dto, request.ip ?? 'unknown');
+    return this.teacherAuthService.register(dto, loginIp(request));
   }
 
   /** 教师账号登录。 */
   @Post('login')
   @Public()
   login(@Body() dto: LoginTeacherDto, @Req() request: AuthenticatedRequest) {
-    return this.teacherAuthService.login(dto, request.ip ?? 'unknown');
+    return this.teacherAuthService.login(dto, loginIp(request));
   }
 
   /** 返回当前教师登录资料。 */

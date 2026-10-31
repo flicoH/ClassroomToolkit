@@ -1,3 +1,4 @@
+import { loginIp } from '../common/login-ip';
 import { ADMIN_ACCESS } from '../admin/auth/admin-access';
 import {
   CanActivate,
@@ -45,7 +46,10 @@ export class TeacherAuthGuard implements CanActivate {
       : '';
     if (!token) throw new UnauthorizedException('未登录');
 
-    request.teacher = await this.teacherAuthService.authenticate(token);
+    request.teacher = await this.teacherAuthService.authenticate(
+      token,
+      loginIp(request),
+    );
     request.authToken = token;
     return true;
   }

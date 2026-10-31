@@ -71,6 +71,8 @@ export interface Ranking extends Meta {
   activeTeachers: number
 }
 export interface Person {
+  loginIp?: string
+  ipLocation?: string
   id: string
   name: string
   username?: string

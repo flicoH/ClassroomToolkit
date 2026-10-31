@@ -1,3 +1,4 @@
+import { BlockedIpEntity } from '../teacher-auth/entities/blocked-ip.entity';
 import { TeacherSessionEntity } from '../teacher-auth/entities/teacher-session.entity';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -59,6 +60,16 @@ export class AdminDatabase {
     private readonly feedback: Repository<FeedbackEntity>,
   ) {}
 
+  listBlockedIps() {
+    return this.teachers.manager.find(BlockedIpEntity, {
+      order: { ip: 'ASC' },
+    });
+  }
+  async updateBlockedIp(ip: string, remove: boolean) {
+    if (remove) await this.teachers.manager.delete(BlockedIpEntity, { ip });
+    else await this.teachers.manager.upsert(BlockedIpEntity, { ip }, ['ip']);
+    return { updated: true };
+  }
   /** 关联教师展示信息并按提交时间倒序返回意见。 */
   async findFeedback(q: AdminQueryDto, page: AdminPagination) {
     const query = this.feedback
@@ -219,6 +230,8 @@ export class AdminDatabase {
       .addSelect('e.teacherId', 'teacherId')
       .addSelect('t.name', 'name')
       .addSelect('t.username', 'username')
+      .addSelect('e.loginIp', 'loginIp')
+      .addSelect('e.ipLocation', 'ipLocation')
       .addSelect('e.kind', 'kind')
       .addSelect(isoDate('e.createdAt'), 'createdAt')
       .orderBy('e.createdAt', 'DESC')

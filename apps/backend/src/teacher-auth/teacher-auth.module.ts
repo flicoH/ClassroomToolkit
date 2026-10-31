@@ -1,3 +1,4 @@
+import { BlockedIpEntity } from './entities/blocked-ip.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TeacherSessionEntity } from './entities/teacher-session.entity';
@@ -7,7 +8,13 @@ import { TeacherAuthDatabase } from './teacher-auth.database';
 import { TeacherAuthService } from './teacher-auth.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TeacherEntity, TeacherSessionEntity])],
+  imports: [
+    TypeOrmModule.forFeature([
+      TeacherEntity,
+      TeacherSessionEntity,
+      BlockedIpEntity,
+    ]),
+  ],
   controllers: [TeacherAuthController],
   providers: [TeacherAuthDatabase, TeacherAuthService],
   exports: [TeacherAuthService],

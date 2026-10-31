@@ -1,3 +1,4 @@
+import { BlockedIpEntity } from '../teacher-auth/entities/blocked-ip.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { StudentEntity } from '../students/entities/student.entity';
@@ -21,6 +22,7 @@ import { FeedbackEntity } from '../feedback/entities/feedback.entity';
       AnalyticsEventEntity,
       AnalyticsSettingEntity,
       FeedbackEntity,
+      BlockedIpEntity,
     ]),
   ],
   controllers: [AdminController],

@@ -20,6 +20,11 @@ const router = createRouter({
       meta: { title: '登录分析' },
     },
     {
+      path: '/ip-restrictions',
+      component: () => import('../views/IpRestrictionsView.vue'),
+      meta: { title: 'IP 登录限制' },
+    },
+    {
       path: '/features',
       component: () => import('../views/FeaturesView.vue'),
       meta: { title: '功能分析' },

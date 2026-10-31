@@ -14,6 +14,7 @@
  *  Rights Reserved.
  * **********************************************************************************************
  */
+import { loginIpHeaders } from "./login-ip";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getBackendUrl } from "./backend-url";
@@ -51,6 +52,7 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
       headers: {
         "content-type": request.headers.get("content-type") || "application/json",
         authorization: `Bearer ${token}`,
+        ...loginIpHeaders(request),
         "x-analytics-event-id": request.headers.get("x-analytics-event-id") || "",
         "x-countdown-start": request.headers.get("x-countdown-start") || ""
       },
@@ -60,7 +62,8 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
     const response = await fetch(targetUrl, init);
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
-    if (response.status === 401) clearAuthCookie(result, request);
+    if (response.status === 401 || (response.status === 403 && data.code === "IP_LOGIN_BLOCKED"))
+      clearAuthCookie(result, request);
     return result;
   } catch {
     return NextResponse.json({ message: "后端服务连接失败" }, { status: 500 });

@@ -1,3 +1,4 @@
+import { normalizeIp } from '../common/login-ip';
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
 import {
   BadRequestException,
@@ -14,6 +15,14 @@ import { FEATURES } from '../analytics/features';
 export class AdminService {
   /** 注入管理持久层，使业务校验与统计结果组装独立于具体数据库查询。 */
   constructor(private readonly database: AdminDatabase) {}
+  blockedIps() {
+    return this.database.listBlockedIps();
+  }
+  updateBlockedIp(body: { ip?: unknown }, remove = false) {
+    const ip = normalizeIp(body?.ip);
+    if (!ip) throw new BadRequestException('请输入有效的 IPv4 或 IPv6 地址');
+    return this.database.updateBlockedIp(ip, remove);
+  }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
     const password = body?.password;

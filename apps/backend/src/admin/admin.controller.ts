@@ -9,6 +9,15 @@ import { AdminService } from './admin.service';
 export class AdminController {
   /** 注入管理业务服务，控制器仅负责接收参数并委托业务处理。 */
   constructor(private readonly service: AdminService) {}
+  @Get('login-ip-blocks') blockedIps() {
+    return this.service.blockedIps();
+  }
+  @Post('login-ip-blocks') blockIp(@Body() body: { ip?: unknown }) {
+    return this.service.updateBlockedIp(body);
+  }
+  @Post('login-ip-blocks/remove') unblockIp(@Body() body: { ip?: unknown }) {
+    return this.service.updateBlockedIp(body, true);
+  }
   /** 获取平台师生班级总数、今日注册及活跃概览。 */
   @Get('dashboard/overview') overview() {
     return this.service.overview();

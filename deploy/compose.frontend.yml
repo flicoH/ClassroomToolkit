@@ -19,6 +19,7 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: 3001
       # 直连固定 Compose 项目下的后端容器，避免共享网络别名冲突。
+      LOGIN_PROXY_SECRET: ${LOGIN_PROXY_SECRET:-}
       BACKEND_URL: http://classroom-backend-backend-1:3000
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-auto}
     ports:

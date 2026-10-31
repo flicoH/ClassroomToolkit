@@ -9,6 +9,7 @@ x-logging: &logging
 x-backend-env: &backend-env
   NODE_ENV: production
   NODE_OPTIONS: --max-old-space-size=256
+  LOGIN_PROXY_SECRET: ${LOGIN_PROXY_SECRET:-}
   HOST: 0.0.0.0
   PORT: 3000
   MYSQL_HOST: mysql
@@ -120,6 +121,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: 0.0.0.0
       PORT: 3001
+      LOGIN_PROXY_SECRET: ${LOGIN_PROXY_SECRET:-}
       BACKEND_URL: http://backend:3000
       AUTH_COOKIE_SECURE: "true"
     ports: ["127.0.0.1:${WEB_PORT:-3001}:3001"]

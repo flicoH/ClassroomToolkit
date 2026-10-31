@@ -8,6 +8,7 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-19
  */
+import { exitBlockedSession } from "./blocked-session";
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import { cookieStorage } from "./cookie";
 import toast from "react-hot-toast";
@@ -123,17 +124,24 @@ requestInstance.interceptors.response.use(
     endGlobalLoading();
     return response.data;
   },
-  (error: AxiosError<{ message?: string }>) => {
+  (error: AxiosError<{ message?: string; code?: string }>) => {
     endGlobalLoading();
     const status = error.response?.status;
     const message = error.response?.data?.message || error.message || "请求失败";
 
+    // 登录/注册由表单统一提示服务端业务原因，避免全局提示与表单重复。
+    if (isAuthSubmitUrl(error.config?.url)) {
+      return Promise.reject(new Error(message));
+    }
+
+    if (status === 403 && error.response?.data?.code === "IP_LOGIN_BLOCKED") {
+      cookieStorage.clearAll();
+      exitBlockedSession();
+      return Promise.reject(new Error(message));
+    }
+
     switch (status) {
       case 401:
-        // 登录页提交账号密码失败时，只把错误交给表单提示，不做页面跳转。
-        if (isAuthSubmitUrl(error.config?.url)) {
-          return Promise.reject(new Error(message));
-        }
         toast.error("登录已过期，请重新登录");
         void fetch("/api/logout", { method: "POST", keepalive: true });
         cookieStorage.clearAll();
@@ -150,9 +158,6 @@ requestInstance.interceptors.response.use(
         toast.error("服务器内部错误");
         break;
       default:
-        if (isAuthSubmitUrl(error.config?.url)) {
-          return Promise.reject(new Error(message));
-        }
         toast.error(message);
     }
 

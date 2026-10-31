@@ -319,3 +319,11 @@ apps/backend/
 ### 端口被占用
 
 修改 `.env` 中的 `PORT`，并同步更新 Web 服务的 `BACKEND_URL`。
+
+### 登录 IP 限制
+
+先执行 `pnpm --filter ClassRoomToolkitBackend migration:run`，新增封禁表与登录来源字段。管理接口为 `GET/POST /admin/login-ip-blocks` 和 `POST /admin/login-ip-blocks/remove`（写入 JSON `{ "ip": "192.0.2.1" }`），沿用管理员认证与 CSRF 防护。封禁教师新登录返回 403。
+
+代理部署时，Backend 与 Web 配置相同的高强度 `LOGIN_PROXY_SECRET`，入口 Nginx 覆盖 `X-Real-IP`，Web 端口仅允许可信入口访问。未配置密钥时只使用连接地址。所在地通过 HTTPS ipwho.is 查询，服务商会收到 IP，查询超时或失败显示未知，不阻断登录。历史数据不回填。
+
+IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时撤销当前令牌并清除 Cookie；空闲页面和切回标签页不主动校验。退出后只显示“禁止账号登录，请联系管理员解封”。管理员认证不受影响，网络故障不会误判为封禁。

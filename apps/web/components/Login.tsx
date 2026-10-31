@@ -10,7 +10,8 @@
  */
 "use client";
 
-import { useState } from "react";
+import { BLOCKED_LOGIN_MESSAGE } from "@/lib/blocked-session";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import request from "@/lib/request";
@@ -32,6 +33,13 @@ export const LoginForm = () => {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { setUser } = useAuthStore();
+
+  useEffect(() => {
+    if (sessionStorage.getItem("ip-login-blocked")) {
+      sessionStorage.removeItem("ip-login-blocked");
+      toast.error(BLOCKED_LOGIN_MESSAGE, { id: "ip-login-blocked" });
+    }
+  }, []);
 
   const resetForm = () => {
     setUesrname("");
