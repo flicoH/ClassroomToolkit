@@ -64,8 +64,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 login_proxy_secret=$(sed -n 's/^LOGIN_PROXY_SECRET=//p' "$ENV_FILE" | tail -n 1)
-if (( ${#login_proxy_secret} < 32 )); then
-  log "LOGIN_PROXY_SECRET in $ENV_FILE must contain at least 32 characters"
+if (( ${#login_proxy_secret} < 32 )) || [[ "$login_proxy_secret" == *CHANGE_ME* ]]; then
+  log "LOGIN_PROXY_SECRET in $ENV_FILE must be a non-placeholder value of at least 32 characters"
   exit 1
 fi
 if [[ -f deploy/.env.frontend ]]; then
