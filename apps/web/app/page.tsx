@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 23:12:59
+ * @LastEditTime: 2026-11-01 20:01:18
  */
 "use client";
 
@@ -29,6 +29,7 @@ import { TaskStats } from "@/components/apps/TaskStats";
 import { Feedback } from "@/components/apps/Feedback";
 import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
 import { SemesterReports } from "@/components/apps/SemesterReports";
+import { SemesterReportStudio } from "@/components/apps/SemesterReportStudio";
 import {
   CartoonCountdownIcon,
   CartoonGachaIcon,
@@ -49,7 +50,9 @@ const menuItems: MenuItemData[] = [
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
   { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
-  { name: "学期报告v2", icon: CartoonSemesterReportIcon, contentKey: "semesterReportsV2" },
+  // semesterReportsV2
+  { name: "学期报告v2", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
+  // { name: "学期报告工作台", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
   { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
@@ -72,6 +75,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <SemesterReportsV2 />;
     case "semesterReports":
       return <SemesterReports />;
+    case "semesterReportStudio":
+      return <SemesterReportStudio />;
     case "gachaMachine":
       return <GachaMachine />;
     case "stickyNotesList":

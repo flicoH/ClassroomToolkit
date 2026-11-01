@@ -1554,4 +1554,18 @@ describe('report publishing', () => {
     });
     expect(parent).not.toHaveProperty('snapshot');
   });
+  it('re-creates a new share if existing share cannot be authenticated after key rotation', async () => {
+    const { service } = setup('published');
+    const oldKey = Buffer.alloc(32, 1).toString('base64');
+    const newKey = Buffer.alloc(32, 2).toString('base64');
+
+    process.env.REPORT_SHARE_ENCRYPTION_KEY = oldKey;
+    const initialShare = await service.createShare('report');
+    expect(initialShare.url).toBeDefined();
+
+    process.env.REPORT_SHARE_ENCRYPTION_KEY = newKey;
+    const renewedShare = await service.createShare('report');
+    expect(renewedShare.url).toBeDefined();
+    expect(renewedShare.url).not.toEqual(initialShare.url);
+  });
 });

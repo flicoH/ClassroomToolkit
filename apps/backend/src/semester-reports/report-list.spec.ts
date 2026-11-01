@@ -273,4 +273,38 @@ describe('report list metadata query', () => {
     await expect(service.listReports(filters)).rejects.toThrow();
     expect(reports.createQueryBuilder).not.toHaveBeenCalled();
   });
+  it('gracefully handles share decryption errors without crashing the report list', async () => {
+    const { service, shares } = setup([
+      { reportVersion: 'v2', subjectName: '英语' },
+    ]);
+    const previousKey = process.env.REPORT_SHARE_ENCRYPTION_KEY;
+    const previousBase = process.env.REPORT_PUBLIC_BASE_URL;
+    try {
+      process.env.REPORT_SHARE_ENCRYPTION_KEY = Buffer.alloc(32, 1).toString(
+        'base64',
+      );
+      process.env.REPORT_PUBLIC_BASE_URL = 'https://reports.school.test';
+      // Simulate an unauthenticatable/corrupted share ciphertext from a different key
+      shares.findOne.mockResolvedValueOnce({
+        id: 'share-corrupt',
+        tokenCiphertext: Buffer.concat([
+          Buffer.alloc(12, 0),
+          Buffer.alloc(16, 0),
+          Buffer.from('cipher-with-different-key'),
+        ]).toString('base64'),
+        expiresAt: null,
+        revokedAt: null,
+      });
+      const result = await service.listReports();
+      expect(result).toHaveLength(1);
+      expect(result[0].share).toBeNull();
+    } finally {
+      if (previousKey !== undefined)
+        process.env.REPORT_SHARE_ENCRYPTION_KEY = previousKey;
+      else delete process.env.REPORT_SHARE_ENCRYPTION_KEY;
+      if (previousBase !== undefined)
+        process.env.REPORT_PUBLIC_BASE_URL = previousBase;
+      else delete process.env.REPORT_PUBLIC_BASE_URL;
+    }
+  });
 });

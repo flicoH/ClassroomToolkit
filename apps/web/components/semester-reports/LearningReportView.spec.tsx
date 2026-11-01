@@ -132,8 +132,13 @@ it.each(["english", undefined])("shows a saved evaluation without photos or a po
     />
   );
   expect(rendered.textContent).toContain("保留已填写的评价");
-  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).toContain("老师暂未填写");
-  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).not.toContain("保留已填写的评价");
+  // 选了数学但未评价课堂表现：数学不做显示
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')).toBeNull();
+  if (subjectId === "english") {
+    expect(rendered.querySelector('[aria-label="英语的课堂表现"]')).not.toBeNull();
+  } else {
+    expect(rendered.textContent).toContain("未分学科的原课堂表现");
+  }
 });
 it.each([
   { classroomPhoto: "data:image/png;base64,legacy" },
@@ -327,7 +332,7 @@ describe("report pet presentation", () => {
   });
 });
 
-it("shows separate v2 classroom performance for every subject without copying legacy ratings", () => {
+it("shows separate v2 classroom performance for subjects that have ratings, hiding unrated subjects", () => {
   const content = {
     ...report.content,
     reportVersion: "v2" as const,
@@ -343,11 +348,18 @@ it("shows separate v2 classroom performance for every subject without copying le
   };
   const rendered = document.createElement("div");
   rendered.innerHTML = renderToStaticMarkup(<LearningReportView report={{ ...report, content }} />);
-  const heading = rendered.querySelector('[aria-label="数学的课堂表现"] h3');
-  expect(heading).toBeDefined();
-  expect(heading!.parentElement!.textContent).toContain("老师暂未填写");
-  expect(heading!.parentElement!.textContent).not.toContain("主动参与");
-  expect(heading!.parentElement!.textContent).not.toContain("基本完成");
+  // 选了英语且有表现：正常显示英语课堂表现
+  const englishHeading = rendered.querySelector('[aria-label="英语的课堂表现"] h3');
+  expect(englishHeading).toBeDefined();
+  expect(englishHeading!.textContent).toBe("英语");
+  expect(englishHeading!.parentElement!.textContent).toContain("主动参与");
+
+  // 选了数学但未选择对应的课堂表现：数学不做显示
+  const mathSection = rendered.querySelector('[aria-label="数学的课堂表现"]');
+  expect(mathSection).toBeNull();
+  expect(rendered.querySelector('[aria-label="分学科学习表现"]')?.textContent).not.toContain("数学");
+  expect(rendered.querySelector('[aria-label="分学科学习表现"]')?.textContent).not.toContain("老师暂未填写");
+
   expect(rendered.textContent).toContain("未分学科的原课堂表现");
 });
 
@@ -438,6 +450,8 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
           ...report.content,
           reportVersion: "v2",
           classroomPhoto: "data:image/png;base64,classroom",
+          reportSubjects: [{ subjectId: "science", name: "科学" }],
+          classroomPerformance: [{ subjectId: "science", text: "课堂表现 · 认真专注", sourceRefs: [] }],
           growthAssessment: {
             learningReadiness: observation,
             communicationCooperation: "",
@@ -709,4 +723,37 @@ it.each([false, true])("omits the legacy manual suffix from original report head
   expect(rendered.textContent).not.toContain("· 教师填写");
   expect(rendered.textContent).toContain("科学");
   expect(rendered.textContent).toContain("英语 · Unit1");
+});
+
+it("does not display subjects that have no selected classroom performance even when selected in report", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          reportSubjects: [
+            { subjectId: "chinese", name: "语文" },
+            { subjectId: "math", name: "数学" },
+            { subjectId: "english", name: "英语" }
+          ],
+          classroomPerformance: [
+            { subjectId: "chinese", text: "课堂参与 · 积极发言", sourceRefs: ["teacher-review"] },
+            { subjectId: "math", text: "   ", sourceRefs: ["teacher-review"] }
+            // 英语完全未评价
+          ]
+        }
+      }}
+    />
+  );
+  // 选了语文且有评价：展示
+  expect(rendered.querySelector('[aria-label="语文的课堂表现"]')).not.toBeNull();
+  expect(rendered.textContent).toContain("积极发言");
+
+  // 选了数学与英语，但数学为空白、英语无条目：均不做显示
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')).toBeNull();
+  expect(rendered.querySelector('[aria-label="英语的课堂表现"]')).toBeNull();
+  expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
 });

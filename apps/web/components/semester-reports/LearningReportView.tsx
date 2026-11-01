@@ -126,8 +126,12 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     sections.set(section, items);
   }
   const isV2 = content.reportVersion === "v2";
-  const showClassroomPerformance =
-    photoCount > 0 || Boolean(content.classroomPerformance?.some(item => item.text.trim()));
+  const validPerformanceEntries = (content.classroomPerformance ?? []).filter(item => item.text.trim());
+  const classroomPerformanceSubjects = (content.reportSubjects ?? []).filter(subject =>
+    validPerformanceEntries.some(item => item.subjectId === subject.subjectId)
+  );
+  const unassignedPerformanceEntries = validPerformanceEntries.filter(item => !item.subjectId);
+  const showClassroomPerformance = photoCount > 0 || validPerformanceEntries.length > 0;
   const showTeacherMessage = !isV2 || Boolean(content.summary.trim());
   const focusEntries = isV2 ? content.areasToImprove.filter(entry => entry.text.trim()) : content.areasToImprove;
   const showNextFocus = !isV2 || focusEntries.length > 0;
@@ -230,57 +234,53 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         )}
         {content.reportVersion === "v2" && (
           <>
-            {/* 已填写的学科评价不能因缺少照片而隐藏；无照片且无评价时继续省略空区块。 */}
+            {/* 已填写的学科评价不能因缺少照片而隐藏；无照片且无评价时继续省略空区块；选了课程但未选择对应课堂表现时该课程不做显示。 */}
             {showClassroomPerformance && (
               <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
                 <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>
-                <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                  {(content.reportSubjects ?? []).map(subject => (
-                    <section
-                      key={subject.subjectId}
-                      aria-label={`${subject.name}的课堂表现`}
-                      className="min-w-0 border-b border-slate-100 py-4"
-                    >
-                      <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
-                      {(content.classroomPerformance ?? [])
-                        .filter(item => item.subjectId === subject.subjectId)
-                        .map((item, index) => {
-                          const separator = item.text.indexOf(" · ");
-                          return (
-                            <p
-                              key={index}
-                              className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
-                            >
-                              {separator >= 0 ? (
-                                <>
-                                  <span className="mr-2 font-semibold text-teal-700">
-                                    {item.text.slice(0, separator)}：
-                                  </span>
-                                  {item.text.slice(separator + 3)}
-                                </>
-                              ) : (
-                                item.text
-                              )}
-                            </p>
-                          );
-                        })}
-                      {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
-                        <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
-                      )}
-                    </section>
-                  ))}
-                </div>
-                {content.classroomPerformance?.some(item => !item.subjectId) && (
+                {classroomPerformanceSubjects.length > 0 && (
+                  <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                    {classroomPerformanceSubjects.map(subject => {
+                      const subjectEntries = validPerformanceEntries.filter(
+                        item => item.subjectId === subject.subjectId
+                      );
+                      return (
+                        <section
+                          key={subject.subjectId}
+                          aria-label={`${subject.name}的课堂表现`}
+                          className="min-w-0 border-b border-slate-100 py-4"
+                        >
+                          <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
+                          {subjectEntries.map((item, index) => {
+                            const separator = item.text.indexOf(" · ");
+                            return (
+                              <p
+                                key={index}
+                                className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
+                              >
+                                {separator >= 0 ? (
+                                  <>
+                                    <span className="mr-2 font-semibold text-teal-700">
+                                      {item.text.slice(0, separator)}：
+                                    </span>
+                                    {item.text.slice(separator + 3)}
+                                  </>
+                                ) : (
+                                  item.text
+                                )}
+                              </p>
+                            );
+                          })}
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
+                {unassignedPerformanceEntries.length > 0 && (
                   <section className="mt-4 border-t border-slate-100 pt-4">
                     <h3 className="mb-3 font-bold">未分学科的原课堂表现</h3>
-                    <Entries
-                      entries={content.classroomPerformance.filter(item => !item.subjectId)}
-                      empty="老师暂未填写具体课堂表现。"
-                    />
+                    <Entries entries={unassignedPerformanceEntries} empty="老师暂未填写具体课堂表现。" />
                   </section>
-                )}
-                {!content.reportSubjects?.length && !content.classroomPerformance?.length && (
-                  <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
                 )}
               </section>
             )}

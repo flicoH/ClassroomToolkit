@@ -8,10 +8,17 @@ import { copyImage } from "@/lib/clipboard";
 import { LearningReportView, type LearningReportData } from "./LearningReportView";
 import { renderReportImage } from "./report-image";
 
-type Props = { studentName: string; shareUrl: string; onClose: () => void };
+type Props = {
+  studentName: string;
+  shareUrl: string;
+  reportId?: string;
+  reportData?: LearningReportData | null;
+  onClose: () => void;
+  onShareUpdated?: (newShareUrl: string) => void;
+};
 
 /** Fetch the same public DTO as the parent link; never export unsaved teacher drafts. */
-export function ReportImageDialog({ studentName, shareUrl, onClose }: Props) {
+export function ReportImageDialog({ studentName, shareUrl, reportId, reportData, onClose, onShareUpdated }: Props) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -63,22 +70,92 @@ export function ReportImageDialog({ studentName, shareUrl, onClose }: Props) {
     setError("");
     setFeedback("");
     void (async () => {
-      const path = new URL(shareUrl, window.location.origin).pathname;
-      const match = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path);
-      if (!match) throw new Error("报告链接无效，请重新复制家长链接后生成图片。");
+      let token: string | null = null;
+      try {
+        const path = new URL(shareUrl, window.location.origin).pathname.replace(/\/+$/, "");
+        const match = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path);
+        token = match ? match[1] : null;
+      } catch {
+        token = null;
+      }
+
+      if (!token && reportId) {
+        try {
+          const res = await fetch(`/api/semester-reports/reports/${reportId}/shares`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+          if (res.ok) {
+            const fresh = await res.json();
+            if (fresh?.url) {
+              const freshPath = new URL(fresh.url, window.location.origin).pathname.replace(/\/+$/, "");
+              const freshMatch = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(freshPath);
+              if (freshMatch) {
+                token = freshMatch[1];
+                onShareUpdated?.(fresh.url);
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!token) {
+        if (reportData) {
+          if (!cancelled) setReport(reportData);
+          return;
+        }
+        throw new Error("报告链接无效，请重新复制家长链接后生成图片。");
+      }
       // Use our same-origin BFF, not an arbitrary share URL or a cross-origin screenshot service.
-      const response = await fetch(`/api/public-reports/${match[1]}`, { cache: "no-store", signal: controller.signal });
-      const data = await response.json();
+      let response = await fetch(`/api/public-reports/${token}`, { cache: "no-store", signal: controller.signal });
+      let data = await response.json();
+      if (!response.ok && reportId) {
+        try {
+          const res = await fetch(`/api/semester-reports/reports/${reportId}/shares`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+          if (res.ok) {
+            const fresh = await res.json();
+            const freshPath = new URL(fresh?.url || "", window.location.origin).pathname.replace(/\/+$/, "");
+            const freshMatch = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(freshPath);
+            if (freshMatch) {
+              const retryRes = await fetch(`/api/public-reports/${freshMatch[1]}`, {
+                cache: "no-store",
+                signal: controller.signal
+              });
+              if (retryRes.ok) {
+                data = await retryRes.json();
+                response = retryRes;
+                onShareUpdated?.(fresh.url);
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (!response.ok && reportData) {
+        if (!cancelled) setReport(reportData);
+        return;
+      }
       if (!response.ok) throw new Error(data.message || "报告链接无效或已失效，请重新发布后生成图片。");
       if (!cancelled) setReport(data as LearningReportData);
     })()
       .catch((reason: unknown) => {
-        if (!cancelled)
+        if (!cancelled) {
+          if (reportData) {
+            setReport(reportData);
+            return;
+          }
           setError(
             reason instanceof Error && reason.name !== "AbortError"
               ? reason.message
               : "报告读取失败或超时，请重新生成。"
           );
+        }
       })
       .finally(() => clearTimeout(timeout));
     return () => {

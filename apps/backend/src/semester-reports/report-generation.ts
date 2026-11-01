@@ -214,7 +214,7 @@ export function learningContentsForReport(report: SemesterReportEntity) {
     .map((item) => ({
       ...item,
       mastery:
-        snapshot.teacherInput?.learningMastery[item.id] ??
+        snapshot.teacherInput?.learningMastery?.[item.id] ??
         ('unassessed' as const),
     }));
 }

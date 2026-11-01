@@ -1382,14 +1382,22 @@ export class SemesterReportsService {
         revokedAt: IsNull(),
       },
     });
-    if (existing && (!existing.expiresAt || existing.expiresAt > new Date())) {
+    const existingToken = existing
+      ? this.decrypt(existing.tokenCiphertext)
+      : null;
+    if (
+      existing &&
+      existingToken &&
+      (!existing.expiresAt || existing.expiresAt > new Date())
+    ) {
       return {
-        url: this.shareUrl(this.decrypt(existing.tokenCiphertext)),
+        url: this.shareUrl(existingToken),
         shareId: existing.id,
         expiresAt: existing.expiresAt,
       };
     }
     if (existing) {
+      // 既有分享若已过期或因密钥轮转无法解密，将其作废并重新生成当前密钥加密的新链接
       existing.revokedAt = new Date();
       await shares.save(existing);
     }
@@ -2105,19 +2113,26 @@ export class SemesterReportsService {
     };
   }
   private async activeShare(reportId: string) {
-    const row = await this.shares.findOne({
-      where: {
-        reportId,
-        teacherId: this.teacher.teacherId,
-        revokedAt: IsNull(),
-      },
-    });
-    if (!row || (row.expiresAt && row.expiresAt < new Date())) return null;
-    return {
-      id: row.id,
-      url: this.shareUrl(this.decrypt(row.tokenCiphertext)),
-      expiresAt: row.expiresAt,
-    };
+    try {
+      const row = await this.shares.findOne({
+        where: {
+          reportId,
+          teacherId: this.teacher.teacherId,
+          revokedAt: IsNull(),
+        },
+      });
+      if (!row || (row.expiresAt && row.expiresAt < new Date())) return null;
+      const token = this.decrypt(row.tokenCiphertext);
+      if (!token) return null;
+      return {
+        id: row.id,
+        url: this.shareUrl(token),
+        expiresAt: row.expiresAt,
+      };
+    } catch {
+      // 密钥未配置或解密失败时降级返回 null，避免阻塞整个报告列表加载
+      return null;
+    }
   }
   private async log(
     action: string,
@@ -2201,18 +2216,25 @@ export class SemesterReportsService {
       'base64',
     );
   }
-  private decrypt(value: string) {
-    const packed = Buffer.from(value, 'base64');
-    const decipher = createDecipheriv(
-      'aes-256-gcm',
-      this.key(),
-      packed.subarray(0, 12),
-    );
-    decipher.setAuthTag(packed.subarray(12, 28));
-    return Buffer.concat([
-      decipher.update(packed.subarray(28)),
-      decipher.final(),
-    ]).toString('utf8');
+  private decrypt(value: string): string | null {
+    // 密文结构为 12 字节 IV + 16 字节 GCM Auth Tag + 密文主体。
+    // 当密钥变更、数据损坏或 GCM 校验不通过时返回 null，由调用方平滑降级或重新生成。
+    try {
+      const packed = Buffer.from(value, 'base64');
+      if (packed.length < 28) return null;
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        this.key(),
+        packed.subarray(0, 12),
+      );
+      decipher.setAuthTag(packed.subarray(12, 28));
+      return Buffer.concat([
+        decipher.update(packed.subarray(28)),
+        decipher.final(),
+      ]).toString('utf8');
+    } catch {
+      return null;
+    }
   }
 }
 

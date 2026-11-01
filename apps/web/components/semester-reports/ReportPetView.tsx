@@ -337,8 +337,19 @@ export type ReportPet = {
   petHatched: boolean;
 };
 export function ReportPetView({ pet }: { pet?: ReportPet | null }) {
-  const option = petOptions.find(option => option.id === pet?.petId);
-  if (!pet || !option) return <p className="text-sm text-slate-500">暂未领养宠物</p>;
+  if (!pet || (!pet.petId && !pet.petName)) return <p className="text-sm text-slate-500">暂未领养宠物</p>;
+
+  // 多维度解析宠物选项，支持英文 id、中文名称及进化形态名称兼容；匹配不到特定物种时回退到默认星灵形象，绝不把已有宠物误判为“未领养”
+  const option =
+    petOptions.find(
+      opt =>
+        opt.id === pet.petId ||
+        opt.name === pet.petId ||
+        opt.name === pet.petName ||
+        opt.evolutions.includes((pet.petName || "") as string) ||
+        opt.evolutions.includes((pet.petId || "") as string)
+    ) || petOptions[0]!;
+
   // Persisted stages use 第N形态; older clients may store the descriptive name.
   const numberedStage = /^第(\d+)形态$/.exec(pet.stage);
   const stageIndex = numberedStage
@@ -354,7 +365,7 @@ export function ReportPetView({ pet }: { pet?: ReportPet | null }) {
       ) : (
         <img
           src="/pets/stone-monkey.png"
-          alt={`${option.name}宠物蛋`}
+          alt={`${pet.petName || option.name}宠物蛋`}
           className="aspect-square w-40 max-w-full object-contain"
         />
       )}
