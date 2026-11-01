@@ -74,7 +74,7 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
       try {
         const path = new URL(shareUrl, window.location.origin).pathname.replace(/\/+$/, "");
         const match = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path);
-        token = match ? match[1] : null;
+        token = match?.[1] ?? null;
       } catch {
         token = null;
       }
@@ -90,7 +90,7 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
             if (fresh?.url) {
               const freshPath = new URL(fresh.url, window.location.origin).pathname.replace(/\/+$/, "");
               const freshMatch = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(freshPath);
-              if (freshMatch) {
+              if (freshMatch?.[1]) {
                 token = freshMatch[1];
                 onShareUpdated?.(fresh.url);
               }
@@ -121,7 +121,7 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
             const fresh = await res.json();
             const freshPath = new URL(fresh?.url || "", window.location.origin).pathname.replace(/\/+$/, "");
             const freshMatch = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(freshPath);
-            if (freshMatch) {
+            if (freshMatch?.[1]) {
               const retryRes = await fetch(`/api/public-reports/${freshMatch[1]}`, {
                 cache: "no-store",
                 signal: controller.signal

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { revokeTeacherSession } from "@/app/api/logout/route";
+import { revokeTeacherSession } from "@/app/api/logout/revoke-session";
 
 describe("revokeTeacherSession", () => {
   it("swallows backend failures so logout can still clear the cookie", async () => {

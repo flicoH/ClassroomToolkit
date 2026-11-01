@@ -1509,10 +1509,26 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
   });
 
   it("displays newly generated reports as draft status in reports list instead of failed", async () => {
+    const testTerm = {
+      id: "term-1",
+      name: "2026-2027学年第一学期",
+      startDate: "2026-09-01",
+      endDate: "2027-01-20",
+      isCurrent: true
+    };
+    const testSubjects = [
+      { id: "sub-1", name: "英语综合", performanceConfig: [] },
+      { id: "sub-2", name: "数学思维", performanceConfig: [] }
+    ];
+    const testStudents = [
+      { id: "stu-1", name: "张小明", classId: "cls-1", className: "三年级二班", score: 120 },
+      { id: "stu-2", name: "李华", classId: "cls-1", className: "三年级二班", score: 110 }
+    ];
+
     api.get.mockImplementation(async (url: string) => {
-      if (url.includes("/report-terms")) return [mockTerms[0]];
-      if (url.includes("/report-subjects")) return mockSubjects;
-      if (url.includes("/pet-points/students")) return { students: mockStudents };
+      if (url.includes("/report-terms")) return [testTerm];
+      if (url.includes("/report-subjects")) return testSubjects;
+      if (url.includes("/pet-points/students")) return { students: testStudents };
       if (url.includes("/course-documents")) return [];
       if (url.includes("/reports")) {
         // 模拟后端初始返回 queued / generating 状态的报告记录
