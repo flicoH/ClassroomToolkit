@@ -282,98 +282,98 @@ export function mergeStudentRosters(
 
 // 初始样本数据，确保在没有后端数据时也能100%还原原型体验并查看已有数据
 const initialMockReports: ReportSummaryItem[] = [
-  {
-    id: "r1",
-    studentId: "s1",
-    studentName: "张小明",
-    classId: "c1",
-    className: "一年级1班",
-    period: "week",
-    subject: "英语、科学",
-    status: "draft",
-    startDate: "2026-04-13",
-    endDate: "2026-04-17",
-    createdAt: "2026-04-17T17:45:00.000Z",
-    updatedAt: "2026-04-17T17:45:00.000Z",
-    content: {
-      reportVersion: "v2",
-      reportDetails: {
-        institutionName: "课堂成长记录",
-        courseTheme: "",
-        lessonNumber: null,
-        lessonDate: null
-      },
-      scoreDetails: {
-        positiveItems: [
-          { label: "课堂发言积极", count: 8 },
-          { label: "作业书写工整", count: 6 },
-          { label: "小组互助积极", count: 5 }
-        ],
-        positive: 19,
-        negative: 0,
-        net: 19,
-        count: 3,
-        records: []
-      },
-      summary: "小明本周在自然生态主题中发言积极，单词发音非常标准，小组合作很愉快！",
-      courseOverview: "熟练掌握野生动物英文词汇，学习 There is / There are 句型描述生态。",
-      growthAssessment: {
-        learningReadiness: "课前主动准备学习用具，坐姿端正，听讲专注度高。",
-        communicationCooperation: "乐于在小组中表达自己的观点，能够倾听同学发言。",
-        independenceRules: "严格遵守课堂纪律，按时独立完成课堂练习。",
-        overallUnderstanding: "整体表现积极向上，学习习惯良好，求知欲强。"
-      },
-      strengths: [{ text: "课上积极举手发言5次，英语发音纯正，实验操作规范细致。", sourceRefs: [] }],
-      areasToImprove: [
-        { text: "提升长难句跟读的连贯性与语音语调", sourceRefs: [] },
-        { text: "书写记录时注意大小写与标点规范", sourceRefs: [] }
-      ],
-      homeSuggestions: [
-        { text: "每天坚持 5-10 分钟英语跟读，并与家长分享一个课上学到的趣味科学小现象。", sourceRefs: [] }
-      ],
-      limitations: [],
-      reportSubjects: [
-        { subjectId: "english", name: "英语" },
-        { subjectId: "science", name: "科学" }
-      ]
-    }
-  },
-  {
-    id: "r2",
-    studentId: "s2",
-    studentName: "李小华",
-    classId: "c1",
-    className: "一年级1班",
-    period: "week",
-    subject: "英语",
-    status: "published",
-    startDate: "2026-04-13",
-    endDate: "2026-04-17",
-    createdAt: "2026-04-17T16:30:00.000Z",
-    updatedAt: "2026-04-17T16:30:00.000Z",
-    share: {
-      id: "sh-2",
-      url: "https://school.test/r/ab39x0"
-    }
-  },
-  {
-    id: "r3",
-    studentId: "s3",
-    studentName: "王晓萌",
-    classId: "c2",
-    className: "一年级2班",
-    period: "month",
-    subject: "英语、科学",
-    status: "published",
-    startDate: "2026-03-01",
-    endDate: "2026-03-31",
-    createdAt: "2026-03-31T18:00:00.000Z",
-    updatedAt: "2026-03-31T18:00:00.000Z",
-    share: {
-      id: "sh-3",
-      url: "https://school.test/r/cc81k2"
-    }
-  }
+  // {
+  //   id: "r1",
+  //   studentId: "s1",
+  //   studentName: "张小明",
+  //   classId: "c1",
+  //   className: "一年级1班",
+  //   period: "week",
+  //   subject: "英语、科学",
+  //   status: "draft",
+  //   startDate: "2026-04-13",
+  //   endDate: "2026-04-17",
+  //   createdAt: "2026-04-17T17:45:00.000Z",
+  //   updatedAt: "2026-04-17T17:45:00.000Z",
+  //   content: {
+  //     reportVersion: "v2",
+  //     reportDetails: {
+  //       institutionName: "课堂成长记录",
+  //       courseTheme: "",
+  //       lessonNumber: null,
+  //       lessonDate: null
+  //     },
+  //     scoreDetails: {
+  //       positiveItems: [
+  //         { label: "课堂发言积极", count: 8 },
+  //         { label: "作业书写工整", count: 6 },
+  //         { label: "小组互助积极", count: 5 }
+  //       ],
+  //       positive: 19,
+  //       negative: 0,
+  //       net: 19,
+  //       count: 3,
+  //       records: []
+  //     },
+  //     summary: "小明本周在自然生态主题中发言积极，单词发音非常标准，小组合作很愉快！",
+  //     courseOverview: "熟练掌握野生动物英文词汇，学习 There is / There are 句型描述生态。",
+  //     growthAssessment: {
+  //       learningReadiness: "课前主动准备学习用具，坐姿端正，听讲专注度高。",
+  //       communicationCooperation: "乐于在小组中表达自己的观点，能够倾听同学发言。",
+  //       independenceRules: "严格遵守课堂纪律，按时独立完成课堂练习。",
+  //       overallUnderstanding: "整体表现积极向上，学习习惯良好，求知欲强。"
+  //     },
+  //     strengths: [{ text: "课上积极举手发言5次，英语发音纯正，实验操作规范细致。", sourceRefs: [] }],
+  //     areasToImprove: [
+  //       { text: "提升长难句跟读的连贯性与语音语调", sourceRefs: [] },
+  //       { text: "书写记录时注意大小写与标点规范", sourceRefs: [] }
+  //     ],
+  //     homeSuggestions: [
+  //       { text: "每天坚持 5-10 分钟英语跟读，并与家长分享一个课上学到的趣味科学小现象。", sourceRefs: [] }
+  //     ],
+  //     limitations: [],
+  //     reportSubjects: [
+  //       { subjectId: "english", name: "英语" },
+  //       { subjectId: "science", name: "科学" }
+  //     ]
+  //   }
+  // },
+  // {
+  //   id: "r2",
+  //   studentId: "s2",
+  //   studentName: "李小华",
+  //   classId: "c1",
+  //   className: "一年级1班",
+  //   period: "week",
+  //   subject: "英语",
+  //   status: "published",
+  //   startDate: "2026-04-13",
+  //   endDate: "2026-04-17",
+  //   createdAt: "2026-04-17T16:30:00.000Z",
+  //   updatedAt: "2026-04-17T16:30:00.000Z",
+  //   share: {
+  //     id: "sh-2",
+  //     url: "https://school.test/r/ab39x0"
+  //   }
+  // },
+  // {
+  //   id: "r3",
+  //   studentId: "s3",
+  //   studentName: "王晓萌",
+  //   classId: "c2",
+  //   className: "一年级2班",
+  //   period: "month",
+  //   subject: "英语、科学",
+  //   status: "published",
+  //   startDate: "2026-03-01",
+  //   endDate: "2026-03-31",
+  //   createdAt: "2026-03-31T18:00:00.000Z",
+  //   updatedAt: "2026-03-31T18:00:00.000Z",
+  //   share: {
+  //     id: "sh-3",
+  //     url: "https://school.test/r/cc81k2"
+  //   }
+  // }
 ];
 
 const fallbackHistoricalReports: ReportSummaryItem[] = [

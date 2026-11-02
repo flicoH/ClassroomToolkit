@@ -864,7 +864,7 @@ export function StageReportSchedulerView({
             className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
           >
             <Plus className="h-3.5 w-3.5" />
-            <span>+ 新建定时任务</span>
+            <span>新建定时任务</span>
           </button>
         </div>
 
@@ -977,7 +977,7 @@ export function StageReportSchedulerView({
                           className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow-2xs hover:bg-emerald-700"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          <span>👉 前往报告管理查看</span>
+                          <span>前往报告管理查看</span>
                         </button>
                       ) : (
                         <span className="rounded-lg border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground">
