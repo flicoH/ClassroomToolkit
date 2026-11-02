@@ -91,10 +91,15 @@ curl http://127.0.0.1:3000/
 | `REPORT_AI_BASE_URL`              | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
 | `REPORT_AI_API_KEY`               | AI 报告生成服务密钥                                                       |
 | `REPORT_AI_MODEL`                 | AI 报告生成模型名                                                         |
+| `REPORT_AI_TIMEOUT_MS`            | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
 | `REPORT_PUBLIC_BASE_URL`          | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
 | `REPORT_SHARE_ENCRYPTION_KEY`     | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
 
 `REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
+
+AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内冻结的评价记录、课堂表现、课程范围与教师输入交给配置模型综合生成四维成长文字，不再填充固定套话。需要使用 Kimi K2.6 时将 `REPORT_AI_MODEL`（或兼容变量 `KIMI_MODEL`）设为 `kimi-k2.6`；后端会原样传递模型名。教师已填写的非空维度优先保留，空白维度采用 AI 结果。
+
+Kimi 原始响应独立保存在 `semester_reports.ai_response`，不会随教师编辑报告正文而丢失。阶段任务等待每位学生的 Kimi 请求结束后才创建草稿；请求失败或超时时终止该学生的 AI 流程，以本地默认数据生成可编辑草稿，并在报告事件中记录 `generation-fallback`。任务查询接口同时返回学生总数、完成数、处理中数、失败数与进度百分比。
 
 管理员相关配置：
 
@@ -197,40 +202,40 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 
 ## 常用接口
 
-| 方法             | 路径                                            | 说明                                                                               |
-| ---------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `POST`           | `/auth/teacher/register`                        | 注册教师                                                                           |
-| `POST`           | `/auth/teacher/login`                           | 登录并创建会话                                                                     |
-| `GET`            | `/auth/teacher/me`                              | 获取当前教师                                                                       |
-| `POST`           | `/auth/teacher/logout`                          | 注销当前会话                                                                       |
-| `GET / POST`     | `/classes`                                      | 查询或创建班级                                                                     |
-| `POST`           | `/classes/:classroomId/students`                | 新增学生                                                                           |
-| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId`     | 编辑或删除学生                                                                     |
-| `GET / POST`     | `/task-stats`                                   | 查询或创建任务                                                                     |
-| `GET / POST`     | `/seating-charts`                               | 查询或创建座位表                                                                   |
-| `POST`           | `/random-picker/pick`                           | 执行随机点名                                                                       |
-| `GET / PATCH`    | `/countdown`                                    | 读取或更新倒计时                                                                   |
-| `GET / POST`     | `/sticky-notes`                                 | 查询或创建便签                                                                     |
-| `GET`            | `/pet-points`                                   | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板）                         |
-| `POST`           | `/pet-points/scores/adjust`                     | 调整学生积分                                                                       |
-| `GET`            | `/gacha-machine`                                | 获取扭蛋机奖励与记录                                                               |
-| `POST`           | `/gacha-machine/draw`                           | 执行抽奖                                                                           |
-| `POST`           | `/gacha-machine/rewards`                        | 新增奖励                                                                           |
-| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`              | 编辑或删除奖励                                                                     |
-| `POST`           | `/feedback`                                     | 提交教师意见反馈                                                                   |
-| `GET / POST`     | `/semester-reports/report-terms`                | 查询或创建报告学期                                                                 |
-| `GET / POST`     | `/semester-reports/report-subjects`             | 查询或创建报告学科                                                                 |
-| `GET / POST`     | `/semester-reports/course-documents`            | 查询或上传课程资料                                                                 |
-| `POST`           | `/semester-reports/reports/generate`            | 生成学生报告                                                                       |
-| `GET`            | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                 |
-| `GET / POST`     | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType: none/weekly/monthly） |
-| `POST`           | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                       |
-| `DELETE`         | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                     |
-| `PATCH`          | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                       |
-| `POST`           | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                 |
-| `GET`            | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                   |
+| 方法             | 路径                                            | 说明                                                                                                |
+| ---------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `POST`           | `/auth/teacher/register`                        | 注册教师                                                                                            |
+| `POST`           | `/auth/teacher/login`                           | 登录并创建会话                                                                                      |
+| `GET`            | `/auth/teacher/me`                              | 获取当前教师                                                                                        |
+| `POST`           | `/auth/teacher/logout`                          | 注销当前会话                                                                                        |
+| `GET / POST`     | `/classes`                                      | 查询或创建班级                                                                                      |
+| `POST`           | `/classes/:classroomId/students`                | 新增学生                                                                                            |
+| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId`     | 编辑或删除学生                                                                                      |
+| `GET / POST`     | `/task-stats`                                   | 查询或创建任务                                                                                      |
+| `GET / POST`     | `/seating-charts`                               | 查询或创建座位表                                                                                    |
+| `POST`           | `/random-picker/pick`                           | 执行随机点名                                                                                        |
+| `GET / PATCH`    | `/countdown`                                    | 读取或更新倒计时                                                                                    |
+| `GET / POST`     | `/sticky-notes`                                 | 查询或创建便签                                                                                      |
+| `GET`            | `/pet-points`                                   | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板）                                          |
+| `POST`           | `/pet-points/scores/adjust`                     | 调整学生积分                                                                                        |
+| `GET`            | `/gacha-machine`                                | 获取扭蛋机奖励与记录                                                                                |
+| `POST`           | `/gacha-machine/draw`                           | 执行抽奖                                                                                            |
+| `POST`           | `/gacha-machine/rewards`                        | 新增奖励                                                                                            |
+| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`              | 编辑或删除奖励                                                                                      |
+| `POST`           | `/feedback`                                     | 提交教师意见反馈                                                                                    |
+| `GET / POST`     | `/semester-reports/report-terms`                | 查询或创建报告学期                                                                                  |
+| `GET / POST`     | `/semester-reports/report-subjects`             | 查询或创建报告学科                                                                                  |
+| `GET / POST`     | `/semester-reports/course-documents`            | 查询或上传课程资料                                                                                  |
+| `POST`           | `/semester-reports/reports/generate`            | 生成学生报告                                                                                        |
+| `GET`            | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                                  |
+| `GET / POST`     | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType 与 stageCustomName 自定义替换“本阶段”） |
+| `POST`           | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                                        |
+| `DELETE`         | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                                      |
+| `PATCH`          | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                                        |
+| `POST`           | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                                  |
+| `GET`            | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                                    |
 
-具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；AI 阶段定时报告支持周期循环调度（每周/每月自动顺延）与大模型故障时草稿模版自动兜底保障，公开报告仅通过高熵分享 Token 访问。
+具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；AI 阶段定时报告支持周期循环调度（每周/每月自动顺延）与大模型故障时草稿模版自动兜底保障，公开报告仅通过高熵分享 Token 访问；班级学生管理、宠物积分与学期报告具备实时双向同步与自动补齐机制，新增入班学生即时同步至宠物积分与报告生成花名册中，且支持全候选学生标识集合关联检索周期加分明细与最值肯定统计，防止 0 分空实体覆盖已有积分。
 
 ## 测试与质量检查
 

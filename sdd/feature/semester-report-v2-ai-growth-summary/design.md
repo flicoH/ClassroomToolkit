@@ -449,3 +449,72 @@ AI 失败时不自动用固定模板冒充 AI 结果。人工填写和原有报�
 - 无证据不编造；关键词不被当成事实。
 - AI 不可用时原有人工填写与报告生成不受影响。
 - 实现阶段同步更新设计、Web/Backend README、代码和测试，并在交付前通过 `pnpm verify`。
+
+## 14. AI 阶段报告“本阶段”称谓替换与自定义规范
+
+### 14.1 目标与业务价值
+在 AI 阶段汇总任务创建中，教师可根据教学安排指定个性化的阶段称谓（如“10月份”、“期中阶段”、“第一学段”）。系统在生成阶段报告及报告各处标题、维度展示时，将所有“本阶段”文字自动替换为该自定义称谓，使面向家长的报告表达更精准自然。
+
+### 14.2 字段与交互规则
+1. **表单输入项**：在定时汇总任务创建与编辑表单中增加 `stageCustomName`（报告“本阶段”替代文字）输入框，提供智能占位符提示，留空默认使用“本阶段”。
+2. **任务与快照持久化及编辑回填**：随 `ScheduledReportOptions` 保存至定时任务队列与报告 `snapshot.scheduledTask.stageCustomName` / `snapshot.stageCustomName` / `content.stageCustomName` 中；后端 `listScheduledTasks` 聚合任务列表时跨多层级兼容提取自定义替代文字；前端点击“修改任务”时将 `stageCustomName` 完整回填至输入框，并平滑滚动定位到表单区域。
+3. **文本与生成替换**：
+   - 本地模版生成与 AI Worker 异步生成时，统一调用 `replaceStageTerm(content, stageCustomName)` 递归替换正文、总结、维度以及亮点中的所有“本阶段”文字；
+   - 大模型提示词注入称谓规范要求，引导模型直接以该称谓起草。
+4. **前端展示联动**：
+   - 家长端 1:1 预览长图与导出视图（`LearningReportView`）中的成长维度标题动态渲染为 `{stageCustomName}学习习惯与能力成长总结`；
+   - 报告大标题与分部小标题动态显示为 `{studentName} · {stageCustomName}成长报告`、`{stageCustomName}学习内容`、`{stageCustomName}最值肯定`、`{stageCustomName}的课堂表现`；
+   - 任务列表展示 `🏷️ 替换“本阶段”为: {stageCustomName}` 状态徽章。
+5. **接口层与长图导出统一保障**：
+   - `reportDto` 与公开分享端 `publicReport` 统一识别 `reportKind: "stage"` 并将 `period` 返回为 `"stage"`，同时透传 `stageCustomName`；若设置了自定义称谓，通过 `replaceStageTerm` 递归扫描并替换，消除草稿二次微调保存或历史存量内容中的残留；
+   - 单份长图导出弹窗（`ReportImageDialog`）组装完整的 `LearningReportData` 结构，修复直接传递内部 `content` 导致字段缺失的问题，确保导出图片与在线预览严格一致。
+
+## 15. 学生花名册多源同步机制（学生管理、宠物积分、学期报告与阶段汇总）
+
+### 15.1 问题背景与跨模块数据流
+此前学生在“学生管理”模块（`ClassroomEntity` / `StudentEntity`）新增后，并未立即同步到宠物积分（`PetStudentEntity`）中；而学期报告向导与 AI 阶段汇总定时任务此前仅依赖 `/api/pet-points` 获取学生列表，导致刚录入班级的学生无法出现在学期报告学生名单及 AI 阶段汇总的学生挑选列表中，且后端生成时可能因在宠物花名册中未找到而抛出 `NotFoundException`。
+
+### 15.2 解决方案
+1. **多级写时与读时双重保障**：
+   - **写时同步**：在 `StudentsDatabase.saveClassroom` 事务内增加对 `PetStudentEntity` 的联动维护；当添加、导入或修改学生时，立即同步或激活宠物积分花名册。
+   - **读时对齐与自动补齐**：在 `PetPointsDatabase.findStudents()` 中增加 `syncRosterFromClassrooms()`，比对当前教师的所有班级学生与宠物积分学生，自动同步补齐未初始化的学生记录。
+   - **生成端容错**：在 `SemesterReportsService.findStudents(ids)` 中，当请求的学生 ID 暂未在 `PetStudentEntity` 中落库时，根据 `this.studentProfiles` 与班级信息即时初始化为初始形态宠物档案，防止报告生成中断。
+2. **前端聚合与即时展示**：
+   - 在 `SemesterReportsV2View` 中，初始化与标签页切换到报告填写（`compose`）或阶段汇总（`stage`）时，并行获取 `/api/pet-points` 与 `/api/classes`，通过 `mergeStudentRosters` 进行数据合并。优先保留积分与宠物状态，当学生仅存在于班级列表中时自动填充默认宠物初始属性，确保新增学生零延迟立即可见、可挑选。
+   - 阶段任务调度器 `StageReportSchedulerView` 严格复用该聚合名单，保证全部班级与各班学生选择器中无遗漏。
+
+## 16. 学生积分展示真实性与跨模块学生标识关联保障
+
+### 16.1 问题现象与根因剖析
+教师在学期报告向导步骤 3（选择学生）中看到当前学生显示 `+8分`，但生成或打开报告后却显示“本周期暂无加分记录”或积分为 0。该现象源于三个维度的隐患：
+1. **前端虚假分数兜底**：向导第 3 步卡片曾包含模板原型遗留代码 `+{s.score || 8}分`。当学生实际积分为 0 或未统计时，`0 || 8` 恒等于 8，向教师输出了具有误导性的“+8分”假象。
+2. **学生标识多段前缀匹配失效与重复 0 分实体创建**：
+   - 前端通过班级名单与宠物名单聚合时，学生 ID 采用班级档案标准 UUID；
+   - 后端 `SemesterReportsService.findStudents(ids)` 仅简单比对 `row.id` 与 `row.logicalId`。当既有宠物学生以复合键存储（如 `teacherId:classId:studentId`）时索引未命中，触发了根据 `studentProfiles` 兜底新建 `PetStudentEntity` 的逻辑，并以 `score: 0` 保存了同名覆盖实体，导致原本在宠物模块积累的积分与领养状态被置空。
+3. **周期评价记录查询条件狭窄**：
+   - `scoreSummary` 仅按单一 `student.id` 执行精确匹配 `record.student_id = :studentId`；
+   - 历史评价记录在不同录入时期可能分别以存储 ID、逻辑 ID、去前缀 ID 或班级学号格式保存，单一匹配导致评价记录查询返回 0 条，使得周期加分细项（`positiveItems`）为空。
+
+### 16.2 解决方案与技术规范
+1. **真实呈现前端学生积分**：
+   - 步骤 3 学生卡片彻底移除 `|| 8` 假象逻辑，统一根据真实分值渲染：分值大于 0 显示 `+{s.score}分`，分值为 0 显示灰度 `0分`，确保所见即所得。
+2. **多维度标识索引与防重复落库**：
+   - `findStudents` 构建复合别名索引字典，覆盖 `id`、`logicalId`、无教师前缀 ID、冒号后缀段、`classId:studentNo` 与 `classId:name`；
+   - 当在名册未直击命中时，优先比对 `studentProfiles` 并检查既有宠物名单中是否已存在同班同名/同学号学生，若存在则复用并补齐 `logicalId`，严禁新建 0 积分重复档案。
+3. **评价记录全候选 ID 集合聚合（`candidateStudentIds`）**：
+   - 提取学生全套可能的主键与别名候选集（存储 ID、逻辑 ID、带教师前缀与不带前缀形式、学号前缀等）；
+   - `scoreSummary` 采用 `record.student_id IN (:...candidateIds)`，确保无论评价记录在何时以何种格式落库，均能完整统计到报告周期内的正向加分事件并生成最值肯定图表。
+
+## 17. AI 阶段报告四维文字生成规则
+
+- “学习准备与课堂能力”“表达沟通与同伴合作”“生活自理与规则意识”“综合画像理解”只保留固定字段结构，正文不使用固定模板。
+- Worker 将当前学生的阶段报告快照（阶段日期、评价明细、课堂表现、课程范围、教师观察与教师输入）发送给报告 AI，要求按该学生本阶段事实综合生成四维文字。
+- 显式配置 `kimi-k2.6` 时必须原样调用该模型，不得静默替换为旧 Moonshot 模型。模型失败时报告进入失败/重试流程，不用固定四维套话冒充 AI 结果。
+- 四个维度分别合并：教师非空手填内容优先；教师未填写或只填写部分维度时，其余维度采用 AI 生成结果，避免空对象整体覆盖 AI 内容。
+
+## 18. Kimi 原始数据留存、失败兜底与任务进度
+
+1. `semester_reports.ai_response` 使用可空 JSON 保存 Kimi 完整原始成功响应；HTTP、网络或超时失败保存模型与结构化错误信息。该字段与可编辑的 `content` 分离，供后续重解析和模型能力扩展使用。
+2. 阶段报告在学生级 AI 调用结束前保持 `queued/generating`，不提前暴露草稿。成功时使用 Kimi 内容生成 `draft`；失败时终止该学生本次 AI 请求，使用本地默认数据生成 `draft`，并记录 `generation-fallback`，不让单个学生阻塞整批任务。
+3. 定时任务接口按同一 `scheduledTask.id` 聚合 `totalCount`、`completedCount`、`processingCount`、`failedCount` 与 `progressPercent`。前端运行态展示进度条，只有全部学生进入草稿或发布状态后才开放报告管理入口。
+4. 创建任务时在快照中冻结 `requestedId`、实际存储 `studentId` 和学生姓名映射；任务编辑仍回填前端请求 ID，任务列表显示冻结姓名，从而兼容历史宠物积分 ID、学生档案 ID 与教师前缀 ID。

@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   term_id VARCHAR(64) NOT NULL, subject_id VARCHAR(64) NOT NULL, student_id VARCHAR(64) NOT NULL,
   student_name VARCHAR(100) NOT NULL, class_name VARCHAR(100) NOT NULL,
   period_type VARCHAR(16) NOT NULL, period_start DATETIME NOT NULL, period_end DATETIME NOT NULL,
-  score_scope VARCHAR(16) NOT NULL DEFAULT 'overall', snapshot JSON NULL, content JSON NULL,
+  score_scope VARCHAR(16) NOT NULL DEFAULT 'overall', snapshot JSON NULL, content JSON NULL, ai_response JSON NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'queued', keywords TEXT NULL, teacher_observation TEXT NULL, course_scope TEXT NULL,
   error_message VARCHAR(500) NULL, published_at DATETIME NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

@@ -1568,4 +1568,42 @@ describe('report publishing', () => {
     expect(renewedShare.url).toBeDefined();
     expect(renewedShare.url).not.toEqual(initialShare.url);
   });
+  it('returns period: "stage", stageCustomName, and replaces "本阶段" across content in publicReport', async () => {
+    const { service, row } = setup('published');
+    row.periodType = 'term';
+    row.snapshot = {
+      reportKind: 'stage',
+      stageCustomName: '10月份',
+      scheduledTask: {
+        id: 'task-1',
+        name: '10月汇总',
+        executeAt: '2026-11-01',
+        stageCustomName: '10月份',
+      },
+    };
+    row.content = {
+      ...content,
+      summary: '本阶段课前准备充分，在本阶段表现出色。',
+      growthAssessment: {
+        learningReadiness: '本阶段学具摆放整齐。',
+        communicationCooperation: '',
+        independenceRules: '',
+        overallUnderstanding: '',
+      },
+    };
+    const share = await service.createShare('report');
+    const token = new URL(share.url).pathname.split('/').pop()!;
+    const parent = await service.publicReport(token);
+    expect(parent.period).toBe('stage');
+    expect(parent.isStageReport).toBe(true);
+    expect(parent.stageCustomName).toBe('10月份');
+    expect(parent.content.stageCustomName).toBe('10月份');
+    expect(parent.content.stageTitle).toBe('10月份');
+    expect(parent.content.summary).toBe(
+      '10月份课前准备充分，在10月份表现出色。',
+    );
+    expect(parent.content.growthAssessment.learningReadiness).toBe(
+      '10月份学具摆放整齐。',
+    );
+  });
 });

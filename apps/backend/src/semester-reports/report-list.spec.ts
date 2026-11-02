@@ -307,4 +307,54 @@ describe('report list metadata query', () => {
       else delete process.env.REPORT_PUBLIC_BASE_URL;
     }
   });
+
+  it('extracts stageCustomName correctly for scheduled tasks even if stored in snapshot', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'report-1',
+          status: 'scheduled',
+          studentId: 'stu-1',
+          studentName: '学生甲',
+          className: '一班',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-31T00:00:00+08:00'),
+          createdAt: new Date('2026-10-01T10:00:00Z'),
+          scheduledTask: JSON.stringify({
+            id: 'task-100',
+            name: '10月汇总任务',
+            classId: 'all',
+            executeAt: '2026-10-30T12:00:00.000Z',
+            repeatType: 'none',
+          }),
+          snapshotStageCustomName: '10月份',
+        },
+      ]),
+    };
+    const reports = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const tasks = await service.listScheduledTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('task-100');
+    expect(tasks[0].name).toBe('10月汇总任务');
+    expect(tasks[0].stageCustomName).toBe('10月份');
+  });
 });

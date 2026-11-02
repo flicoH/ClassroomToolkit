@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClassroomEntity } from './entities/classroom.entity';
 import { StudentGroupEntity } from './entities/student-group.entity';
 import { StudentEntity } from './entities/student.entity';
+import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 import { StudentsController } from './students.controller';
 import { StudentsDatabase } from './students.database';
 import { StudentsService } from './students.service';
@@ -13,6 +14,7 @@ import { StudentsService } from './students.service';
       ClassroomEntity,
       StudentGroupEntity,
       StudentEntity,
+      PetStudentEntity,
     ]),
   ],
   controllers: [StudentsController],

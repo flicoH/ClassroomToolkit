@@ -7,6 +7,7 @@ import {
   validateGeneratedReportContent,
   addLearningReportSections,
   reportVisualsForSnapshot,
+  replaceStageTerm,
 } from './report-generation';
 
 const report = {
@@ -370,5 +371,207 @@ describe('local template reports', () => {
     expect(() =>
       validateGeneratedReportContent(content, report.snapshot!),
     ).toThrow('报告引用格式无效');
+  });
+
+  it('replaces all "本阶段" occurrences with stageCustomName across report data', () => {
+    const sourceText = '本阶段课前准备充分，在本阶段表现优异。';
+    expect(replaceStageTerm(sourceText, '10月份')).toBe(
+      '10月份课前准备充分，在10月份表现优异。',
+    );
+    expect(
+      replaceStageTerm({ text: sourceText, arr: ['本阶段很棒'] }, '期中'),
+    ).toEqual({
+      text: '期中课前准备充分，在期中表现优异。',
+      arr: ['期中很棒'],
+    });
+    // 测试多种阶段称谓变体替换
+    const variations =
+      '所选阶段表现优秀，阶段内进步显著，阶段学习态度端正，阶段成长迅速，阶段汇总如下，查看阶段报告。';
+    expect(replaceStageTerm(variations, '10月份')).toBe(
+      '10月份表现优秀，10月份内进步显著，10月份学习态度端正，10月份成长迅速，10月份汇总如下，查看10月份报告。',
+    );
+    expect(replaceStageTerm('查看阶段报告', '期中总结报告')).toBe(
+      '查看期中总结报告',
+    );
+    // 未输入或输入本阶段时保持原样
+    expect(replaceStageTerm(sourceText, '')).toBe(sourceText);
+    expect(replaceStageTerm(sourceText, '本阶段')).toBe(sourceText);
+  });
+
+  it('substitutes stageCustomName in template generated stage report', () => {
+    const stageReport = {
+      ...report,
+      periodType: 'term',
+      snapshot: {
+        ...report.snapshot,
+        reportVersion: 'v2',
+        reportKind: 'stage',
+        allowedReferences: ['stage-summary'],
+        scheduledTask: {
+          id: 'task-test',
+          name: '10月成长总结',
+          stageCustomName: '10月份',
+        },
+      },
+    } as unknown as SemesterReportEntity;
+
+    const content = generateTemplateReport(stageReport);
+    expect(content.summary).toContain('10月份');
+    expect(content.summary).not.toContain('本阶段');
+    expect(content.stageCustomName).toBe('10月份');
+  });
+
+  it('generates 4-dimension growthAssessment via AI for stage reports', async () => {
+    process.env.KIMI_BASE_URL = 'https://api.moonshot.cn/v1';
+    process.env.KIMI_API_KEY = 'test-key';
+    process.env.KIMI_MODEL = 'kimi-k2.6';
+
+    const mockAiResponse = {
+      summary: '10月份成长总结。',
+      courseOverview: '10月份课程概况。',
+      growthAssessment: {
+        learningReadiness: '10月份上课准备迅速，思维敏捷。',
+        communicationCooperation: '在小组活动中积极分享观点。',
+        independenceRules: '能按时整理好学习资料，遵守课堂约定。',
+        overallUnderstanding: '阶段整体表现积极主动，探索精神强。',
+      },
+      strengths: [{ text: '积极回答问题', sourceRefs: ['stage-summary'] }],
+      areasToImprove: [
+        { text: '可进一步加强自主复习', sourceRefs: ['stage-summary'] },
+      ],
+      homeSuggestions: [],
+      limitations: ['依据当前阶段真实记录生成。'],
+    };
+
+    const consoleLog = jest.spyOn(console, 'log').mockImplementation();
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify(mockAiResponse) } }],
+      }),
+    } as Response);
+
+    const stageReport = {
+      ...report,
+      periodType: 'term',
+      snapshot: {
+        ...report.snapshot,
+        reportVersion: 'v2',
+        reportKind: 'stage',
+        allowedReferences: ['stage-summary'],
+        scheduledTask: {
+          id: 'task-test',
+          name: '10月成长总结',
+          stageCustomName: '10月份',
+        },
+      },
+    } as unknown as SemesterReportEntity;
+
+    const worker = new SemesterReportWorker({} as DataSource) as unknown as {
+      generate(
+        report: SemesterReportEntity,
+        mode: 'ai',
+      ): Promise<Record<string, unknown>>;
+    };
+
+    const content = await worker.generate(stageReport, 'ai');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.moonshot.cn/v1/chat/completions',
+      expect.objectContaining({
+        body: expect.any(String),
+      }),
+    );
+    const request = JSON.parse(
+      (jest.mocked(global.fetch).mock.calls[0]?.[1]?.body as string) || '{}',
+    ) as {
+      model?: string;
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(request.model).toBe('kimi-k2.6');
+    expect(
+      JSON.parse(
+        (jest.mocked(global.fetch).mock.calls[0]?.[1]?.body as string) || '{}',
+      ),
+    ).toEqual(expect.objectContaining({ temperature: 1 }));
+    expect(request.messages?.[1]?.content).toContain(report.studentName);
+    expect(consoleLog).toHaveBeenCalledWith(
+      expect.stringContaining('[SemesterReportWorker] Kimi 返回数据:'),
+    );
+    expect(content.growthAssessment).toEqual({
+      learningReadiness: '10月份上课准备迅速，思维敏捷。',
+      communicationCooperation: '在小组活动中积极分享观点。',
+      independenceRules: '能按时整理好学习资料，遵守课堂约定。',
+      overallUnderstanding: '阶段整体表现积极主动，探索精神强。',
+    });
+  });
+
+  it('uses AI text for blank teacher dimensions and preserves non-empty teacher text', async () => {
+    process.env.KIMI_BASE_URL = 'https://api.moonshot.cn/v1';
+    process.env.KIMI_API_KEY = 'test-key';
+    process.env.KIMI_MODEL = 'kimi-k2.6';
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                summary: '阶段总结',
+                courseOverview: '课程概况',
+                growthAssessment: {
+                  learningReadiness: 'AI 根据本阶段记录生成的学习准备评价',
+                  communicationCooperation: 'AI 根据本阶段记录生成的合作评价',
+                  independenceRules: 'AI 根据本阶段记录生成的规则评价',
+                  overallUnderstanding: 'AI 根据本阶段报告生成的综合画像',
+                },
+                strengths: [],
+                areasToImprove: [],
+                homeSuggestions: [],
+                limitations: ['请教师核对'],
+              }),
+            },
+          },
+        ],
+      }),
+    } as Response);
+    const stageReport = {
+      ...report,
+      snapshot: {
+        ...report.snapshot,
+        reportVersion: 'v2',
+        reportKind: 'stage',
+        allowedReferences: ['stage-summary'],
+        teacherInput: {
+          studentId: report.studentId,
+          growthAssessment: {
+            learningReadiness: '教师明确填写的学习准备评价',
+            communicationCooperation: '',
+            independenceRules: '',
+            overallUnderstanding: '',
+          },
+          learningMastery: {},
+          classroomPerformance: [],
+          teacherMessage: '',
+          highlight: '',
+          nextFocus: '',
+          homePractice: '',
+        },
+      },
+    } as unknown as SemesterReportEntity;
+    const worker = new SemesterReportWorker({} as DataSource) as unknown as {
+      generate(
+        report: SemesterReportEntity,
+        mode: 'ai',
+      ): Promise<Record<string, unknown>>;
+    };
+
+    const content = await worker.generate(stageReport, 'ai');
+
+    expect(content.growthAssessment).toEqual({
+      learningReadiness: '教师明确填写的学习准备评价',
+      communicationCooperation: 'AI 根据本阶段记录生成的合作评价',
+      independenceRules: 'AI 根据本阶段记录生成的规则评价',
+      overallUnderstanding: 'AI 根据本阶段报告生成的综合画像',
+    });
   });
 });

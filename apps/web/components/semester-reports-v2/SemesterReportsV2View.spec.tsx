@@ -1223,6 +1223,72 @@ describe("SemesterReportsV2View", () => {
     expect(document.body.textContent).toContain("家长链接已");
     document.execCommand = originalExec;
   });
+
+  it("accurately displays real points or 0分 for students in Step 3 instead of false fallback +8分", async () => {
+    api.get.mockImplementation(async (url: string) => {
+      if (url.endsWith("/report-terms")) return mockTerms;
+      if (url.endsWith("/report-subjects")) return mockSubjects;
+      if (url === "/api/pet-points" || url.includes("/pet-points")) {
+        return {
+          students: [
+            { id: "stu-1", name: "张小明", classId: "cls-1", className: "三年级二班", score: 12 },
+            { id: "stu-2", name: "李小红", classId: "cls-1", className: "三年级二班", score: 0 }
+          ]
+        };
+      }
+      if (url.includes("/classes")) {
+        return [
+          {
+            id: "cls-1",
+            name: "三年级二班",
+            students: [
+              { id: "stu-1", name: "张小明" },
+              { id: "stu-2", name: "李小红" }
+            ]
+          }
+        ];
+      }
+      if (url.endsWith("/reports")) return mockReports;
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<SemesterReportsV2View />);
+    });
+
+    // 切换到向导
+    const composeTabBtn = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("填写与生成报告")
+    );
+    await act(async () => {
+      composeTabBtn?.click();
+    });
+
+    // 步骤 1 -> 步骤 2
+    const nextToStep2 = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("下一步：配置学科与教学内容")
+    );
+    await act(async () => {
+      nextToStep2?.click();
+    });
+
+    // 步骤 2 勾选学科 -> 步骤 3
+    const subjectCheckbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
+    await act(async () => {
+      subjectCheckbox?.click();
+    });
+    const nextToStep3 = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("下一步：挑选学生名单")
+    );
+    await act(async () => {
+      nextToStep3?.click();
+    });
+
+    // 验证步骤 3 中的学生积分展示：有积分的学生显示 +12分，积分为 0 的学生显示 0分，绝不显示误导性的 +8分
+    expect(container.textContent).toContain("+12分");
+    expect(container.textContent).toContain("0分");
+    expect(container.textContent).not.toContain("+8分");
+  });
 });
 
 describe("V2ClassroomPerformance component", () => {
@@ -1648,6 +1714,7 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
             endDate: payload.endDate || "2027-01-20",
             executeAt: payload.executeAt || new Date().toISOString(),
             repeatType: payload.repeatType || "none",
+            stageCustomName: payload.stageCustomName || "",
             status: "pending"
           };
           mockScheduledTasks.push(newTask);
@@ -1781,6 +1848,148 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
       });
       expect(container.textContent).toContain("待审核草稿");
       expect(container.textContent).toContain("AI 阶段报告");
+    });
+
+    it("supports substituting '本阶段' with custom text via input in stage task creation", async () => {
+      await openStageScheduler();
+
+      const customNameInput = container.querySelector("#stageCustomNameInput") as HTMLInputElement;
+      expect(customNameInput).not.toBeNull();
+      expect(customNameInput.placeholder).toContain("10月份");
+
+      // 输入替换文字：“10月份”
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      await act(async () => {
+        nativeSetter?.call(customNameInput, "10月份");
+        customNameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      const firstStudentCheckbox = container.querySelector("#stageStudentsGrid input") as HTMLInputElement;
+      await act(async () => {
+        (firstStudentCheckbox.closest("div[class*='rounded-xl']") as HTMLDivElement)?.click();
+      });
+      await act(async () => {
+        (container.querySelector("#btnSaveStageTask") as HTMLButtonElement).click();
+      });
+
+      // 验证任务卡片展示该自定义替换徽章
+      const taskList = container.querySelector("#stageTasksListContainer");
+      expect(taskList?.textContent).toContain("替换“本阶段”为: 10月份");
+
+      // 模拟点击编辑任务，输入框能正确反显
+      const editBtn = container.querySelector("[id^='btn-edit-task-']") as HTMLButtonElement | null;
+      expect(editBtn).not.toBeNull();
+      await act(async () => editBtn?.click());
+      expect(customNameInput.value).toBe("10月份");
+    });
+
+    it("shows student-level progress and hides report navigation until every report is ready", async () => {
+      mockScheduledTasks = [
+        {
+          id: "task-running",
+          name: "阶段批量汇总",
+          classId: "cls-1",
+          className: "三年级二班",
+          studentIds: ["stu-1", "stu-2"],
+          studentNames: "张小明、李小红",
+          startDate: "2026-09-01",
+          endDate: "2026-10-01",
+          executeAt: new Date().toISOString(),
+          status: "running",
+          totalCount: 2,
+          completedCount: 1,
+          processingCount: 1,
+          failedCount: 0,
+          progressPercent: 50
+        }
+      ];
+
+      await openStageScheduler();
+
+      expect(container.textContent).toContain("生成中 1/2");
+      expect(container.textContent).toContain("已完成 1 / 2 位学生");
+      expect(container.textContent).toContain("50%");
+      expect(container.querySelector("[aria-label='阶段批量汇总执行进度']")).not.toBeNull();
+      expect(container.textContent).not.toContain("👉 前往报告管理查看");
+    });
+
+    it("displays newly added class students in both compose wizard and stage scheduler even if not in pet-points yet", async () => {
+      // 模拟 /api/classes 返回了班级和新添加的学生，而 /api/pet-points 尚未同步该学生
+      api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/scheduled-tasks")) return [];
+        if (url.includes("/report-terms"))
+          return [
+            {
+              id: "term-1",
+              name: "2026-2027学年第一学期",
+              startDate: "2026-09-01",
+              endDate: "2027-01-20",
+              isCurrent: true
+            }
+          ];
+        if (url.includes("/report-subjects")) return [{ id: "sub-1", name: "语文" }];
+        if (url === "/api/pet-points") {
+          return {
+            students: [{ id: "stu-1", name: "张小明", classId: "cls-1", className: "三年级二班", score: 120 }]
+          };
+        }
+        if (url === "/api/classes") {
+          return [
+            {
+              id: "cls-1",
+              name: "三年级二班",
+              students: [
+                { id: "stu-1", name: "张小明", studentNo: "01" },
+                { id: "stu-new", name: "新入班同学", studentNo: "02" }
+              ]
+            }
+          ];
+        }
+        if (url.includes("/course-documents")) return [];
+        if (url.includes("/reports")) return [];
+        return [];
+      });
+
+      await act(async () => {
+        root.render(<SemesterReportsV2View />);
+        await Promise.resolve();
+      });
+
+      // 1. 切换到“填写与生成报告”向导，进入步骤 3 挑选学生，验证新学生在花名册中可见
+      const composeTabBtn = container.querySelector("#mainTabCompose") as HTMLButtonElement;
+      await act(async () => {
+        composeTabBtn.click();
+      });
+      // 步骤 1 -> 步骤 2
+      const nextBtn1 = Array.from(container.querySelectorAll("button")).find(b =>
+        b.textContent?.includes("下一步：配置学科与教学内容")
+      );
+      await act(async () => {
+        nextBtn1?.click();
+      });
+      // 步骤 2 勾选学科 -> 步骤 3
+      const subCheckbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
+      await act(async () => {
+        subCheckbox?.click();
+      });
+      const nextBtn2 = Array.from(container.querySelectorAll("button")).find(b =>
+        b.textContent?.includes("下一步：挑选学生名单")
+      );
+      await act(async () => {
+        nextBtn2?.click();
+      });
+      expect(container.textContent).toContain("步骤 3：挑选本次生成报告的学生");
+      expect(container.textContent).toContain("新入班同学");
+      expect(container.textContent).toContain("张小明");
+
+      // 2. 切换到“AI 阶段汇总定时任务中心”，验证新学生在阶段任务学生列表中同样可见
+      const stageTabBtn = container.querySelector("#mainTabStage") as HTMLButtonElement;
+      await act(async () => {
+        stageTabBtn.click();
+      });
+      const stageGrid = container.querySelector("#stageStudentsGrid");
+      expect(stageGrid?.textContent).toContain("新入班同学");
+      expect(stageGrid?.textContent).toContain("张小明");
     });
   });
 });

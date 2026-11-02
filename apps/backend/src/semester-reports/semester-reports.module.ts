@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ClassroomEntity } from '../students/entities/classroom.entity';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 import { StudentEntity } from '../students/entities/student.entity';
@@ -18,6 +19,7 @@ import { SemesterReportWorker } from './semester-report.worker';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      ClassroomEntity,
       ReportTermEntity,
       ReportSubjectEntity,
       ReportDocumentEntity,

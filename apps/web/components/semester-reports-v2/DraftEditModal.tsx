@@ -30,6 +30,7 @@ export type DraftModalReport = {
   endDate?: string;
   reportVersion?: "v1" | "v2";
   isStageReport?: boolean;
+  stageCustomName?: string;
   content: LearningReportContent;
 };
 
@@ -42,6 +43,38 @@ export type DraftModalReport = {
  * 3. 严格遵循弹窗规范：提供明显的关闭按钮、键盘 Esc / Tab 焦点循环，支持移动端编辑/预览标签切换；
  * 4. 内置版本历史抽屉（ReportHistory），支持恢复至过往保存的草稿修订版本。
  */
+function replaceStageTerms<T>(data: T, customName?: string): T {
+  if (!customName || customName.trim() === "" || customName.trim() === "本阶段") {
+    return data;
+  }
+  const target = customName.trim();
+  if (typeof data === "string") {
+    let s: string = data;
+    s = s.replaceAll("本阶段", target);
+    s = s.replaceAll("所选阶段", target);
+    s = s.replaceAll("该阶段", target);
+    s = s.replaceAll("此阶段", target);
+    s = s.replaceAll("阶段内", `${target}内`);
+    s = s.replaceAll("阶段学习", `${target}学习`);
+    s = s.replaceAll("阶段成长", `${target}成长`);
+    s = s.replaceAll("阶段汇总", `${target}汇总`);
+    s = s.replaceAll("阶段总结", `${target}总结`);
+    s = s.replaceAll("阶段报告", target.endsWith("报告") ? target : `${target}报告`);
+    return s as unknown as T;
+  }
+  if (Array.isArray(data)) {
+    return data.map(item => replaceStageTerms(item, target)) as unknown as T;
+  }
+  if (data && typeof data === "object") {
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      res[k] = replaceStageTerms(v, target);
+    }
+    return res as unknown as T;
+  }
+  return data;
+}
+
 export function DraftEditModal({
   report,
   allAvailableSubjects,
@@ -69,12 +102,18 @@ export function DraftEditModal({
     // 判断是否为 v1 报告：若明确指定为 v1 则为 v1（reportVersion 设为 undefined），默认视为 v2
     const isV1 = fallbackVersion === "v1" || rawContent.reportVersion === "v1";
     const reportVersion: "v2" | undefined = isV1 ? undefined : "v2";
+    const stageCustomName =
+      report.stageCustomName ||
+      (baseContent as { stageCustomName?: string })?.stageCustomName ||
+      (baseContent as { stageTitle?: string })?.stageTitle;
 
-    return {
+    let resContent: LearningReportContent = {
       ...baseContent,
       reportVersion,
       summary: baseContent.summary || "",
       areasToImprove: normalizedAreas,
+      stageCustomName,
+      stageTitle: stageCustomName,
       reportSubjects:
         baseContent.reportSubjects ||
         (rawContent.subjects || []).map((name: string) => ({
@@ -82,6 +121,12 @@ export function DraftEditModal({
           name
         }))
     };
+
+    if (stageCustomName) {
+      resContent = replaceStageTerms(resContent, stageCustomName);
+    }
+
+    return resContent;
   }
 
   // 本地正在编辑的草稿内容状态
@@ -377,7 +422,9 @@ export function DraftEditModal({
       id: report.id,
       studentName: report.studentName,
       className: report.className,
-      period: report.period,
+      period: report.isStageReport || report.period === "stage" ? "stage" : report.period,
+      isStageReport: report.isStageReport ?? report.period === "stage",
+      stageCustomName: report.stageCustomName || content.stageCustomName || content.stageTitle,
       term: content.reportDetails?.institutionName || "课堂成长记录",
       subject: (content.reportSubjects || []).map(s => s.name).join("、") || "综合",
       start: report.startDate,
@@ -385,6 +432,8 @@ export function DraftEditModal({
       status: report.status,
       content: {
         ...content,
+        stageCustomName: report.stageCustomName || content.stageCustomName || content.stageTitle,
+        stageTitle: report.stageCustomName || content.stageTitle || content.stageCustomName,
         reportVersion: isV2 ? "v2" : undefined
       }
     };

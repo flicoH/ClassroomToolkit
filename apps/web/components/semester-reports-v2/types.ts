@@ -61,6 +61,7 @@ export type ReportSummaryItem = {
   courseSelections?: Array<{ subjectId: string; courseScope?: string }>;
   period: "week" | "month" | "term" | "stage";
   isStageReport?: boolean;
+  stageCustomName?: string;
   weeklyCount?: number;
   coverageRate?: string;
   /** queued / generating 属于后台异步生成阶段，在前端归入待发布草稿范畴 */
@@ -108,7 +109,13 @@ export type StageScheduledTask = {
   executeTimestamp: number;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   repeatType?: "none" | "weekly" | "monthly";
+  stageCustomName?: string;
   isCloudDaemon: boolean;
   createdAt?: string;
   generatedCount?: number;
+  totalCount?: number;
+  completedCount?: number;
+  processingCount?: number;
+  failedCount?: number;
+  progressPercent?: number;
 };

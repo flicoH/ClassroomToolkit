@@ -87,6 +87,8 @@ export class SemesterReportEntity {
     string,
     unknown
   > | null;
+  @Column({ name: 'ai_response', type: 'json', nullable: true })
+  aiResponse!: Record<string, unknown> | null;
   @Column({ type: 'varchar', length: 24, default: 'queued' }) status!: string;
   @Column({ type: 'text', nullable: true }) keywords!: string | null;
   @Column({ name: 'teacher_observation', type: 'text', nullable: true })

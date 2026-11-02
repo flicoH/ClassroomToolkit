@@ -757,3 +757,80 @@ it("does not display subjects that have no selected classroom performance even w
   expect(rendered.querySelector('[aria-label="英语的课堂表现"]')).toBeNull();
   expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
 });
+
+it("renders custom stage title replacing '本阶段' in header and sections for stage reports", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        studentName: "吴杭潼",
+        className: "红龙班",
+        subject: "综合",
+        term: "2026秋季",
+        period: "stage",
+        stageCustomName: "10月份",
+        content: {
+          reportVersion: "v2",
+          stageTitle: "10月份",
+          stageCustomName: "10月份",
+          summary: "10月份学习认真，进步明显。",
+          courseOverview: "",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          growthAssessment: {
+            learningReadiness: "10月份课前准备充分，专注听讲。",
+            communicationCooperation: "积极交流。",
+            independenceRules: "遵守常规。",
+            overallUnderstanding: "习惯良好。"
+          }
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("吴杭潼 · 10月份成长报告");
+  expect(rendered.textContent).toContain("10月份学习习惯与能力成长总结");
+  expect(rendered.textContent).toContain("10月份最值肯定");
+  expect(rendered.textContent).not.toContain("本阶段学习习惯与能力成长总结");
+  expect(rendered.textContent).not.toContain("本阶段最值肯定");
+});
+
+it("renders custom stage title even when period is 'term' if isStageReport and stageCustomName are present", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        studentName: "吴杭潼",
+        className: "红龙班",
+        subject: "综合",
+        term: "2026秋季",
+        period: "term",
+        isStageReport: true,
+        stageCustomName: "10月份",
+        content: {
+          reportVersion: "v2",
+          stageTitle: "10月份",
+          stageCustomName: "10月份",
+          summary: "10月份学习认真，进步明显。",
+          courseOverview: "",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          growthAssessment: {
+            learningReadiness: "10月份课前准备充分，专注听讲。",
+            communicationCooperation: "积极交流。",
+            independenceRules: "遵守常规。",
+            overallUnderstanding: "习惯良好。"
+          }
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("吴杭潼 · 10月份成长报告");
+  expect(rendered.textContent).toContain("10月份学习习惯与能力成长总结");
+  expect(rendered.textContent).toContain("10月份最值肯定");
+  expect(rendered.textContent).not.toContain("本阶段学习习惯与能力成长总结");
+  expect(rendered.textContent).not.toContain("本阶段最值肯定");
+});

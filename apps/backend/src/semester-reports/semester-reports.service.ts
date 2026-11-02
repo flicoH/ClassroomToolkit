@@ -34,6 +34,8 @@ import {
   reportVisualsForSnapshot,
   classroomPhotosForSnapshot,
   classroomPhotoCaptionsForSnapshot,
+  formatShanghaiDate,
+  replaceStageTerm,
 } from './report-generation';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import {
@@ -46,6 +48,7 @@ import {
 } from './report-input';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 import { StudentEntity } from '../students/entities/student.entity';
+import { ClassroomEntity } from '../students/entities/classroom.entity';
 import { PetStateHistoryEntity } from '../pet-points/entities/pet-state-history.entity';
 import { petAppearanceAtReportEnd } from '../pet-points/pet-state-history';
 import {
@@ -77,6 +80,12 @@ type ScheduledReportOptions = {
   classId: string;
   executeAt: Date;
   repeatType?: 'none' | 'weekly' | 'monthly';
+  stageCustomName?: string;
+  selectedStudents?: Array<{
+    requestedId: string;
+    studentId: string;
+    name: string;
+  }>;
 };
 
 @Injectable()
@@ -438,6 +447,16 @@ export class SemesterReportsService {
       );
     }
     const students = await this.findStudents(studentIds);
+    const scheduledTask = scheduled
+      ? {
+          ...scheduled,
+          selectedStudents: students.map((student, index) => ({
+            requestedId: studentIds[index]!,
+            studentId: student.id,
+            name: student.name,
+          })),
+        }
+      : undefined;
     let reportDetails: ReportDetails | undefined;
     let feedback: Map<string, StudentFeedback>;
     try {
@@ -502,12 +521,17 @@ export class SemesterReportsService {
           ? {
               reportKind: 'stage',
               scheduledTask: {
-                id: scheduled.taskId,
-                name: scheduled.name,
-                classId: scheduled.classId,
-                executeAt: scheduled.executeAt.toISOString(),
-                repeatType: scheduled.repeatType || 'none',
+                id: scheduledTask!.taskId,
+                name: scheduledTask!.name,
+                classId: scheduledTask!.classId,
+                executeAt: scheduledTask!.executeAt.toISOString(),
+                repeatType: scheduledTask!.repeatType || 'none',
+                stageCustomName: scheduledTask!.stageCustomName || '',
+                stageTitle: scheduledTask!.stageCustomName || '',
+                selectedStudents: scheduledTask!.selectedStudents,
               },
+              stageCustomName: scheduled.stageCustomName || '',
+              stageTitle: scheduled.stageCustomName || '',
             }
           : {}),
         ...(isV2
@@ -638,6 +662,11 @@ export class SemesterReportsService {
     const repeatType = (
       ['none', 'weekly', 'monthly'].includes(rawRepeat) ? rawRepeat : 'none'
     ) as 'none' | 'weekly' | 'monthly';
+    const stageCustomName = String(
+      input.stageCustomName ?? input.stageTitle ?? '',
+    )
+      .trim()
+      .slice(0, 50);
     const result = await this.generate(
       {
         ...input,
@@ -645,15 +674,18 @@ export class SemesterReportsService {
         period: 'term',
         start: input.startDate,
         end: input.endDate,
-        generationMode: input.generationMode ?? 'auto',
+        generationMode: input.generationMode ?? 'ai',
       },
       undefined,
       undefined,
       undefined,
       undefined,
-      { taskId, name, classId, executeAt, repeatType },
+      { taskId, name, classId, executeAt, repeatType, stageCustomName },
     );
     const reports = result.reports;
+    const requestedStudentIds = Array.isArray(input.studentIds)
+      ? input.studentIds.filter((id): id is string => typeof id === 'string')
+      : [];
     return {
       id: taskId,
       name,
@@ -662,11 +694,13 @@ export class SemesterReportsService {
         new Set(reports.map((report) => report.className)).size === 1
           ? reports[0]?.className
           : '跨班挑选',
-      studentIds: reports.map((report) => report.studentId),
+      studentIds: requestedStudentIds,
       studentNames: reports.map((report) => report.studentName).join('、'),
       startDate: String(input.startDate),
       endDate: String(input.endDate),
       executeAt: executeAt.toISOString(),
+      repeatType,
+      stageCustomName,
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
@@ -687,6 +721,30 @@ export class SemesterReportsService {
         "JSON_EXTRACT(report.snapshot, '$.scheduledTask')",
         'scheduledTask',
       )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageCustomName'))",
+        'snapshotStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageTitle'))",
+        'snapshotStageTitle',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageCustomName'))",
+        'taskStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageTitle'))",
+        'taskStageTitle',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageCustomName'))",
+        'contentStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageTitle'))",
+        'contentStageTitle',
+      )
       .where('report.teacherId = :teacherId', {
         teacherId: this.teacher.teacherId,
       })
@@ -705,6 +763,12 @@ export class SemesterReportsService {
         periodEnd: Date;
         createdAt: Date;
         scheduledTask: string | ScheduledReportOptions;
+        snapshotStageCustomName?: string;
+        snapshotStageTitle?: string;
+        taskStageCustomName?: string;
+        taskStageTitle?: string;
+        contentStageCustomName?: string;
+        contentStageTitle?: string;
       }>();
     const groups = new Map<string, typeof rows>();
     for (const row of rows) {
@@ -730,6 +794,43 @@ export class SemesterReportsService {
           : statuses.has('failed')
             ? 'failed'
             : 'completed';
+      const selectedStudents = Array.isArray(task.selectedStudents)
+        ? task.selectedStudents
+        : [];
+      const totalCount = taskRows.length;
+      const completedCount = taskRows.filter((row) =>
+        ['draft', 'published'].includes(row.status),
+      ).length;
+      const failedCount = taskRows.filter(
+        (row) => row.status === 'failed',
+      ).length;
+      const processingCount = taskRows.filter((row) =>
+        ['queued', 'generating'].includes(row.status),
+      ).length;
+
+      let stageCustomName =
+        (task as { stageCustomName?: string }).stageCustomName ||
+        (task as { stageTitle?: string }).stageTitle ||
+        '';
+
+      if (!stageCustomName) {
+        const clean = (val?: string) =>
+          val && val !== 'null' && val !== 'undefined' ? val.trim() : '';
+        for (const r of taskRows) {
+          const candidate =
+            clean(r.taskStageCustomName) ||
+            clean(r.snapshotStageCustomName) ||
+            clean(r.taskStageTitle) ||
+            clean(r.snapshotStageTitle) ||
+            clean(r.contentStageCustomName) ||
+            clean(r.contentStageTitle);
+          if (candidate) {
+            stageCustomName = candidate;
+            break;
+          }
+        }
+      }
+
       return {
         id,
         name: task.name,
@@ -738,15 +839,28 @@ export class SemesterReportsService {
           new Set(taskRows.map((row) => row.className)).size === 1
             ? taskRows[0]!.className
             : '跨班挑选',
-        studentIds: taskRows.map((row) => row.studentId),
-        studentNames: taskRows.map((row) => row.studentName).join('、'),
-        startDate: taskRows[0]!.periodStart.toISOString().slice(0, 10),
-        endDate: new Date(taskRows[0]!.periodEnd.getTime() - 1)
-          .toISOString()
-          .slice(0, 10),
+        studentIds: selectedStudents.length
+          ? selectedStudents.map((student) => student.requestedId)
+          : taskRows.map((row) => row.studentId),
+        studentNames: selectedStudents.length
+          ? selectedStudents.map((student) => student.name).join('、')
+          : taskRows.map((row) => row.studentName).join('、'),
+        startDate: formatShanghaiDate(taskRows[0]!.periodStart),
+        endDate: formatShanghaiDate(
+          new Date(taskRows[0]!.periodEnd.getTime() - 1),
+        ),
         executeAt: String(task.executeAt),
         repeatType: (task as { repeatType?: string }).repeatType || 'none',
+        stageCustomName,
         status,
+        totalCount,
+        completedCount,
+        generatedCount: completedCount,
+        processingCount,
+        failedCount,
+        progressPercent: totalCount
+          ? Math.round(((completedCount + failedCount) / totalCount) * 100)
+          : 0,
         createdAt: taskRows[0]!.createdAt,
       };
     });
@@ -756,9 +870,11 @@ export class SemesterReportsService {
     const result = await this.reports
       .createQueryBuilder()
       .update(SemesterReportEntity)
-      .set({ status: 'queued' })
+      .set({ status: 'queued', errorMessage: null })
       .where('teacher_id = :teacherId', { teacherId: this.teacher.teacherId })
-      .andWhere('status = :status', { status: 'scheduled' })
+      .andWhere('status IN (:...statuses)', {
+        statuses: ['scheduled', 'failed'],
+      })
       .andWhere(
         "JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.id')) = :id",
         { id },
@@ -909,6 +1025,8 @@ export class SemesterReportsService {
           'courseSelections', JSON_EXTRACT(report.snapshot, '$.courseSelections'),
           'generationMode', JSON_EXTRACT(report.snapshot, '$.generationMode'),
           'reportKind', JSON_EXTRACT(report.snapshot, '$.reportKind'),
+          'stageCustomName', JSON_EXTRACT(report.snapshot, '$.stageCustomName'),
+          'scheduledTask', JSON_EXTRACT(report.snapshot, '$.scheduledTask'),
           'courseSubjectIds', JSON_EXTRACT(report.snapshot, '$.courseDocuments[*].subjectId')
         )`,
         'summary_snapshot',
@@ -925,10 +1043,21 @@ export class SemesterReportsService {
         const value = raw[index].summary_snapshot;
         const metadata =
           (typeof value === 'string' ? JSON.parse(value) : value) ?? {};
+        const scheduledTask =
+          typeof metadata.scheduledTask === 'string'
+            ? JSON.parse(metadata.scheduledTask)
+            : metadata.scheduledTask;
+        const stageCustomName =
+          (scheduledTask as { stageCustomName?: string } | undefined)
+            ?.stageCustomName ||
+          metadata.stageCustomName ||
+          undefined;
         const summary = this.reportDto({
           ...r,
           snapshot: {
             ...metadata,
+            scheduledTask,
+            stageCustomName,
             courseDocuments: (metadata.courseSubjectIds ?? []).map(
               (subjectId: string) => ({ subjectId }),
             ),
@@ -1060,7 +1189,19 @@ export class SemesterReportsService {
             throw new BadRequestException('该位置没有照片，不能保存说明');
         }
       }
-      const reviewedSnapshot = {
+      const stageCustomName =
+        (typeof content.stageCustomName === 'string' &&
+          content.stageCustomName.trim()) ||
+        (typeof content.stageTitle === 'string' && content.stageTitle.trim()) ||
+        (
+          row.snapshot?.scheduledTask as
+            | { stageCustomName?: string }
+            | undefined
+        )?.stageCustomName ||
+        (row.snapshot as { stageCustomName?: string } | undefined)
+          ?.stageCustomName ||
+        '';
+      const reviewedSnapshot: Record<string, unknown> = {
         ...row.snapshot,
         classroomPhotoCaptions,
         allowedReferences: [
@@ -1070,10 +1211,14 @@ export class SemesterReportsService {
           ]),
         ],
         teacherReviewedAt: new Date().toISOString(),
+        ...(stageCustomName ? { stageCustomName } : {}),
       };
       content = {
         ...content,
         ...reportVisualsForSnapshot(reviewedSnapshot),
+        ...(stageCustomName
+          ? { stageCustomName, stageTitle: stageCustomName }
+          : {}),
         // v2 clients may submit live counts from a newer read; only server data is trusted.
         ...(row.snapshot?.reportVersion === 'v2'
           ? {
@@ -1091,6 +1236,9 @@ export class SemesterReportsService {
             }
           : {}),
       };
+      if (stageCustomName) {
+        content = replaceStageTerm(content, stageCustomName);
+      }
       this.validateContent(content, reviewedSnapshot);
       row.snapshot = reviewedSnapshot;
       row.content = content;
@@ -1755,6 +1903,28 @@ export class SemesterReportsService {
         item.sourceRefs = item.sourceRefs
           .map((ref: string) => sourceLabels[ref])
           .filter((label): label is string => label !== undefined);
+    const isStage = report.snapshot?.reportKind === 'stage';
+    const stageCustomName =
+      (
+        report.snapshot?.scheduledTask as
+          | { stageCustomName?: string }
+          | undefined
+      )?.stageCustomName ||
+      (report.snapshot as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (report.content as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (report.content as { stageTitle?: string } | undefined)?.stageTitle ||
+      undefined;
+
+    if (stageCustomName) {
+      content.stageCustomName = stageCustomName;
+      content.stageTitle = stageCustomName;
+    }
+    const finalContent = stageCustomName
+      ? replaceStageTerm(content, stageCustomName)
+      : content;
+
     return {
       studentName: report.studentName,
       className: report.className,
@@ -1763,10 +1933,12 @@ export class SemesterReportsService {
           ? String(report.snapshot.subjectName ?? '全部课程')
           : (subject?.name ?? ''),
       term: term?.name ?? '',
-      period: report.periodType,
+      period: isStage ? 'stage' : report.periodType,
+      isStageReport: isStage,
+      stageCustomName: stageCustomName || undefined,
       start: report.periodStart,
       end: report.periodEnd,
-      content,
+      content: finalContent,
       publishedAt: report.publishedAt,
       generationMode: report.snapshot?.generationMode ?? null,
       courseScope: report.courseScope,
@@ -1914,11 +2086,21 @@ export class SemesterReportsService {
     manager?: EntityManager,
   ) {
     const savedStudent = row.snapshot?.student as { id?: string } | undefined;
-    const student = savedStudent?.id
-      ? { id: savedStudent.id }
-      : (await this.findStudents([row.studentId]))[0]!;
+    let student:
+      | (Pick<PetStudentEntity, 'id'> & Partial<PetStudentEntity>)
+      | undefined;
+    try {
+      const found = await this.findStudents([
+        savedStudent?.id || row.studentId,
+      ]);
+      student = found[0];
+    } catch {
+      student = savedStudent?.id
+        ? { id: savedStudent.id }
+        : { id: row.studentId };
+    }
     return this.scoreSummary(
-      student,
+      student ?? { id: row.studentId },
       row.periodStart,
       row.periodEnd,
       manager?.getRepository(PetEvaluationRecordEntity),
@@ -1942,18 +2124,68 @@ export class SemesterReportsService {
     });
   }
 
+  private getStudentCandidateIds(
+    student: Pick<PetStudentEntity, 'id'> &
+      Partial<
+        Pick<PetStudentEntity, 'logicalId' | 'classId' | 'studentNo' | 'name'>
+      >,
+  ): string[] {
+    const teacherId = this.teacher.teacherId;
+    const candidates = new Set<string>();
+
+    const addVariants = (val?: string | null) => {
+      if (!val) return;
+      candidates.add(val);
+      if (val.startsWith(`${teacherId}:`)) {
+        const raw = val.slice(teacherId.length + 1);
+        candidates.add(raw);
+        for (const p of raw.split(':')) {
+          if (p) candidates.add(p);
+        }
+      } else {
+        candidates.add(`${teacherId}:${val}`.slice(0, 64));
+        for (const p of val.split(':')) {
+          if (p) candidates.add(p);
+        }
+      }
+    };
+
+    addVariants(student.id);
+    addVariants(student.logicalId);
+    if (student.classId && student.studentNo) {
+      addVariants(`${student.classId}:${student.studentNo}`);
+    }
+
+    return Array.from(candidates).filter(Boolean);
+  }
+
   private async scoreSummary(
-    student: Pick<PetStudentEntity, 'id'>,
+    student: Pick<PetStudentEntity, 'id'> &
+      Partial<
+        Pick<PetStudentEntity, 'logicalId' | 'classId' | 'studentNo' | 'name'>
+      >,
     start: Date,
     end: Date,
     records = this.records,
   ) {
-    const included = await records
+    const candidateIds = this.getStudentCandidateIds(student);
+    const query = records
       .createQueryBuilder('record')
       .where('record.teacher_id = :teacherId', {
         teacherId: this.teacher.teacherId,
-      })
-      .andWhere('record.student_id = :studentId', { studentId: student.id })
+      });
+
+    if (candidateIds.length === 1) {
+      query.andWhere('record.student_id = :studentId', {
+        studentId: candidateIds[0],
+      });
+    } else {
+      query.andWhere('record.student_id IN (:...candidateIds)', {
+        candidateIds,
+      });
+    }
+
+    const included = await query
       .andWhere('record.created_at >= :start AND record.created_at < :end', {
         start,
         end,
@@ -1989,19 +2221,114 @@ export class SemesterReportsService {
     const byId = new Map<string, PetStudentEntity>();
     for (const row of rows) {
       byId.set(row.id, row);
-      if (row.logicalId) byId.set(row.logicalId, row);
-      byId.set(
-        row.id.startsWith(`${teacherId}:`)
-          ? row.id.slice(teacherId.length + 1)
-          : row.id,
-        row,
-      );
+      if (row.logicalId) {
+        byId.set(row.logicalId, row);
+        const logParts = row.logicalId.split(':');
+        const lastPart = logParts[logParts.length - 1];
+        if (lastPart) {
+          byId.set(lastPart, row);
+        }
+      }
+      const rawId = row.id.startsWith(`${teacherId}:`)
+        ? row.id.slice(teacherId.length + 1)
+        : row.id;
+      byId.set(rawId, row);
+      const rawParts = rawId.split(':');
+      const lastRawPart = rawParts[rawParts.length - 1];
+      if (lastRawPart) {
+        byId.set(lastRawPart, row);
+      }
+      if (row.classId && row.studentNo) {
+        byId.set(`${row.classId}:${row.studentNo}`, row);
+      }
+      if (row.classId && row.name) {
+        byId.set(`${row.classId}:${row.name}`, row);
+      }
     }
-    return ids.map((id) => {
-      const student = byId.get(id);
+    const result: PetStudentEntity[] = [];
+    for (const id of ids) {
+      let student =
+        byId.get(id) ??
+        byId.get(
+          id.startsWith(`${teacherId}:`) ? id.slice(teacherId.length + 1) : id,
+        );
+      if (!student && id.includes(':')) {
+        const lastPart = id.split(':').pop();
+        if (lastPart) student = byId.get(lastPart);
+      }
+      if (!student) {
+        const rawId = id.startsWith(`${teacherId}:`)
+          ? id.slice(teacherId.length + 1)
+          : id;
+        const profile = this.studentProfiles
+          ? await this.studentProfiles.findOne({
+              where: [
+                { id, teacherId },
+                { id: rawId, teacherId },
+              ],
+            })
+          : null;
+        if (profile) {
+          // Check if rows already contains an existing student for this profile to prevent 0-score duplication
+          const existing = rows.find(
+            (r) =>
+              r.classId === profile.classroomId &&
+              ((profile.studentNo && r.studentNo === profile.studentNo) ||
+                r.name === profile.name ||
+                r.id.endsWith(`:${profile.id}`) ||
+                (r.logicalId && r.logicalId.endsWith(`:${profile.id}`))),
+          );
+          if (existing) {
+            if (!existing.logicalId) {
+              existing.logicalId = profile.id;
+            }
+            byId.set(id, existing);
+            byId.set(profile.id, existing);
+            student = existing;
+          } else {
+            const classroomRepo =
+              this.studentProfiles?.manager?.getRepository(ClassroomEntity);
+            const classroom = classroomRepo
+              ? await classroomRepo.findOne({
+                  where: { id: profile.classroomId, teacherId },
+                })
+              : null;
+            student = this.students.create({
+              id: `${teacherId}:${profile.id}`.slice(0, 64),
+              logicalId: profile.id,
+              teacherId,
+              classId: profile.classroomId,
+              className: classroom?.name ?? '',
+              name: profile.name,
+              studentNo: profile.studentNo,
+              group: profile.groupName ?? '',
+              score: 0,
+              maxScore: 30,
+              trophies: 0,
+              level: 1,
+              stage: '初始形态',
+              petProgress: 0,
+              petExperience: 0,
+              petHatched: false,
+              absent: false,
+              completedPets: 0,
+              cycleId: randomUUID(),
+              revision: 0,
+              completionPending: false,
+              cycleRulesVersion: 1,
+              rosterActive: true,
+            });
+            student = await this.students.save(student);
+            rows.push(student);
+            byId.set(student.id, student);
+            byId.set(profile.id, student);
+          }
+        }
+      }
       if (!student) throw new NotFoundException(`学生不存在：${id}`);
-      return student;
-    });
+      result.push(student);
+    }
+    return result;
   }
 
   /** 宠物积分 ID 兼容教师前缀和旧标识；即使用学号兜底，也必须限定同一教师与班级。 */
@@ -2273,10 +2600,38 @@ export class SemesterReportsService {
     };
   }
   private reportDto(row: SemesterReportEntity) {
+    const isStage = row.snapshot?.reportKind === 'stage';
+    const stageCustomName =
+      (row.snapshot?.scheduledTask as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.snapshot as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.content as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.content as { stageTitle?: string } | undefined)?.stageTitle ||
+      undefined;
+
+    let content = row.content
+      ? {
+          ...row.content,
+          ...reportVisualsForSnapshot(row.snapshot ?? {}),
+          learningContents:
+            row.content.learningContents ?? learningContentsForReport(row),
+          scoreDetails: scoreDetailsForSnapshot(row.snapshot ?? {}),
+          stageCustomName: stageCustomName || undefined,
+          stageTitle: stageCustomName || undefined,
+        }
+      : null;
+
+    if (content && stageCustomName) {
+      content = replaceStageTerm(content, stageCustomName);
+    }
+
     return {
       id: row.id,
       reportVersion: row.snapshot?.reportVersion ?? 'v1',
-      isStageReport: row.snapshot?.reportKind === 'stage',
+      isStageReport: isStage,
+      stageCustomName,
       courseSelections: this.reportCourseSelections(row),
       subjectName: row.snapshot?.subjectName,
       termId: row.termId,
@@ -2284,20 +2639,18 @@ export class SemesterReportsService {
       studentId: row.studentId,
       studentName: row.studentName,
       className: row.className,
-      period: row.snapshot?.reportKind === 'stage' ? 'stage' : row.periodType,
+      period: isStage ? 'stage' : row.periodType,
       start: row.periodStart,
       end: row.periodEnd,
+      startDate: row.periodStart
+        ? formatShanghaiDate(row.periodStart)
+        : undefined,
+      endDate: row.periodEnd
+        ? formatShanghaiDate(new Date(row.periodEnd.getTime() - 1))
+        : undefined,
       scoreScope: row.scoreScope,
       status: row.status,
-      content: row.content
-        ? {
-            ...row.content,
-            ...reportVisualsForSnapshot(row.snapshot ?? {}),
-            learningContents:
-              row.content.learningContents ?? learningContentsForReport(row),
-            scoreDetails: scoreDetailsForSnapshot(row.snapshot ?? {}),
-          }
-        : null,
+      content,
       keywords: row.keywords,
       teacherObservation: row.teacherObservation,
       courseScope: row.courseScope,
@@ -2436,9 +2789,7 @@ export class SemesterReportsService {
 
 function shanghaiMidnight(value: string | Date) {
   const date =
-    value instanceof Date
-      ? value.toISOString().slice(0, 10)
-      : value.slice(0, 10);
+    value instanceof Date ? formatShanghaiDate(value) : value.slice(0, 10);
   return new Date(`${date}T00:00:00+08:00`);
 }
 

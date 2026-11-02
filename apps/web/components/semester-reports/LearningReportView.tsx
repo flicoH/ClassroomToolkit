@@ -31,6 +31,8 @@ export type LearningReportContent = {
   learningContents?: LearningContent[];
   classroomPerformance?: ReportEntry[];
   scoreDetails?: ScoreDetails;
+  stageTitle?: string;
+  stageCustomName?: string;
   reportDetails?: {
     institutionName: string;
     courseTheme: string;
@@ -39,11 +41,15 @@ export type LearningReportContent = {
   };
 };
 export type LearningReportData = {
+  id?: string;
   studentName: string;
   className: string;
   subject: string;
   term: string;
   period: string;
+  isStageReport?: boolean;
+  status?: string;
+  stageCustomName?: string;
   start?: string;
   end?: string;
   courseScope?: string | null;
@@ -140,6 +146,16 @@ export function LearningReportView({ report }: { report: LearningReportData; for
   const showTeacherMessage = !isV2 || Boolean(content.summary.trim());
   const focusEntries = isV2 ? content.areasToImprove.filter(entry => entry.text.trim()) : content.areasToImprove;
   const showNextFocus = !isV2 || focusEntries.length > 0;
+  const customStageTitle =
+    content.stageTitle?.trim() || content.stageCustomName?.trim() || report.stageCustomName?.trim();
+  const isStage =
+    report.period === "stage" ||
+    report.isStageReport ||
+    Boolean(report.stageCustomName) ||
+    Boolean(content.stageTitle) ||
+    Boolean(content.stageCustomName);
+  const periodTitle =
+    isStage && customStageTitle ? customStageTitle : isStage ? "本阶段" : (periodTitles[report.period] ?? "本期");
   const teacherMessage = (
     <section className="min-w-0 rounded-2xl bg-slate-50/80 p-3 sm:p-6">
       <h2 className="mb-4 text-lg font-bold">老师想对你说</h2>
@@ -182,7 +198,15 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
           <h1 className="text-2xl font-bold leading-snug sm:text-4xl">
             {report.studentName} ·{" "}
-            {details?.lessonNumber ? `第${details.lessonNumber}次课` : (periodNames[report.period] ?? "成长报告")}
+            {details?.lessonNumber
+              ? `第${details.lessonNumber}次课`
+              : isStage && customStageTitle
+                ? customStageTitle.endsWith("报告")
+                  ? customStageTitle
+                  : `${customStageTitle}成长报告`
+                : isStage
+                  ? "阶段成长报告"
+                  : (periodNames[report.period] ?? "成长报告")}
           </h1>
           <p className="mt-3 text-sm text-indigo-100 sm:text-base">
             {details?.lessonDate
@@ -208,7 +232,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
               <BookOpenText className="h-5 w-5 text-indigo-600" />
-              {periodTitles[report.period]}学习内容
+              {periodTitle}学习内容
               {!content.learningContents?.length || content.learningContents.some(showsLearningMastery) ? "与掌握" : ""}
             </h2>
             <div className="space-y-4">
@@ -289,17 +313,12 @@ export function LearningReportView({ report }: { report: LearningReportData; for
                 )}
               </section>
             )}
-            <GrowthAssessmentView
-              value={content.growthAssessment}
-              periodTitle={periodTitles[report.period] ?? "本期"}
-            />
+            <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
           </>
         )}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-            {content.reportVersion !== "v2" && (
-              <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
-            )}
+            {content.reportVersion !== "v2" && <h2 className="mb-4 text-lg font-bold">{periodTitle}的课堂表现</h2>}
             {content.classroomPerformance?.length ? (
               <div className="flex flex-wrap gap-2">
                 {content.classroomPerformance
@@ -342,7 +361,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           </section>
           {content.reportVersion === "v2" && (
             <section className="flex min-w-0 flex-col rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-6">
-              <h2 className="mb-4 text-lg font-bold text-amber-900">{periodTitles[report.period]}最值肯定</h2>
+              <h2 className="mb-4 text-lg font-bold text-amber-900">{periodTitle}最值肯定</h2>
               <div className="my-auto flex flex-1 flex-col justify-center">
                 <PeriodScoreChart details={content.scoreDetails} />
               </div>
@@ -370,7 +389,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               <section className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-5">
                 <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-800">
                   <Sparkles className="h-4 w-4" />
-                  {periodTitles[report.period]}最值得肯定
+                  {periodTitle}最值得肯定
                 </h2>
                 <Entries entries={content.strengths} empty="等待老师补充值得肯定的具体表现。" />
               </section>

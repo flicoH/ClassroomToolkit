@@ -37,18 +37,50 @@ type ScheduledTaskResponse = Omit<
 > & {
   executeAt: string;
   repeatType?: "none" | "weekly" | "monthly";
+  stageCustomName?: string;
 };
+
+function normalizeDateStr(val?: string): string {
+  if (!val) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(d);
+      const y = parts.find(p => p.type === "year")?.value || "";
+      const m = parts.find(p => p.type === "month")?.value || "";
+      const day = parts.find(p => p.type === "day")?.value || "";
+      return `${y}-${m}-${day}`;
+    }
+  } catch {
+    // ignore
+  }
+  return val.slice(0, 10);
+}
 
 function fromScheduledTaskResponse(task: ScheduledTaskResponse): StageScheduledTask {
   const executeAt = new Date(task.executeAt || Date.now());
+  const stageCustomName =
+    task.stageCustomName ||
+    (task as { stageTitle?: string }).stageTitle ||
+    (task as { customStageName?: string }).customStageName ||
+    "";
   return {
     ...task,
+    startDate: normalizeDateStr(task.startDate),
+    endDate: normalizeDateStr(task.endDate),
     studentIds: Array.isArray(task.studentIds) ? task.studentIds : [],
     studentNames: task.studentNames || "",
     schedDate: formatLocalDate(executeAt),
     schedTime: `${String(executeAt.getHours()).padStart(2, "0")}:${String(executeAt.getMinutes()).padStart(2, "0")}`,
     executeTimestamp: executeAt.getTime(),
     repeatType: task.repeatType || "none",
+    stageCustomName,
     isCloudDaemon: true
   };
 }
@@ -77,13 +109,14 @@ export function StageReportSchedulerView({
   const [schedTime, setSchedTime] = useState("20:00");
   const [periodPreset, setPeriodPreset] = useState<"recent-month" | "current-term" | "custom">("recent-month");
   const [repeatType, setRepeatType] = useState<"none" | "weekly" | "monthly">("none");
+  const [stageCustomName, setStageCustomName] = useState("");
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const completedTaskIds = useRef(new Set<string>());
 
   // 通知主视图活跃任务数
   useEffect(() => {
-    const activeCount = tasks.filter(t => t.status === "pending").length;
+    const activeCount = tasks.filter(t => t.status === "pending" || t.status === "running").length;
     onActiveTaskCountChange?.(activeCount);
   }, [tasks, onActiveTaskCountChange]);
 
@@ -178,8 +211,9 @@ export function StageReportSchedulerView({
       await request.post(`/api/semester-reports/scheduled-tasks/${task.id}/execute`);
       setTasks(previous => previous.map(item => (item.id === task.id ? { ...item, status: "running" } : item)));
       showToast(`任务【${task.name}】已加入服务端生成队列`);
+      await refreshTasks().catch(() => undefined);
     },
-    [showToast]
+    [refreshTasks, showToast]
   );
 
   // 快捷设置时间
@@ -226,7 +260,7 @@ export function StageReportSchedulerView({
     const effectiveSchedTime = explicitDate
       ? `${String(explicitDate.getHours()).padStart(2, "0")}:${String(explicitDate.getMinutes()).padStart(2, "0")}`
       : schedTime;
-    const targetTime = explicitTimestamp || new Date(`${effectiveSchedDate}T${effectiveSchedTime}:00`).getTime();
+    let targetTime = explicitTimestamp || new Date(`${effectiveSchedDate}T${effectiveSchedTime}:00`).getTime();
     if (!Number.isFinite(targetTime)) {
       showToast("请设置有效的云端自动执行时间！");
       return;
@@ -240,8 +274,12 @@ export function StageReportSchedulerView({
       return;
     }
     if (targetTime < Date.now() + 5000) {
-      showToast("云端执行时间至少需晚于当前时间 5 秒！");
-      return;
+      if (!explicitTimestamp && effectiveSchedDate === formatLocalDate(new Date())) {
+        targetTime = Date.now() + 10000;
+      } else {
+        showToast("云端执行时间至少需晚于当前时间 5 秒！");
+        return;
+      }
     }
     if (!activeTerm) {
       showToast("当前学期数据尚未加载！");
@@ -256,11 +294,13 @@ export function StageReportSchedulerView({
         "/api/semester-reports/scheduled-tasks",
         {
           name: taskName,
+          stageCustomName: stageCustomName.trim(),
           classId: selectedClassId,
           termId: activeTerm.id,
           studentIds: selectedStudentIds,
           startDate,
           endDate,
+          generationMode: "ai",
           executeAt: new Date(targetTime).toISOString(),
           repeatType,
           courseSelections: subjects.map(subject => ({
@@ -289,6 +329,12 @@ export function StageReportSchedulerView({
   function editStageTask(task: StageScheduledTask) {
     setEditingTaskId(task.id);
     setTaskName(task.name);
+    setStageCustomName(
+      task.stageCustomName ||
+        (task as { stageTitle?: string }).stageTitle ||
+        (task as { customStageName?: string }).customStageName ||
+        ""
+    );
     const editableStudentIds = task.studentIds.filter(id => enrichedStudents.some(student => student.id === id));
     const editableClassId =
       task.classId && availableClasses.some(item => item.id === task.classId) ? task.classId : "all";
@@ -301,11 +347,17 @@ export function StageReportSchedulerView({
     setPeriodPreset("custom");
     setRepeatType(task.repeatType || "none");
 
+    const formElement = document.getElementById("stageTaskConfigCard");
+    if (formElement && typeof formElement.scrollIntoView === "function") {
+      formElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     showToast(`已将【${task.name}】载入表单，可调整时间或学生范围`);
   }
 
   function cancelEditingTask() {
     setEditingTaskId(null);
+    setStageCustomName("");
     setPeriodPreset("recent-month");
     setRepeatType("none");
   }
@@ -465,9 +517,9 @@ export function StageReportSchedulerView({
 
         {/* 任务名称与学生选择 */}
         <div className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs font-bold text-muted-foreground">
+              <label htmlFor="stageTaskNameInput" className="mb-1 block text-xs font-bold text-muted-foreground">
                 任务名称（用于标识不同汇总批次）
               </label>
               <input
@@ -477,6 +529,23 @@ export function StageReportSchedulerView({
                 onChange={e => setTaskName(e.target.value)}
                 className="h-9 w-full rounded-xl border bg-muted/30 px-3 text-xs"
                 placeholder="例如：一年级1班春季阶段成长汇总"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="stageCustomNameInput"
+                className="mb-1 flex items-center justify-between text-xs font-bold text-purple-800 dark:text-purple-300"
+              >
+                <span>报告“本阶段”替代文字</span>
+                <span className="font-normal text-[11px] text-muted-foreground">可选</span>
+              </label>
+              <input
+                type="text"
+                id="stageCustomNameInput"
+                value={stageCustomName}
+                onChange={e => setStageCustomName(e.target.value)}
+                className="h-9 w-full rounded-xl border border-purple-200 bg-purple-50/30 px-3 text-xs placeholder:text-muted-foreground/60 focus:border-purple-500 dark:border-purple-800 dark:bg-purple-950/20"
+                placeholder="如：10月份、期中阶段（报告中本阶段将自动替换）"
               />
             </div>
             <div>
@@ -547,8 +616,10 @@ export function StageReportSchedulerView({
         <div className="grid gap-4 border-t pt-3 sm:grid-cols-2">
           {/* 阶段周期 */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-muted-foreground">阶段周期范围（周报数据源跨度）：</label>
+            <div className="flex h-7 items-center justify-between">
+              <label htmlFor="stgStartDate" className="text-xs font-bold text-muted-foreground">
+                阶段周期范围（周报数据源跨度）：
+              </label>
               <div className="flex items-center gap-1 rounded-xl border bg-muted/40 p-0.5 text-[11px]">
                 <button
                   type="button"
@@ -636,9 +707,12 @@ export function StageReportSchedulerView({
 
           {/* 定时时间点 */}
           <div className="space-y-2">
-            <label className="block text-xs font-bold text-purple-700 dark:text-purple-300">
-              ⏰ 云端自动执行时间点：
-            </label>
+            <div className="flex h-7 items-center justify-between">
+              <label htmlFor="stgSchedDateInput" className="text-xs font-bold text-purple-700 dark:text-purple-300">
+                ⏰ 云端自动执行时间点：
+              </label>
+              <span className="text-[11px] text-muted-foreground">到期离线独立执行</span>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="date"
@@ -808,6 +882,7 @@ export function StageReportSchedulerView({
           ) : (
             tasks.map(task => {
               const isPending = task.status === "pending";
+              const isRunning = task.status === "running";
               const isCompleted = task.status === "completed";
               const now = Date.now();
               const diffSecs = Math.max(0, Math.floor((task.executeTimestamp - now) / 1000));
@@ -815,6 +890,8 @@ export function StageReportSchedulerView({
               let timeDesc = "";
               if (isCompleted) {
                 timeDesc = "✅ 已自动完成生成并转入草稿箱";
+              } else if (isRunning) {
+                timeDesc = `生成中 ${task.completedCount ?? 0}/${task.totalCount ?? task.studentIds.length}`;
               } else if (diffSecs <= 60 && diffSecs > 0) {
                 timeDesc = `⏰ 倒计时中 (${diffSecs} 秒后执行)`;
               } else {
@@ -893,7 +970,7 @@ export function StageReportSchedulerView({
                             <span>取消</span>
                           </button>
                         </>
-                      ) : (
+                      ) : isCompleted ? (
                         <button
                           type="button"
                           onClick={onNavigateToDashboard}
@@ -902,9 +979,30 @@ export function StageReportSchedulerView({
                           <CheckCircle2 className="h-3.5 w-3.5" />
                           <span>👉 前往报告管理查看</span>
                         </button>
+                      ) : (
+                        <span className="rounded-lg border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground">
+                          {isRunning ? "正在生成报告…" : "任务处理失败"}
+                        </span>
                       )}
                     </div>
                   </div>
+
+                  {isRunning ? (
+                    <div className="space-y-1" aria-label={`${task.name}执行进度`}>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>
+                          已完成 {task.completedCount ?? 0} / {task.totalCount ?? task.studentIds.length} 位学生
+                        </span>
+                        <span>{task.progressPercent ?? 0}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-purple-100 dark:bg-purple-950">
+                        <div
+                          className="h-full rounded-full bg-purple-600 transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.max(0, task.progressPercent ?? 0))}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <span>
@@ -917,6 +1015,11 @@ export function StageReportSchedulerView({
                     <span>
                       📅 阶段跨度: {task.startDate} 至 {task.endDate}
                     </span>
+                    {task.stageCustomName ? (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                        🏷️ 替换“本阶段”为: <strong>{task.stageCustomName}</strong>
+                      </span>
+                    ) : null}
                     <span>
                       📦 产出归宿:{" "}
                       <strong className="text-indigo-600 dark:text-indigo-400">

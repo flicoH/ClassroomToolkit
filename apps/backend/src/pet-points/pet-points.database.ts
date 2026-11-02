@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PetCompletedEntity } from './entities/pet-completed.entity';
 import { PetOperationEntity } from './entities/pet-operation.entity';
 import { ClassroomEntity } from '../students/entities/classroom.entity';
@@ -208,13 +208,139 @@ export class PetPointsDatabase {
     return { maxLevel, finalEnergy, version, completionBadges };
   }
 
-  /** 查询当前教师的宠物积分学生列表。 */
+  /** 查询当前教师的宠物积分学生列表，自动同步班级管理中最新名册。 */
   async findStudents() {
+    await this.syncRosterFromClassrooms();
     const rows = await this.students.find({
       where: { teacherId: this.teacherContext.teacherId, rosterActive: true },
       order: { score: 'DESC', studentNo: 'ASC' },
     });
     return rows.map((row) => this.toStudent(row));
+  }
+
+  /** 确保当前教师名下班级的所有学生都同步至宠物积分名册。 */
+  private async syncRosterFromClassrooms() {
+    const teacherId = this.teacherContext.teacherId;
+    const manager = this.transactionManager ?? this.students.manager;
+    if (!manager) return;
+    try {
+      const classroomRepo = manager.getRepository(ClassroomEntity);
+      if (!classroomRepo || typeof classroomRepo.find !== 'function') return;
+
+      const classrooms = await classroomRepo.find({
+        where: { teacherId },
+        relations: { students: true },
+      });
+      if (!classrooms || !classrooms.length) return;
+
+      const existingRows = await this.students.find({
+        where: { teacherId },
+      });
+
+      const existingById = new Map<string, PetStudentEntity>();
+      for (const row of existingRows) {
+        existingById.set(row.id, row);
+        if (row.logicalId) existingById.set(row.logicalId, row);
+        existingById.set(
+          row.id.startsWith(`${teacherId}:`)
+            ? row.id.slice(teacherId.length + 1)
+            : row.id,
+          row,
+        );
+        if (row.classId && row.studentNo) {
+          existingById.set(`${row.classId}:${row.studentNo}`, row);
+        }
+      }
+
+      const activeStudentIds = new Set<string>();
+      const rules = await this.getSettings();
+
+      for (const cls of classrooms) {
+        for (const stu of cls.students ?? []) {
+          activeStudentIds.add(stu.id);
+          const current =
+            existingById.get(stu.id) ??
+            existingById.get(`${cls.id}:${stu.studentNo}`);
+
+          if (current) {
+            let changed = false;
+            if (current.name !== stu.name) {
+              current.name = stu.name;
+              changed = true;
+            }
+            if (current.className !== cls.name) {
+              current.className = cls.name;
+              changed = true;
+            }
+            if (current.classId !== cls.id) {
+              current.classId = cls.id;
+              changed = true;
+            }
+            if (current.studentNo !== stu.studentNo) {
+              current.studentNo = stu.studentNo;
+              changed = true;
+            }
+            if (current.group !== (stu.groupName ?? '')) {
+              current.group = stu.groupName ?? '';
+              changed = true;
+            }
+            if (!current.rosterActive) {
+              current.rosterActive = true;
+              changed = true;
+            }
+            if (changed) {
+              await this.students.save(current);
+            }
+          } else {
+            const studentId = stu.id;
+            const newPet = this.students.create({
+              id: this.studentStorageId(studentId),
+              logicalId: studentId,
+              teacherId,
+              classId: cls.id,
+              className: cls.name,
+              name: stu.name,
+              studentNo: stu.studentNo,
+              group: stu.groupName ?? '',
+              score: 0,
+              maxScore: 30,
+              trophies: 0,
+              level: 1,
+              stage: '初始形态',
+              petProgress: 0,
+              petExperience: 0,
+              petHatched: false,
+              absent: false,
+              completedPets: 0,
+              cycleId: randomUUID(),
+              revision: 0,
+              completionPending: false,
+              cycleRulesVersion: rules.version,
+              rewardGrants: [],
+              rewardProtection: [],
+              rosterActive: true,
+            });
+            await this.students.save(newPet);
+          }
+        }
+      }
+
+      for (const row of existingRows) {
+        if (row.classId && classrooms.some((c) => c.id === row.classId)) {
+          if (
+            !activeStudentIds.has(row.logicalId || '') &&
+            !activeStudentIds.has(row.id)
+          ) {
+            if (row.rosterActive) {
+              row.rosterActive = false;
+              await this.students.save(row);
+            }
+          }
+        }
+      }
+    } catch {
+      // 容错处理：若外键或数据库表暂不可用则跳过同步，避免阻塞主流程
+    }
   }
 
   /** 保存或更新宠物积分学生，兼容旧主键和教师隔离主键。 */

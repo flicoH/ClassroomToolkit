@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { BatchReportImageDialog } from "@/components/semester-reports/BatchReportImageDialog";
 import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
-import type { LearningReportContent, LearningReportData } from "@/components/semester-reports/LearningReportView";
+import type { LearningReportContent } from "@/components/semester-reports/LearningReportView";
 import { localReportShareUrl } from "@/lib/report-share-url";
 import { copyText } from "@/lib/clipboard";
 import { DraftEditModal, type DraftModalReport } from "./DraftEditModal";
@@ -112,26 +112,33 @@ export function formatReportDateRange(r: ReportSummaryItem): string {
   const rawEnd = r.endDate || r.end;
   if (!rawStart && !rawEnd) return "";
 
-  const extractDate = (val?: string): string => {
+  const extractDate = (val?: string, exclusive = false): string => {
     if (!val) return "";
-    if (val.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+    // 纯 YYYY-MM-DD 格式且无需扣除 exclusive 时直接取月-日
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val) && !exclusive) {
       return val.slice(5, 10);
     }
     try {
-      const d = new Date(val);
+      const parsed = new Date(val);
+      const d = new Date(parsed.getTime() - (exclusive ? 1 : 0));
       if (!isNaN(d.getTime())) {
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
+        const parts = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Shanghai",
+          month: "2-digit",
+          day: "2-digit"
+        }).formatToParts(d);
+        const m = parts.find(p => p.type === "month")?.value || "";
+        const day = parts.find(p => p.type === "day")?.value || "";
         return `${m}-${day}`;
       }
     } catch {
       // ignore
     }
-    return val;
+    return val.slice(5, 10);
   };
 
-  const startPart = extractDate(rawStart);
-  const endPart = extractDate(rawEnd);
+  const startPart = extractDate(rawStart, false);
+  const endPart = extractDate(rawEnd, !r.endDate);
 
   if (startPart && endPart) return `${startPart} 至 ${endPart}`;
   if (startPart) return `${startPart} 起`;
@@ -202,6 +209,75 @@ export function generateValidShareToken(): string {
     token += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return token;
+}
+
+export function areStudentRostersEqual(a: Student[], b: Student[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const s1 = a[i]!;
+    const s2 = b[i]!;
+    if (s1.id !== s2.id || s1.name !== s2.name || s1.className !== s2.className || s1.score !== s2.score) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 聚合真实班级花名册与宠物积分数据，确保新增学生即使未开通宠物也立即在报告中可见
+ */
+export function mergeStudentRosters(
+  petStudents: Student[],
+  classList: Array<{ id: string; name: string; students?: Array<{ id: string; name: string; studentNo?: string }> }>
+): Student[] {
+  const mergedMap = new Map<string, Student>();
+
+  // 1. 先加入班级花名册中的全部学生（权威学生基础档案）
+  for (const c of classList) {
+    for (const s of c.students || []) {
+      mergedMap.set(s.id, {
+        id: s.id,
+        name: s.name,
+        classId: c.id,
+        className: c.name,
+        score: 0
+      });
+    }
+  }
+
+  // 2. 将宠物积分中的数据（积分、宠物形态等）关联叠加
+  for (const ps of petStudents) {
+    let matchedKey: string | undefined = mergedMap.has(ps.id) ? ps.id : undefined;
+
+    if (!matchedKey) {
+      for (const [k, v] of mergedMap.entries()) {
+        if (
+          (ps.classId && v.classId && ps.classId === v.classId && ps.name === v.name) ||
+          (ps.className && v.className && ps.className === v.className && ps.name === v.name)
+        ) {
+          matchedKey = k;
+          break;
+        }
+      }
+    }
+
+    if (matchedKey) {
+      const existing = mergedMap.get(matchedKey)!;
+      mergedMap.set(matchedKey, {
+        ...existing,
+        ...ps,
+        id: matchedKey,
+        name: existing.name || ps.name,
+        className: existing.className || ps.className,
+        classId: existing.classId || ps.classId
+      });
+    } else {
+      mergedMap.set(ps.id, ps);
+    }
+  }
+
+  return Array.from(mergedMap.values());
 }
 
 // 初始样本数据，确保在没有后端数据时也能100%还原原型体验并查看已有数据
@@ -526,14 +602,48 @@ export function SemesterReportsV2View() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // 独立刷新学生与班级数据（在切换至生成/汇总标签或班级变动时调用）
+  const refreshStudents = useCallback(async () => {
+    try {
+      const [petPointsRes, classesRes] = await Promise.allSettled([
+        request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
+        request.get<
+          Array<{ id: string; name: string; students?: Array<{ id: string; name: string; studentNo?: string }> }>,
+          Array<{ id: string; name: string; students?: Array<{ id: string; name: string; studentNo?: string }> }>
+        >("/api/classes")
+      ]);
+      const petList =
+        petPointsRes.status === "fulfilled" && Array.isArray(petPointsRes.value?.students)
+          ? petPointsRes.value.students
+          : [];
+      const classList = classesRes.status === "fulfilled" && Array.isArray(classesRes.value) ? classesRes.value : [];
+      const merged = mergeStudentRosters(petList, classList);
+      if (merged.length) {
+        setStudents(prev => (areStudentRostersEqual(prev, merged) ? prev : merged));
+      }
+    } catch {
+      // 保持当前学生列表
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeMainTab === "compose" || activeMainTab === "stage") {
+      void refreshStudents();
+    }
+  }, [activeMainTab, refreshStudents]);
+
   // 全量加载既有数据（包括后端真实数据与本地平滑兼容）
   const loadInitialData = useCallback(async () => {
     setLoading(true);
     try {
-      const [termsRes, subjectsRes, petPointsRes, docsRes, reportsRes] = await Promise.allSettled([
+      const [termsRes, subjectsRes, petPointsRes, classesRes, docsRes, reportsRes] = await Promise.allSettled([
         request.get<Term[], Term[]>(`${base}/report-terms`),
         request.get<Subject[], Subject[]>(`${base}/report-subjects`),
         request.get<{ students: Student[] }, { students: Student[] }>("/api/pet-points"),
+        request.get<
+          Array<{ id: string; name: string; students?: Array<{ id: string; name: string; studentNo?: string }> }>,
+          Array<{ id: string; name: string; students?: Array<{ id: string; name: string; studentNo?: string }> }>
+        >("/api/classes"),
         request.get<CourseDocument[], CourseDocument[]>(`${base}/course-documents`),
         // 重要：不强制传 version="v2"，从而完整查看既有的全部报告数据！
         request.get<ReportSummaryItem[], ReportSummaryItem[]>(`${base}/reports`)
@@ -585,8 +695,15 @@ export function SemesterReportsV2View() {
         ]);
       }
 
-      if (petPointsRes.status === "fulfilled" && petPointsRes.value?.students?.length) {
-        setStudents(petPointsRes.value.students);
+      const petList =
+        petPointsRes.status === "fulfilled" && Array.isArray(petPointsRes.value?.students)
+          ? petPointsRes.value.students
+          : [];
+      const classList = classesRes.status === "fulfilled" && Array.isArray(classesRes.value) ? classesRes.value : [];
+      const mergedStudents = mergeStudentRosters(petList, classList);
+
+      if (mergedStudents.length) {
+        setStudents(prev => (areStudentRostersEqual(prev, mergedStudents) ? prev : mergedStudents));
         // 新增报告时默认不选中学生，等待教师主动勾选或点击全选
         setSelectedStudentIds([]);
         setSelectedStudentClass("");
@@ -1032,12 +1149,19 @@ export function SemesterReportsV2View() {
 
       const resolvedPet = rawPet && (rawPet.petId || rawPet.petName) ? rawPet : studentCurrentPet;
 
+      const resolvedStageName =
+        target.stageCustomName ||
+        (targetContent as { stageCustomName?: string })?.stageCustomName ||
+        (targetContent as { stageTitle?: string })?.stageTitle;
+
       setEditingDraftReport({
         id: target.id,
         studentName: target.studentName,
         className: target.className,
         period: target.period,
         status: target.status,
+        isStageReport: target.isStageReport ?? target.period === "stage",
+        stageCustomName: resolvedStageName,
         startDate: target.startDate || target.start || "2026-04-13",
         endDate: target.endDate || target.end || "2026-04-17",
         reportVersion: resolvedVersion,
@@ -1045,6 +1169,8 @@ export function SemesterReportsV2View() {
           ? {
               ...targetContent,
               pet: resolvedPet,
+              stageCustomName: resolvedStageName,
+              stageTitle: resolvedStageName,
               scoreDetails: (targetContent as { scoreDetails?: ScoreDetails }).scoreDetails ?? resolvedScoreDetails
             }
           : {
@@ -1431,7 +1557,7 @@ export function SemesterReportsV2View() {
         const genRes = await request
           .post<{ reports: ReportSummaryItem[] }, { reports: ReportSummaryItem[] }>(`${base}/reports/generate`, {
             period: composePeriod,
-            generationMode: "template",
+            generationMode: "auto",
             start: composeStart,
             end: composeEnd,
             termId: previewValidation.termId,
@@ -1911,7 +2037,9 @@ export function SemesterReportsV2View() {
                               : r.period === "month"
                                 ? "月报"
                                 : r.period === "stage"
-                                  ? "阶段报告"
+                                  ? r.stageCustomName
+                                    ? `${r.stageCustomName}报告`
+                                    : "阶段报告"
                                   : "学期报告"}
                             {formatReportDateRange(r) ? ` (${formatReportDateRange(r)})` : ""} · 学科:{" "}
                             {getReportSubjectNames(r, subjects)}
@@ -2462,7 +2590,11 @@ export function SemesterReportsV2View() {
                           >
                             {isSelected ? "✓ 已选" : "未选"}
                           </span>
-                          <span className="font-bold text-emerald-600">+{s.score || 8}分</span>
+                          <span
+                            className={`font-bold ${(s.score ?? 0) > 0 ? "text-emerald-600" : "text-muted-foreground"}`}
+                          >
+                            {(s.score ?? 0) > 0 ? `+${s.score}分` : "0分"}
+                          </span>
                         </div>
                         <div className="text-sm font-bold">{s.name}</div>
                         <div className="text-[11px] text-muted-foreground">
@@ -3258,7 +3390,31 @@ export function SemesterReportsV2View() {
           }
           studentName={activeImageReport.studentName}
           reportId={activeImageReport.id}
-          reportData={activeImageReport.content as unknown as LearningReportData}
+          reportData={
+            activeImageReport.content
+              ? {
+                  id: activeImageReport.id,
+                  studentName: activeImageReport.studentName,
+                  className: activeImageReport.className,
+                  period:
+                    activeImageReport.isStageReport || activeImageReport.period === "stage"
+                      ? "stage"
+                      : (activeImageReport.period as "week" | "term" | "stage"),
+                  isStageReport: activeImageReport.isStageReport ?? activeImageReport.period === "stage",
+                  stageCustomName:
+                    activeImageReport.stageCustomName ||
+                    (activeImageReport.content as { stageCustomName?: string })?.stageCustomName ||
+                    (activeImageReport.content as { stageTitle?: string })?.stageTitle,
+                  term:
+                    (activeImageReport.content as { reportDetails?: { institutionName?: string } })?.reportDetails
+                      ?.institutionName || "课堂成长记录",
+                  subject: activeImageReport.subjectName || "综合",
+                  start: activeImageReport.startDate || activeImageReport.start,
+                  end: activeImageReport.endDate || activeImageReport.end,
+                  content: activeImageReport.content as unknown as LearningReportContent
+                }
+              : null
+          }
           onClose={() => setActiveImageReport(null)}
           onShareUpdated={newUrl => {
             const localUrl = localReportShareUrl(newUrl, window.location.origin);

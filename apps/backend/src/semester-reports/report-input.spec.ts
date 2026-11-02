@@ -549,8 +549,8 @@ describe('report generation input', () => {
       teacherId: 'teacher',
     });
     expect(query.andWhere).toHaveBeenCalledWith(
-      'record.student_id = :studentId',
-      { studentId: 'teacher:one' },
+      'record.student_id IN (:...candidateIds)',
+      { candidateIds: ['teacher:one', 'one'] },
     );
     expect(query.andWhere).toHaveBeenCalledWith(
       'record.created_at >= :start AND record.created_at < :end',
