@@ -96,6 +96,22 @@ export class SemesterReportsController {
   generate(@Body() body: Record<string, unknown>) {
     return this.reports.generate(body);
   }
+  @Get('scheduled-tasks') listScheduledTasks() {
+    return this.reports.listScheduledTasks();
+  }
+  @Post('scheduled-tasks')
+  @TrackFeature('semester-reports', 'schedule-stage-report')
+  createScheduledTask(@Body() body: Record<string, unknown>) {
+    return this.reports.createScheduledTask(body);
+  }
+  @Post('scheduled-tasks/:id/execute')
+  @TrackFeature('semester-reports', 'execute-stage-report')
+  executeScheduledTask(@Param('id') id: string) {
+    return this.reports.executeScheduledTask(id);
+  }
+  @Delete('scheduled-tasks/:id') deleteScheduledTask(@Param('id') id: string) {
+    return this.reports.deleteScheduledTask(id);
+  }
   @Get('reports') listReports(@Query() filters: Record<string, unknown>) {
     return this.reports.listReports(filters);
   }

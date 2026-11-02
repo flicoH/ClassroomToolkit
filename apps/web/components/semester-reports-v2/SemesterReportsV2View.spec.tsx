@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SemesterReportsV2View, defaultReportDates } from "./SemesterReportsV2View";
+import { getRecentMonthRange } from "./StageReportSchedulerView";
 import { DraftEditModal } from "./DraftEditModal";
 import { V2ClassroomPerformance } from "./V2ClassroomPerformance";
 
@@ -183,7 +184,7 @@ describe("SemesterReportsV2View", () => {
     vi.clearAllMocks();
   });
 
-  it("renders 3 main workspace navigation tabs and loads existing report data", async () => {
+  it("renders 4 main workspace navigation tabs and loads existing report data", async () => {
     await act(async () => {
       root.render(<SemesterReportsV2View />);
     });
@@ -191,6 +192,7 @@ describe("SemesterReportsV2View", () => {
     expect(container.textContent).toContain("学期报告全新工作台");
     expect(container.textContent).toContain("报告管理与分发");
     expect(container.textContent).toContain("填写与生成报告");
+    expect(container.textContent).toContain("AI 阶段汇总 (定时任务)");
     expect(container.textContent).toContain("学期学科设置与课程资料");
 
     // 验证顶部红框内容已去除（小标签、桌面模式指示、模式说明按钮）
@@ -1383,8 +1385,10 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
           { id: "sub-1", name: "英语", performanceConfig: [{ label: "发音", options: ["标准"] }] }
         ]);
       if (url.includes("/classes")) return Promise.resolve([{ id: "c1", name: "一班" }]);
-      if (url.includes("/students"))
-        return Promise.resolve([{ id: "s1", name: "张小明", classId: "c1", className: "一班" }]);
+      if (url === "/api/pet-points")
+        return Promise.resolve({
+          students: [{ id: "s1", name: "张小明", classId: "c1", className: "一班", score: 0 }]
+        });
       if (url.includes("/course-materials")) return Promise.resolve([]);
       if (url.includes("/reports")) return Promise.resolve({ reports: [], total: 0 });
       return Promise.resolve([]);
@@ -1594,5 +1598,189 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
       b.textContent?.includes("生成失败")
     );
     expect(failedFilterBtn?.textContent).toContain("生成失败 (0)");
+  });
+
+  describe("AI Stage Report Scheduler (AI 阶段汇总与定时任务中心)", () => {
+    let mockScheduledTasks: Array<Record<string, unknown>> = [];
+
+    beforeEach(() => {
+      mockScheduledTasks = [];
+      api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/scheduled-tasks")) return mockScheduledTasks;
+        if (url.includes("/report-terms"))
+          return [
+            {
+              id: "term-1",
+              name: "2026-2027学年第一学期",
+              startDate: "2026-09-01",
+              endDate: "2027-01-20",
+              isCurrent: true
+            }
+          ];
+        if (url.includes("/report-subjects")) return [];
+        if (url === "/api/pet-points")
+          return {
+            students: [
+              { id: "stu-1", name: "张小明", classId: "cls-1", className: "三年级二班", score: 120 },
+              { id: "stu-2", name: "李小红", classId: "cls-1", className: "三年级二班", score: 95 }
+            ]
+          };
+        if (url.includes("/course-documents")) return [];
+        if (url.includes("/reports")) return [];
+        return [];
+      });
+
+      api.post.mockImplementation(async (url: string, body?: unknown) => {
+        if (url.endsWith("/execute")) {
+          mockScheduledTasks = mockScheduledTasks.map(t => ({ ...t, status: "completed" }));
+          return { id: "task-1", status: "running" };
+        }
+        if (url.includes("/scheduled-tasks")) {
+          const payload = (body ?? {}) as Record<string, unknown>;
+          const newTask = {
+            id: "task-1",
+            name: payload.name || "阶段成长汇总",
+            classId: "cls-1",
+            className: "三年级二班",
+            studentIds: ["stu-1"],
+            studentNames: "张小明",
+            startDate: payload.startDate || "2026-09-01",
+            endDate: payload.endDate || "2027-01-20",
+            executeAt: payload.executeAt || new Date().toISOString(),
+            repeatType: payload.repeatType || "none",
+            status: "pending"
+          };
+          mockScheduledTasks.push(newTask);
+          return newTask;
+        }
+        return {};
+      });
+    });
+
+    async function openStageScheduler() {
+      await act(async () => {
+        root.render(<SemesterReportsV2View />);
+        await Promise.resolve();
+      });
+      const stageTabBtn = container.querySelector("#mainTabStage") as HTMLButtonElement | null;
+      expect(stageTabBtn).not.toBeNull();
+      await act(async () => {
+        stageTabBtn?.click();
+      });
+    }
+
+    it("uses only the current teacher's classes and defaults the cloud task area to list view", async () => {
+      await openStageScheduler();
+
+      expect(container.textContent).toContain("AI 阶段汇总定时任务中心");
+      expect(container.textContent).toContain("服务端离线守护 · 支持多任务");
+      expect(container.textContent).toContain("即使老师关闭网页、退出登录或关机离线");
+      expect(container.querySelector("#btnSimulateLogout")).toBeNull();
+
+      const classSelect = container.querySelector("#stageClassFilterSelect") as HTMLSelectElement;
+      expect(Array.from(classSelect.options).map(option => option.textContent)).toEqual([
+        "全部班级 (共2人)",
+        "三年级二班 (2人)"
+      ]);
+      expect(container.textContent).not.toContain("一年级1班");
+      expect(container.querySelector("#stageTasksListContainer")?.getAttribute("data-view-mode")).toBe("list");
+      expect(container.textContent).toContain("暂无云端定时任务");
+    });
+
+    it("derives quick ranges from the current date and configured current term, then aligns execution date", async () => {
+      expect(getRecentMonthRange(new Date(2026, 2, 31))).toEqual({ start: "2026-02-28", end: "2026-03-31" });
+      await openStageScheduler();
+
+      const recentMonthButton = container.querySelector("#stgPresetMonthBtn") as HTMLButtonElement;
+      const currentTermButton = container.querySelector("#stgPresetTermBtn") as HTMLButtonElement;
+      const customPresetButton = container.querySelector("#stgPresetCustomBtn") as HTMLButtonElement;
+
+      expect(recentMonthButton).not.toBeNull();
+      expect(currentTermButton).not.toBeNull();
+      expect(customPresetButton).not.toBeNull();
+
+      // 点击近1月
+      await act(async () => {
+        recentMonthButton?.click();
+      });
+      const recentRange = getRecentMonthRange();
+      expect((container.querySelector("#stgStartDate") as HTMLInputElement).value).toBe(recentRange.start);
+      expect((container.querySelector("#stgEndDate") as HTMLInputElement).value).toBe(recentRange.end);
+      expect((container.querySelector("#stgSchedDateInput") as HTMLInputElement).value).toBe(recentRange.end);
+      expect(recentMonthButton.className).toContain("bg-indigo-600");
+      expect(currentTermButton.className).not.toContain("bg-indigo-600");
+
+      // 点击本学期
+      await act(async () => {
+        currentTermButton?.click();
+      });
+      expect((container.querySelector("#stgStartDate") as HTMLInputElement).value).toBe("2026-09-01");
+      expect((container.querySelector("#stgEndDate") as HTMLInputElement).value).toBe("2027-01-20");
+      expect((container.querySelector("#stgSchedDateInput") as HTMLInputElement).value).toBe("2027-01-20");
+      expect(currentTermButton.className).toContain("bg-indigo-600");
+      expect(recentMonthButton.className).not.toContain("bg-indigo-600");
+
+      // 点击自定义
+      await act(async () => {
+        customPresetButton?.click();
+      });
+      expect(customPresetButton.className).toContain("bg-indigo-600");
+      expect(currentTermButton.className).not.toContain("bg-indigo-600");
+
+      // 手动修改日期自动切到自定义
+      await act(async () => {
+        recentMonthButton?.click();
+      });
+      expect(recentMonthButton.className).toContain("bg-indigo-600");
+      const startDateInput = container.querySelector("#stgStartDate") as HTMLInputElement;
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      await act(async () => {
+        nativeSetter?.call(startDateInput, "2026-10-10");
+        startDateInput.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(customPresetButton.className).toContain("bg-indigo-600");
+      expect(recentMonthButton.className).not.toContain("bg-indigo-600");
+    });
+
+    it("creates a task with recurring weekly repeat and supports execution", async () => {
+      await openStageScheduler();
+
+      // 切换为每周重复
+      const weeklyRepeatBtn = container.querySelector("#stgRepeatWeeklyBtn") as HTMLButtonElement;
+      expect(weeklyRepeatBtn).not.toBeNull();
+      await act(async () => {
+        weeklyRepeatBtn.click();
+      });
+      expect(weeklyRepeatBtn.className).toContain("bg-purple-600");
+
+      const firstStudentCheckbox = container.querySelector("#stageStudentsGrid input") as HTMLInputElement;
+      await act(async () => {
+        (firstStudentCheckbox.closest("div[class*='rounded-xl']") as HTMLDivElement)?.click();
+      });
+      await act(async () => {
+        (container.querySelector("#btnSaveStageTask") as HTMLButtonElement).click();
+      });
+
+      expect(container.querySelectorAll("#stageTasksListContainer [role='listitem']")).toHaveLength(1);
+      expect(container.querySelector("#stageTasksListContainer")?.textContent).toContain("张小明");
+      expect(container.querySelector("#stageTasksListContainer")?.textContent).toContain("三年级二班");
+      expect(container.querySelector("#stageTasksListContainer")?.textContent).toContain("每周循环");
+
+      const executeBtn = container.querySelector("[id^='btn-execute-task-']") as HTMLButtonElement | null;
+      expect(executeBtn).not.toBeNull();
+      await act(async () => executeBtn?.click());
+
+      await act(async () => {
+        await new Promise(r => setTimeout(r, 1600));
+      });
+      expect(container.textContent).toContain("已自动完成生成并转入草稿箱");
+
+      const dashboardTabBtn = container.querySelector("#mainTabDashboard") as HTMLButtonElement | null;
+      await act(async () => {
+        dashboardTabBtn?.click();
+      });
+      expect(container.textContent).toContain("待审核草稿");
+      expect(container.textContent).toContain("AI 阶段报告");
+    });
   });
 });

@@ -74,8 +74,13 @@ const masteryColors = {
   practicing: "bg-blue-50 text-blue-700",
   needs_support: "bg-violet-100 text-violet-700"
 };
-const periodNames: Record<string, string> = { week: "每周成长报告", month: "每月成长报告", term: "学期成长报告" };
-const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
+const periodNames: Record<string, string> = {
+  week: "每周成长报告",
+  month: "每月成长报告",
+  term: "学期成长报告",
+  stage: "阶段成长报告"
+};
+const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期", stage: "本阶段" };
 function dateText(value?: string, exclusive = false) {
   if (!value) return "";
   const date = new Date(new Date(value).getTime() - (exclusive ? 1 : 0));

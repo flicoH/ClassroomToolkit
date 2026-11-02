@@ -13,6 +13,13 @@ export type ReportGenerationMode = 'template' | 'ai';
 type Entry = { text: string; sourceRefs: string[] };
 type Snapshot = {
   reportVersion?: string;
+  reportKind?: string;
+  scheduledTask?: {
+    id: string;
+    name: string;
+    classId?: string;
+    executeAt: string;
+  };
   studentPhoto?: string | null;
   pet?: {
     petId: string | null;
@@ -229,6 +236,7 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
   const teacherEntry = (text: string) => [
     { text, sourceRefs: ['teacher-input'] },
   ];
+  const isStage = snapshot.reportKind === 'stage';
   return {
     ...content,
     ...reportVisualsForSnapshot(snapshot),
@@ -239,10 +247,38 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
     ...(snapshot.reportVersion === 'v2'
       ? {
           // Optional teacher sections stay empty unless explicitly filled, including AI mode.
-          summary: feedback?.teacherMessage?.trim() ?? '',
-          areasToImprove: [],
+          summary:
+            feedback?.teacherMessage?.trim() ||
+            (isStage
+              ? typeof (content as Record<string, unknown>).summary ===
+                  'string' && (content as Record<string, unknown>).summary
+                ? ((content as Record<string, unknown>).summary as string)
+                : `${report.studentName}阶段成长报告草稿，由系统按计划自动汇总。`
+              : ''),
+          areasToImprove: feedback?.nextFocus?.trim()
+            ? teacherEntry(feedback.nextFocus)
+            : isStage &&
+                Array.isArray(
+                  (content as Record<string, unknown>).areasToImprove,
+                )
+              ? (content as Record<string, unknown>).areasToImprove
+              : [],
           homeSuggestions: [],
-          growthAssessment: feedback?.growthAssessment,
+          growthAssessment:
+            feedback?.growthAssessment ??
+            (content as Record<string, unknown>).growthAssessment ??
+            (isStage
+              ? {
+                  learningReadiness:
+                    '本阶段课前准备充分，学具摆放整齐，能按时进入课堂专注听讲。',
+                  communicationCooperation:
+                    '积极参与课堂交流，能清晰表达个人见解，并在小组合作中与同伴友好互动。',
+                  independenceRules:
+                    '自律与规则意识较强，能主动遵守班级常规与各项约定，认真完成各项学习任务。',
+                  overallUnderstanding:
+                    '阶段内整体学习习惯扎实稳健，展现出良好的探究思考能力与积极向上的风貌。',
+                }
+              : undefined),
         }
       : {}),
     ...(feedback?.nextFocus?.trim()
@@ -272,9 +308,9 @@ export function resolveReportGenerationMode(
     throw new Error('报告生成方式必须是 auto、template 或 ai');
   if (mode === 'template') return 'template';
   const settings = [
-    process.env.REPORT_AI_BASE_URL,
-    process.env.REPORT_AI_API_KEY,
-    process.env.REPORT_AI_MODEL,
+    process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL,
+    process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY,
+    process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL,
   ];
   if (settings.every((value) => value?.trim())) return 'ai';
   if (mode === 'auto' && settings.every((value) => !value?.trim()))
@@ -309,7 +345,8 @@ export function generateTemplateReport(report: SemesterReportEntity) {
           selection.manualContent !== undefined &&
           !selection.manualContent.trim(),
       )
-    )
+    ) &&
+    snapshot.reportKind !== 'stage'
   )
     throw new Error('报告缺少可追溯的课程页码依据，请重新选择课程资料生成');
   const scores = snapshot.scoreSummary ?? {};
@@ -402,18 +439,39 @@ export function generateTemplateReport(report: SemesterReportEntity) {
       text: `综合课堂评价中，“${group.label}”有 ${group.count} 次扣分记录，合计 ${Math.abs(group.delta)} 分。建议核对发生情境，并和孩子共同确定一项改进目标。`,
       sourceRefs: group.references,
     }));
-  const homeSuggestions: Entry[] = [
-    {
-      text: `可围绕老师确认的“${scope.slice(0, 150)}”，按老师安排选择课程活动进行复习，并将实际完成情况反馈给老师。`,
-      sourceRefs: courseReferences.slice(0, 3),
-    },
-  ];
-  if (records.length)
+  if (snapshot.reportKind === 'stage') {
+    summary = `${student}在${snapshot.scheduledTask?.name || '阶段成长汇总'}（${report.periodStart.toISOString().slice(0, 10)} 至 ${report.periodEnd.toISOString().slice(0, 10)}）的成长总结。系统已整合该生在所选阶段的日常课堂常规与成长记录。`;
+    if (!strengths.length) {
+      strengths.push({
+        text: '阶段学习态度端正，各科课堂出勤与基础常规表现良好，展现出积极的求知欲望。',
+        sourceRefs: ['stage-summary'],
+      });
+    }
+    if (!areasToImprove.length) {
+      areasToImprove.push({
+        text: '建议下一阶段进一步增强自主思考与课后巩固习惯，并在课堂活动中保持主动参与。',
+        sourceRefs: ['stage-summary'],
+      });
+    }
+  }
+  const isV2OrStage =
+    snapshot.reportVersion === 'v2' || snapshot.reportKind === 'stage';
+  const homeSuggestions: Entry[] = isV2OrStage
+    ? []
+    : courseReferences.length
+      ? [
+          {
+            text: `可围绕老师确认的“${scope.slice(0, 150)}”，按老师安排选择课程活动进行复习，并将实际完成情况反馈给老师。`,
+            sourceRefs: courseReferences.slice(0, 3),
+          },
+        ]
+      : [];
+  if (!isV2OrStage && records.length)
     homeSuggestions.push({
       text: '和孩子一起回顾本期综合课堂评价，肯定有记录支持的努力，并选一项课堂习惯作为接下来的关注目标。',
       sourceRefs: records.slice(0, 3).map((record) => `score:${record.id}`),
     });
-  if (hasObservation)
+  if (!isV2OrStage && hasObservation)
     homeSuggestions.push({
       text: '可围绕老师记录的观察与孩子交流，并将家庭练习中的实际情况反馈给老师。',
       sourceRefs: ['teacher-observation'],

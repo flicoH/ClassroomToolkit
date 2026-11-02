@@ -24,11 +24,12 @@ export type DraftModalReport = {
   id: string;
   studentName: string;
   className: string;
-  period: "week" | "month" | "term";
+  period: "week" | "month" | "term" | "stage";
   status: string;
   startDate?: string;
   endDate?: string;
   reportVersion?: "v1" | "v2";
+  isStageReport?: boolean;
   content: LearningReportContent;
 };
 
@@ -409,9 +410,15 @@ export function DraftEditModal({
             <div>
               <h2 className="flex items-center gap-2 text-sm font-bold sm:text-base">
                 <span>{report.studentName} · 报告草稿微调</span>
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                  草稿状态
-                </span>
+                {report.isStageReport || report.period === "stage" ? (
+                  <span className="rounded-full border border-purple-200 bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-700 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                    ✨ AI 阶段汇总草稿
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    草稿状态
+                  </span>
+                )}
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground hidden sm:block">
                 所填内容实时镜像同步至右侧 1:1 家长端长图；支持历史修订对比与一键还原

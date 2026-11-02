@@ -6,4 +6,5 @@ export * from "./types";
 export * from "./V2ClassroomPerformance";
 export * from "./DraftEditModal";
 export * from "./NewReportWizard";
+export * from "./StageReportSchedulerView";
 export * from "./SemesterReportsV2View";

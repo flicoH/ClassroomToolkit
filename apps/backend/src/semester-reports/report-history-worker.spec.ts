@@ -36,10 +36,12 @@ describe('generated report history', () => {
       const internals = worker as unknown as {
         run(): Promise<void>;
         requeueExpiredClaims(): Promise<void>;
+        queueDueScheduledReports(): Promise<void>;
         processDocument(): Promise<boolean>;
         generate(): Promise<unknown>;
       };
       jest.spyOn(internals, 'requeueExpiredClaims').mockResolvedValue();
+      jest.spyOn(internals, 'queueDueScheduledReports').mockResolvedValue();
       jest.spyOn(internals, 'processDocument').mockResolvedValue(false);
       jest
         .spyOn(internals, 'generate')
@@ -65,4 +67,97 @@ describe('generated report history', () => {
       expect(manager.getRepository).toHaveBeenCalledWith(ReportEventEntity);
     },
   );
+
+  it('promotes due scheduled reports to queued status in background worker', async () => {
+    const qb = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue({ affected: 2 }),
+    };
+    const repo = {
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    };
+    const worker = new SemesterReportWorker({
+      getRepository: jest.fn().mockReturnValue(repo),
+    } as unknown as DataSource);
+    const internals = worker as unknown as {
+      queueDueScheduledReports(): Promise<void>;
+    };
+    await internals.queueDueScheduledReports();
+    expect(qb.set).toHaveBeenCalledWith({ status: 'queued' });
+    expect(qb.where).toHaveBeenCalledWith('status = :status', {
+      status: 'scheduled',
+    });
+    expect(qb.execute).toHaveBeenCalled();
+  });
+
+  it('generates stage report draft when scheduled task becomes queued', async () => {
+    const stageRow = {
+      id: 'stage-report-1',
+      teacherId: 'teacher-1',
+      studentName: '测试学生',
+      periodType: 'term',
+      periodStart: new Date('2026-03-01'),
+      periodEnd: new Date('2026-05-30'),
+      status: 'queued',
+      content: null,
+      snapshot: {
+        reportVersion: 'v2',
+        reportKind: 'stage',
+        generationMode: 'auto',
+        allowedReferences: ['stage-summary'],
+        scheduledTask: {
+          id: 'task-1',
+          name: '阶段成长汇总',
+          executeAt: new Date(Date.now() - 1000).toISOString(),
+        },
+      },
+    };
+    const reports = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(stageRow)
+        .mockResolvedValueOnce({ ...stageRow, status: 'generating' }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      save: jest.fn(),
+    };
+    const events = { create: jest.fn((val) => val), save: jest.fn() };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === SemesterReportEntity ? reports : events,
+      ),
+    };
+    const transaction = jest.fn(async (cb) => cb(manager));
+    const worker = new SemesterReportWorker({
+      getRepository: manager.getRepository,
+      transaction,
+    } as unknown as DataSource);
+    const internals = worker as unknown as {
+      run(): Promise<void>;
+      requeueExpiredClaims(): Promise<void>;
+      queueDueScheduledReports(): Promise<void>;
+      processDocument(): Promise<boolean>;
+    };
+    jest.spyOn(internals, 'requeueExpiredClaims').mockResolvedValue();
+    jest.spyOn(internals, 'queueDueScheduledReports').mockResolvedValue();
+    jest.spyOn(internals, 'processDocument').mockResolvedValue(false);
+
+    await internals.run();
+
+    expect(reports.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'draft',
+        content: expect.objectContaining({
+          growthAssessment: expect.objectContaining({
+            learningReadiness: expect.any(String),
+            communicationCooperation: expect.any(String),
+            independenceRules: expect.any(String),
+            overallUnderstanding: expect.any(String),
+          }),
+        }),
+      }),
+    );
+  });
 });

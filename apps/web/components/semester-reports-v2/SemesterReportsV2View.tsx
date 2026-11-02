@@ -14,6 +14,7 @@ import type { LearningReportContent, LearningReportData } from "@/components/sem
 import { localReportShareUrl } from "@/lib/report-share-url";
 import { copyText } from "@/lib/clipboard";
 import { DraftEditModal, type DraftModalReport } from "./DraftEditModal";
+import { StageReportSchedulerView } from "./StageReportSchedulerView";
 import { V2ClassroomPerformance, type V2Subject, type PerformanceRating } from "./V2ClassroomPerformance";
 import { ReportPetView, type ReportPet } from "@/components/semester-reports/ReportPetView";
 import { PeriodScoreChart } from "@/components/semester-reports/PeriodScoreChart";
@@ -400,8 +401,9 @@ const fallbackHistoricalReports: ReportSummaryItem[] = [
  *    - 保证公开家长分享链接必须为 40~50 位加密 Token，杜绝任意伪造与越权访问。
  */
 export function SemesterReportsV2View() {
-  // 核心 3 大主导航：与 report-composer-prototype.html 100% 一致
-  const [activeMainTab, setActiveMainTab] = useState<"dashboard" | "compose" | "settings">("dashboard");
+  // 核心 4 大主导航：报告管理与分发 / 填写与生成报告 / AI 阶段汇总 (定时任务) / 学期学科设置
+  const [activeMainTab, setActiveMainTab] = useState<"dashboard" | "compose" | "stage" | "settings">("dashboard");
+  const [activeScheduledTaskCount, setActiveScheduledTaskCount] = useState(0);
 
   // 数据集状态
   const [terms, setTerms] = useState<Term[]>([]);
@@ -589,48 +591,8 @@ export function SemesterReportsV2View() {
         setSelectedStudentIds([]);
         setSelectedStudentClass("");
       } else {
-        setStudents([
-          {
-            id: "s1",
-            name: "张小明",
-            classId: "c1",
-            className: "一年级1班",
-            score: 120,
-            pet: { name: "炭尾狐", level: 3, stage: "成长形态" }
-          },
-          {
-            id: "s2",
-            name: "李小华",
-            classId: "c1",
-            className: "一年级1班",
-            score: 95,
-            pet: { name: "青灵鹿", level: 2, stage: "成长形态" }
-          },
-          {
-            id: "s3",
-            name: "王晓萌",
-            classId: "c2",
-            className: "一年级2班",
-            score: 140,
-            pet: { name: "星绒兔", level: 4, stage: "成熟形态" }
-          },
-          {
-            id: "s4",
-            name: "赵一鸣",
-            classId: "c2",
-            className: "一年级2班",
-            score: 88,
-            pet: { name: "水纹海豹", level: 2, stage: "幼年形态" }
-          },
-          {
-            id: "s5",
-            name: "孙思琪",
-            classId: "c2",
-            className: "一年级2班",
-            score: 110,
-            pet: { name: "金鳞幼鸟", level: 3, stage: "成长形态" }
-          }
-        ]);
+        // 权限数据加载失败时保持空集，不能把演示学生当成当前教师可见数据。
+        setStudents([]);
         setSelectedStudentIds([]);
         setSelectedStudentClass("");
       }
@@ -867,6 +829,8 @@ export function SemesterReportsV2View() {
       if (currentFilterStatus) {
         if (currentFilterStatus === "draft") {
           if (!isDraftStatus(r.status)) return false;
+        } else if (currentFilterStatus === "stage") {
+          if (!r.isStageReport && r.period !== "stage") return false;
         } else if (r.status !== currentFilterStatus) {
           return false;
         }
@@ -922,7 +886,8 @@ export function SemesterReportsV2View() {
       all: reports.length,
       draft: reports.filter(r => isDraftStatus(r.status)).length,
       published: reports.filter(r => r.status === "published").length,
-      failed: reports.filter(r => r.status === "failed").length
+      failed: reports.filter(r => r.status === "failed").length,
+      stage: reports.filter(r => r.isStageReport || r.period === "stage").length
     };
   }, [reports]);
 
@@ -1657,6 +1622,24 @@ export function SemesterReportsV2View() {
           </button>
           <button
             type="button"
+            id="mainTabStage"
+            onClick={() => setActiveMainTab("stage")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-center transition ${
+              activeMainTab === "stage"
+                ? "bg-card font-bold text-purple-600 shadow-xs"
+                : "font-medium text-muted-foreground hover:bg-card/60"
+            }`}
+          >
+            <Sparkles className="h-4 w-4 text-purple-500" />
+            <span>AI 阶段汇总 (定时任务)</span>
+            {activeScheduledTaskCount > 0 && (
+              <span className="ml-1 rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-900/60 dark:text-purple-300">
+                {activeScheduledTaskCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             id="mainTabSettings"
             onClick={() => setActiveMainTab("settings")}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-center transition ${
@@ -1722,6 +1705,19 @@ export function SemesterReportsV2View() {
             >
               生成失败 ({statusCounts.failed})
             </button>
+            <button
+              type="button"
+              id="filterStatusStage"
+              onClick={() => setCurrentFilterStatus("stage")}
+              className={`flex items-center gap-1 rounded-xl px-3 py-1.5 font-medium transition ${
+                currentFilterStatus === "stage"
+                  ? "bg-purple-600 font-bold text-white shadow-xs"
+                  : "border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-300"
+              }`}
+            >
+              <Sparkles className="h-3 w-3" />
+              <span>AI 阶段报告 ({statusCounts.stage})</span>
+            </button>
           </div>
 
           {/* 复合搜索过滤栏 */}
@@ -1745,6 +1741,7 @@ export function SemesterReportsV2View() {
                 <option value="">全部周期</option>
                 <option value="week">周报</option>
                 <option value="month">月报</option>
+                <option value="stage">阶段报告</option>
                 <option value="term">学期报告</option>
               </select>
               <select
@@ -1887,7 +1884,8 @@ export function SemesterReportsV2View() {
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold sm:text-sm">
                             <span>
-                              {r.className} · {r.studentName}
+                              {r.className ? `${r.className} · ` : ""}
+                              {r.studentName || "学生"}
                             </span>
                             <span
                               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -1900,9 +1898,21 @@ export function SemesterReportsV2View() {
                             >
                               {isPublished ? "已发布 (公开)" : isFailed ? "失败" : "待发布草稿"}
                             </span>
+                            {(r.isStageReport || r.period === "stage") && (
+                              <span className="flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                                <Sparkles className="h-3 w-3" />
+                                <span>AI 阶段报告</span>
+                              </span>
+                            )}
                           </div>
                           <div className="mt-0.5 text-[11px] text-muted-foreground">
-                            {r.period === "week" ? "周报" : r.period === "month" ? "月报" : "学期报告"}
+                            {r.period === "week"
+                              ? "周报"
+                              : r.period === "month"
+                                ? "月报"
+                                : r.period === "stage"
+                                  ? "阶段报告"
+                                  : "学期报告"}
                             {formatReportDateRange(r) ? ` (${formatReportDateRange(r)})` : ""} · 学科:{" "}
                             {getReportSubjectNames(r, subjects)}
                           </div>
@@ -3205,6 +3215,23 @@ export function SemesterReportsV2View() {
             </div>
           </div>
         </main>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 模块四：【AI 阶段汇总 (定时任务中心)】                                  */}
+      {/* ========================================================================= */}
+      {activeMainTab === "stage" && (
+        <StageReportSchedulerView
+          students={students}
+          subjects={subjects}
+          activeTerm={activeTerm}
+          onReportsChanged={() => void loadInitialData()}
+          onNavigateToDashboard={() => {
+            setActiveMainTab("dashboard");
+            setCurrentFilterStatus("stage");
+          }}
+          onActiveTaskCountChange={setActiveScheduledTaskCount}
+        />
       )}
 
       {/* ========================================================================= */}

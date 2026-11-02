@@ -59,7 +59,10 @@ export type ReportSummaryItem = {
   subjectId?: string;
   termId?: string;
   courseSelections?: Array<{ subjectId: string; courseScope?: string }>;
-  period: "week" | "month" | "term";
+  period: "week" | "month" | "term" | "stage";
+  isStageReport?: boolean;
+  weeklyCount?: number;
+  coverageRate?: string;
   /** queued / generating 属于后台异步生成阶段，在前端归入待发布草稿范畴 */
   status: "queued" | "generating" | "draft" | "published" | "failed";
   createdAt: string;
@@ -88,4 +91,24 @@ export type CourseDocument = {
   extractedGrammar?: string[];
   extractedCompetencies?: string[];
   createdAt: string;
+};
+
+/** AI 阶段汇总定时任务：由云端守护进程独立调度，支持多任务、修改、立即执行与离线执行 */
+export type StageScheduledTask = {
+  id: string;
+  name: string;
+  classId?: string;
+  className: string;
+  studentIds: string[];
+  studentNames: string;
+  startDate: string;
+  endDate: string;
+  schedDate: string;
+  schedTime: string;
+  executeTimestamp: number;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  repeatType?: "none" | "weekly" | "monthly";
+  isCloudDaemon: boolean;
+  createdAt?: string;
+  generatedCount?: number;
 };

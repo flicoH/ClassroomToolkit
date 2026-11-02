@@ -71,6 +71,14 @@ import {
 
 const periods = ['week', 'month', 'term'] as const;
 
+type ScheduledReportOptions = {
+  taskId: string;
+  name: string;
+  classId: string;
+  executeAt: Date;
+  repeatType?: 'none' | 'weekly' | 'monthly';
+};
+
 @Injectable()
 export class SemesterReportsService {
   constructor(
@@ -366,6 +374,7 @@ export class SemesterReportsService {
     classroomPhotos?: Array<string | null>,
     classroomPhotoCaptions?: string[],
     studentPhoto?: string | null,
+    scheduled?: ScheduledReportOptions,
   ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
@@ -376,8 +385,9 @@ export class SemesterReportsService {
         ? { name: '全部课程' }
         : await this.requireSubject(subjectId);
     if (
-      start < shanghaiMidnight(term.startDate) ||
-      end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
+      !scheduled &&
+      (start < shanghaiMidnight(term.startDate) ||
+        end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000))
     )
       throw new BadRequestException('报告周期必须在学期日期范围内');
     const {
@@ -488,6 +498,18 @@ export class SemesterReportsService {
       const scores = await this.scoreSummary(student, start, end);
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
+        ...(scheduled
+          ? {
+              reportKind: 'stage',
+              scheduledTask: {
+                id: scheduled.taskId,
+                name: scheduled.name,
+                classId: scheduled.classId,
+                executeAt: scheduled.executeAt.toISOString(),
+                repeatType: scheduled.repeatType || 'none',
+              },
+            }
+          : {}),
         ...(isV2
           ? {
               studentPhoto:
@@ -545,6 +567,7 @@ export class SemesterReportsService {
           ...scores.records.map((record) => `score:${record.id}`),
           ...(observation ? ['teacher-observation'] : []),
           ...(teacherInput ? ['teacher-input'] : []),
+          ...(scheduled ? ['stage-summary'] : []),
         ],
         courseScope,
         scoreNotice: '综合课堂表现记录，不代表该学科知识掌握程度。',
@@ -565,7 +588,7 @@ export class SemesterReportsService {
           scoreScope: 'overall',
           snapshot,
           content: null,
-          status: 'queued',
+          status: scheduled ? 'scheduled' : 'queued',
           keywords: keyword || null,
           teacherObservation: observation || null,
           courseScope: courseScope || null,
@@ -573,7 +596,7 @@ export class SemesterReportsService {
           publishedAt: null,
         }),
       );
-      await this.log('report-queued', {
+      await this.log(scheduled ? 'report-scheduled' : 'report-queued', {
         reportId: report.id,
         details: {
           period,
@@ -589,6 +612,176 @@ export class SemesterReportsService {
       reports: created.map((r) => this.reportDto(r)),
       scoreScope: 'overall',
     };
+  }
+
+  /**
+   * 定时任务在教师会话内完成权限校验并冻结生成快照；到点后仅由后台 Worker
+   * 将 scheduled 状态推进到 queued，因此退出登录不会丢失任务。
+   */
+  async createScheduledTask(input: Record<string, unknown>) {
+    const executeAt = new Date(String(input.executeAt ?? ''));
+    if (
+      Number.isNaN(executeAt.getTime()) ||
+      executeAt.getTime() < Date.now() + 5000 ||
+      executeAt.getTime() > Date.now() + 400 * 86400000
+    )
+      throw new BadRequestException(
+        '云端执行时间必须晚于当前时间且不超过 400 天',
+      );
+    const name = String(input.name ?? '')
+      .trim()
+      .slice(0, 100);
+    if (!name) throw new BadRequestException('请填写定时任务名称');
+    const taskId = randomUUID();
+    const classId = String(input.classId ?? 'all').slice(0, 64);
+    const rawRepeat = String(input.repeatType ?? 'none');
+    const repeatType = (
+      ['none', 'weekly', 'monthly'].includes(rawRepeat) ? rawRepeat : 'none'
+    ) as 'none' | 'weekly' | 'monthly';
+    const result = await this.generate(
+      {
+        ...input,
+        reportVersion: 'v2',
+        period: 'term',
+        start: input.startDate,
+        end: input.endDate,
+        generationMode: input.generationMode ?? 'auto',
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { taskId, name, classId, executeAt, repeatType },
+    );
+    const reports = result.reports;
+    return {
+      id: taskId,
+      name,
+      classId,
+      className:
+        new Set(reports.map((report) => report.className)).size === 1
+          ? reports[0]?.className
+          : '跨班挑选',
+      studentIds: reports.map((report) => report.studentId),
+      studentNames: reports.map((report) => report.studentName).join('、'),
+      startDate: String(input.startDate),
+      endDate: String(input.endDate),
+      executeAt: executeAt.toISOString(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  async listScheduledTasks() {
+    const rows = await this.reports
+      .createQueryBuilder('report')
+      .select('report.id', 'id')
+      .addSelect('report.status', 'status')
+      .addSelect('report.studentId', 'studentId')
+      .addSelect('report.studentName', 'studentName')
+      .addSelect('report.className', 'className')
+      .addSelect('report.periodStart', 'periodStart')
+      .addSelect('report.periodEnd', 'periodEnd')
+      .addSelect('report.createdAt', 'createdAt')
+      .addSelect(
+        "JSON_EXTRACT(report.snapshot, '$.scheduledTask')",
+        'scheduledTask',
+      )
+      .where('report.teacherId = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
+      )
+      .andWhere('report.status != :deleted', { deleted: 'deleted' })
+      .orderBy('report.createdAt', 'DESC')
+      .getRawMany<{
+        id: string;
+        status: string;
+        studentId: string;
+        studentName: string;
+        className: string;
+        periodStart: Date;
+        periodEnd: Date;
+        createdAt: Date;
+        scheduledTask: string | ScheduledReportOptions;
+      }>();
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const task =
+        typeof row.scheduledTask === 'string'
+          ? (JSON.parse(row.scheduledTask) as ScheduledReportOptions)
+          : row.scheduledTask;
+      if (!task?.taskId && !(task as unknown as { id?: string })?.id) continue;
+      const id = task.taskId ?? (task as unknown as { id: string }).id;
+      groups.set(id, [...(groups.get(id) ?? []), row]);
+    }
+    return [...groups.entries()].map(([id, taskRows]) => {
+      const rawTask = taskRows[0]!.scheduledTask;
+      const task =
+        typeof rawTask === 'string'
+          ? (JSON.parse(rawTask) as ScheduledReportOptions & { id?: string })
+          : (rawTask as ScheduledReportOptions & { id?: string });
+      const statuses = new Set(taskRows.map((row) => row.status));
+      const status = statuses.has('scheduled')
+        ? 'pending'
+        : statuses.has('queued') || statuses.has('generating')
+          ? 'running'
+          : statuses.has('failed')
+            ? 'failed'
+            : 'completed';
+      return {
+        id,
+        name: task.name,
+        classId: task.classId,
+        className:
+          new Set(taskRows.map((row) => row.className)).size === 1
+            ? taskRows[0]!.className
+            : '跨班挑选',
+        studentIds: taskRows.map((row) => row.studentId),
+        studentNames: taskRows.map((row) => row.studentName).join('、'),
+        startDate: taskRows[0]!.periodStart.toISOString().slice(0, 10),
+        endDate: new Date(taskRows[0]!.periodEnd.getTime() - 1)
+          .toISOString()
+          .slice(0, 10),
+        executeAt: String(task.executeAt),
+        repeatType: (task as { repeatType?: string }).repeatType || 'none',
+        status,
+        createdAt: taskRows[0]!.createdAt,
+      };
+    });
+  }
+
+  async executeScheduledTask(id: string) {
+    const result = await this.reports
+      .createQueryBuilder()
+      .update(SemesterReportEntity)
+      .set({ status: 'queued' })
+      .where('teacher_id = :teacherId', { teacherId: this.teacher.teacherId })
+      .andWhere('status = :status', { status: 'scheduled' })
+      .andWhere(
+        "JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.id')) = :id",
+        { id },
+      )
+      .execute();
+    if (!result.affected) throw new NotFoundException('未找到待执行的定时任务');
+    return { id, status: 'running' };
+  }
+
+  async deleteScheduledTask(id: string) {
+    const result = await this.reports
+      .createQueryBuilder()
+      .update(SemesterReportEntity)
+      .set({ status: 'deleted' })
+      .where('teacher_id = :teacherId', { teacherId: this.teacher.teacherId })
+      .andWhere('status = :status', { status: 'scheduled' })
+      .andWhere(
+        "JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.id')) = :id",
+        { id },
+      )
+      .execute();
+    if (!result.affected) throw new NotFoundException('未找到可取消的定时任务');
+    return { id, deleted: true };
   }
 
   async listReports(filters: Record<string, unknown> = {}) {
@@ -636,6 +829,7 @@ export class SemesterReportsService {
         teacherId: this.teacher.teacherId,
       })
       .andWhere('report.status != :deleted', { deleted: 'deleted' });
+    query.andWhere('report.status != :scheduled', { scheduled: 'scheduled' });
     // 在教师范围内先检索再分页，保证历史报告也可查到；LIKE 通配符按老师输入的原文搜索。
     if (q)
       query.andWhere(
@@ -714,6 +908,7 @@ export class SemesterReportsService {
           'subjectName', JSON_EXTRACT(report.snapshot, '$.subjectName'),
           'courseSelections', JSON_EXTRACT(report.snapshot, '$.courseSelections'),
           'generationMode', JSON_EXTRACT(report.snapshot, '$.generationMode'),
+          'reportKind', JSON_EXTRACT(report.snapshot, '$.reportKind'),
           'courseSubjectIds', JSON_EXTRACT(report.snapshot, '$.courseDocuments[*].subjectId')
         )`,
         'summary_snapshot',
@@ -2081,6 +2276,7 @@ export class SemesterReportsService {
     return {
       id: row.id,
       reportVersion: row.snapshot?.reportVersion ?? 'v1',
+      isStageReport: row.snapshot?.reportKind === 'stage',
       courseSelections: this.reportCourseSelections(row),
       subjectName: row.snapshot?.subjectName,
       termId: row.termId,
@@ -2088,7 +2284,7 @@ export class SemesterReportsService {
       studentId: row.studentId,
       studentName: row.studentName,
       className: row.className,
-      period: row.periodType,
+      period: row.snapshot?.reportKind === 'stage' ? 'stage' : row.periodType,
       start: row.periodStart,
       end: row.periodEnd,
       scoreScope: row.scoreScope,
