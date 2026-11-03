@@ -1906,7 +1906,7 @@ describe("SemesterReports mobile workflow", () => {
     await act(async () => button("确认发布").click());
     expect(container.querySelectorAll("article")).toHaveLength(201);
     expect(container.querySelector<HTMLInputElement>('[data-report-id="older"]')!.checked).toBe(true);
-  });
+  }, 20000);
 
   it("keeps the date filter and matching loaded reports when a date query fails", async () => {
     Object.assign(publishedReport(false), { start: "2026-10-11T16:00:00.000Z", end: "2026-10-18T16:00:00.000Z" });

@@ -526,6 +526,11 @@ describe('local template reports', () => {
     expect(request.messages?.[0]?.content).toContain(
       'areasToImprove（下一步重点）必须使用 scoreEvidenceForNextFocus',
     );
+    expect(request.messages?.[0]?.content).toContain('婉转而明白');
+    expect(request.messages?.[0]?.content).toContain(
+      '严禁提及具体时间、日期或课次',
+    );
+    expect(request.messages?.[0]?.content).toContain('严禁直接直白出现“扣分”');
     expect(request.messages?.[0]?.content).toContain('禁止出现“教师观察显示”');
     expect(request.messages?.[1]?.content).toContain('能够独立完成课前准备');
     expect(request.messages?.[1]?.content).toContain(
@@ -610,5 +615,132 @@ describe('local template reports', () => {
       independenceRules: 'AI 根据本阶段记录生成的规则评价',
       overallUnderstanding: 'AI 根据本阶段报告生成的综合画像',
     });
+  });
+
+  it('instructs tactful and euphemistic tone for deduction items in areasToImprove and cleans blunt deduction prefixes', async () => {
+    process.env.KIMI_BASE_URL = 'https://api.moonshot.cn/v1';
+    process.env.KIMI_API_KEY = 'test-key';
+    process.env.KIMI_MODEL = 'kimi-k2.6';
+
+    const mockAiResponse = {
+      summary: '阶段总结',
+      courseOverview: '课程概况',
+      growthAssessment: {
+        learningReadiness: '学习准备良好',
+        communicationCooperation: '表达顺畅',
+        independenceRules: '遵守约定',
+        overallUnderstanding: '阶段状态好',
+      },
+      strengths: [],
+      areasToImprove: [
+        {
+          text: '扣分项：若在课前准备上稍加留意，按时整理好学习用具，日常表现会更加沉稳。',
+          sourceRefs: ['stage-summary'],
+        },
+      ],
+      homeSuggestions: [],
+      limitations: ['依据当前阶段真实记录生成。'],
+    };
+
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify(mockAiResponse) } }],
+      }),
+    } as Response);
+
+    const stageReport = {
+      ...report,
+      periodType: 'term',
+      snapshot: {
+        ...report.snapshot,
+        reportVersion: 'v2',
+        reportKind: 'stage',
+        allowedReferences: ['stage-summary'],
+      },
+    } as unknown as SemesterReportEntity;
+
+    const worker = new SemesterReportWorker({} as DataSource) as unknown as {
+      generate(
+        report: SemesterReportEntity,
+        mode: 'ai',
+      ): Promise<Record<string, unknown>>;
+    };
+
+    const content = await worker.generate(stageReport, 'ai');
+    const stageCalls = jest.mocked(global.fetch).mock.calls;
+    const stageRequest = JSON.parse(
+      (stageCalls.at(-1)?.[1]?.body as string) || '{}',
+    ) as {
+      messages?: Array<{ role: string; content: string }>;
+    };
+
+    expect(stageRequest.messages?.[0]?.content).toContain('婉转而明白');
+    expect(stageRequest.messages?.[0]?.content).toContain(
+      '严禁提及具体时间、日期或课次',
+    );
+    expect(stageRequest.messages?.[0]?.content).toContain(
+      '严禁直接直白出现“扣分”',
+    );
+    const areas = content.areasToImprove as Array<{ text: string }>;
+    expect(areas[0]?.text).toBe(
+      '若在课前准备上稍加留意，按时整理好学习用具，日常表现会更加沉稳。',
+    );
+
+    // 验证清洗函数自动剥离具体日期开头
+    const mockAiWithDate = {
+      ...mockAiResponse,
+      areasToImprove: [
+        {
+          text: '10月15日课堂上，课前物品整理偶有遗漏，建议课前对照清单自查书本文具。',
+          sourceRefs: ['stage-summary'],
+        },
+      ],
+    };
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify(mockAiWithDate) } }],
+      }),
+    } as Response);
+    const dateCleanedContent = await worker.generate(stageReport, 'ai');
+    const cleanedAreas = dateCleanedContent.areasToImprove as Array<{
+      text: string;
+    }>;
+    expect(cleanedAreas[0]?.text).toBe(
+      '课前物品整理偶有遗漏，建议课前对照清单自查书本文具。',
+    );
+
+    // 验证非阶段报告系统提示词同样要求婉转而明白、严禁提及具体日期时间与直白说出扣分
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify(mockAiResponse) } }],
+      }),
+    } as Response);
+
+    const regularReport = {
+      ...report,
+      snapshot: {
+        ...report.snapshot,
+        reportVersion: 'v2',
+        allowedReferences: ['teacher-observation'],
+      },
+    } as unknown as SemesterReportEntity;
+
+    await worker.generate(regularReport, 'ai');
+    const regularCalls = jest.mocked(global.fetch).mock.calls;
+    const regularRequest = JSON.parse(
+      (regularCalls.at(-1)?.[1]?.body as string) || '{}',
+    ) as {
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(regularRequest.messages?.[0]?.content).toContain('婉转而明白');
+    expect(regularRequest.messages?.[0]?.content).toContain(
+      '严禁提及具体日期时间',
+    );
+    expect(regularRequest.messages?.[0]?.content).toContain(
+      '严禁直接直白说出“扣分”',
+    );
   });
 });
