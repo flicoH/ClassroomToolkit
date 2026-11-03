@@ -447,13 +447,20 @@ export class SemesterReportsService {
       );
     }
     const students = await this.findStudents(studentIds);
+    const stageStudentProfiles = scheduled
+      ? await Promise.all(
+          students.map((student, index) =>
+            this.stageStudentProfile(studentIds[index]!, student),
+          ),
+        )
+      : students.map(() => null);
     const scheduledTask = scheduled
       ? {
           ...scheduled,
           selectedStudents: students.map((student, index) => ({
             requestedId: studentIds[index]!,
             studentId: student.id,
-            name: student.name,
+            name: stageStudentProfiles[index]?.name ?? student.name,
           })),
         }
       : undefined;
@@ -509,12 +516,17 @@ export class SemesterReportsService {
       throw new BadRequestException('部分学生所在班级没有可用的已确认课程资料');
     const created: SemesterReportEntity[] = [];
     for (const [index, student] of students.entries()) {
+      const stageProfile = stageStudentProfiles[index];
+      const reportStudentName = stageProfile?.name ?? student.name;
       // 评价按客户端提交的 ID 取值，再换成教师隔离后的存储 ID，避免批量生成时把评价配给其他学生。
       const submittedFeedback = feedback.get(studentIds[index]!);
       const teacherInput = submittedFeedback
         ? { ...submittedFeedback, studentId: student.id }
         : undefined;
       const scores = await this.scoreSummary(student, start, end);
+      const stageGrowthAssessmentSources = scheduled
+        ? await this.stageGrowthAssessmentSources(student, start, end)
+        : undefined;
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
         ...(scheduled
@@ -538,7 +550,8 @@ export class SemesterReportsService {
           ? {
               studentPhoto:
                 studentPhoto === undefined
-                  ? await this.photoForStudent(student)
+                  ? (stageProfile?.photo ??
+                    (await this.photoForStudent(student)))
                   : studentPhoto,
             }
           : {}),
@@ -562,9 +575,10 @@ export class SemesterReportsService {
           : learningContents,
         reportDetails,
         teacherInput,
+        ...(scheduled ? { stageGrowthAssessmentSources } : {}),
         student: {
           id: student.id,
-          name: student.name,
+          name: reportStudentName,
           className: student.className,
         },
         subjectName: subject.name,
@@ -604,7 +618,7 @@ export class SemesterReportsService {
           termId,
           subjectId,
           studentId: student.id,
-          studentName: student.name,
+          studentName: reportStudentName,
           className: student.className,
           periodType: period,
           periodStart: start,
@@ -2331,6 +2345,78 @@ export class SemesterReportsService {
     return result;
   }
 
+  /** Stage dimensions summarize prior four-dimension report text, never scores. */
+  private async stageGrowthAssessmentSources(
+    student: PetStudentEntity,
+    start: Date,
+    end: Date,
+  ) {
+    const candidateIds = this.getStudentCandidateIds(student);
+    const query = this.reports
+      .createQueryBuilder('sourceReport')
+      .where('sourceReport.teacher_id = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere('sourceReport.student_id IN (:...studentIds)', {
+        studentIds: candidateIds,
+      })
+      .andWhere(
+        'sourceReport.period_start >= :start AND sourceReport.period_end <= :end',
+        { start, end },
+      )
+      .andWhere('sourceReport.status IN (:...statuses)', {
+        statuses: ['draft', 'published'],
+      })
+      .andWhere(
+        "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
+      )
+      .orderBy('sourceReport.periodStart', 'ASC')
+      .take(40);
+    const rows = await query.getMany();
+    const keys = [
+      'learningReadiness',
+      'communicationCooperation',
+      'independenceRules',
+      'overallUnderstanding',
+    ] as const;
+    return rows.flatMap((row) => {
+      const contentGrowth = row.content?.growthAssessment;
+      const teacherGrowth = (
+        row.snapshot?.teacherInput as
+          | { growthAssessment?: Record<string, unknown> }
+          | undefined
+      )?.growthAssessment;
+      const contentSource =
+        contentGrowth && typeof contentGrowth === 'object'
+          ? (contentGrowth as Record<string, unknown>)
+          : undefined;
+      if (!contentSource && !teacherGrowth) return [];
+      const growthAssessment = Object.fromEntries(
+        keys.map((key) => {
+          const contentValue = contentSource?.[key];
+          const teacherValue = teacherGrowth?.[key];
+          const value =
+            typeof contentValue === 'string' && contentValue.trim()
+              ? contentValue
+              : teacherValue;
+          return [
+            key,
+            typeof value === 'string' ? value.trim().slice(0, 800) : '',
+          ];
+        }),
+      );
+      if (!Object.values(growthAssessment).some(Boolean)) return [];
+      return [
+        {
+          reportId: row.id,
+          start: formatShanghaiDate(row.periodStart),
+          end: formatShanghaiDate(new Date(row.periodEnd.getTime() - 1)),
+          growthAssessment,
+        },
+      ];
+    });
+  }
+
   /** 宠物积分 ID 兼容教师前缀和旧标识；即使用学号兜底，也必须限定同一教师与班级。 */
   private async photoForStudent(student: PetStudentEntity) {
     if (!student.classId) return null;
@@ -2347,6 +2433,30 @@ export class SemesterReportsService {
           })
         : null);
     return profile?.photo ?? null;
+  }
+
+  /** Keep the selected profile's name and photo paired for stage reports. */
+  private async stageStudentProfile(
+    requestedId: string,
+    student: PetStudentEntity,
+  ) {
+    const teacherId = this.teacher.teacherId;
+    const ids = new Set(
+      [
+        requestedId,
+        requestedId.startsWith(`${teacherId}:`)
+          ? requestedId.slice(teacherId.length + 1)
+          : requestedId,
+        student.logicalId,
+      ].filter((id): id is string => Boolean(id)),
+    );
+    for (const id of ids) {
+      const profile = await this.studentProfiles.findOne({
+        where: { id, teacherId },
+      });
+      if (profile) return profile;
+    }
+    return null;
   }
 
   private async selectedCourses(

@@ -331,6 +331,13 @@ describe('report list metadata query', () => {
             classId: 'all',
             executeAt: '2026-10-30T12:00:00.000Z',
             repeatType: 'none',
+            selectedStudents: [
+              {
+                requestedId: 'profile-stu-1',
+                studentId: 'teacher-1:pet-stu-1',
+                name: '创建时学生甲',
+              },
+            ],
           }),
           snapshotStageCustomName: '10月份',
         },
@@ -348,7 +355,6 @@ describe('report list metadata query', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
       { teacherId: 'teacher-1' } as never,
     );
     const tasks = await service.listScheduledTasks();
@@ -356,5 +362,116 @@ describe('report list metadata query', () => {
     expect(tasks[0].id).toBe('task-100');
     expect(tasks[0].name).toBe('10月汇总任务');
     expect(tasks[0].stageCustomName).toBe('10月份');
+    expect(tasks[0].studentIds).toEqual(['profile-stu-1']);
+    expect(tasks[0].studentNames).toBe('创建时学生甲');
+    expect(tasks[0]).toMatchObject({
+      totalCount: 1,
+      completedCount: 0,
+      processingCount: 0,
+      failedCount: 0,
+      progressPercent: 0,
+    });
+  });
+
+  it('collects stage four-dimension sources from existing report text without score data', async () => {
+    const query = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'weekly-1',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-08T00:00:00+08:00'),
+          snapshot: { scoreSummary: { net: 99 } },
+          content: {
+            growthAssessment: {
+              learningReadiness: '能够主动准备学习用品。',
+              communicationCooperation: '能够倾听同伴表达。',
+              independenceRules: '能够遵守课堂约定。',
+              overallUnderstanding: '本周状态稳定。',
+            },
+          },
+        },
+      ]),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const internals = service as unknown as {
+      stageGrowthAssessmentSources(
+        student: Record<string, unknown>,
+        start: Date,
+        end: Date,
+      ): Promise<Array<Record<string, unknown>>>;
+    };
+
+    const sources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-10-01T00:00:00+08:00'),
+      new Date('2026-11-01T00:00:00+08:00'),
+    );
+
+    expect(sources).toEqual([
+      expect.objectContaining({
+        reportId: 'weekly-1',
+        growthAssessment: expect.objectContaining({
+          learningReadiness: '能够主动准备学习用品。',
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(sources)).not.toContain('99');
+  });
+
+  it('resolves a stage report name and photo from the same selected student profile', async () => {
+    const selectedProfile = {
+      id: 'profile-1',
+      teacherId: 'teacher-1',
+      name: '正确学生',
+      photo: 'data:image/jpeg;base64,correct',
+    };
+    const studentProfiles = {
+      findOne: jest.fn(async ({ where }) =>
+        where.id === 'profile-1' ? selectedProfile : null,
+      ),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+      studentProfiles as never,
+    );
+    const internals = service as unknown as {
+      stageStudentProfile(
+        requestedId: string,
+        student: Record<string, unknown>,
+      ): Promise<typeof selectedProfile | null>;
+    };
+
+    const profile = await internals.stageStudentProfile('profile-1', {
+      id: 'teacher-1:legacy-pet-row',
+      logicalId: 'different-profile',
+      name: '错误旧姓名',
+    });
+
+    expect(profile).toEqual(selectedProfile);
+    expect(profile?.name).toBe('正确学生');
+    expect(profile?.photo).toBe('data:image/jpeg;base64,correct');
   });
 });

@@ -407,6 +407,19 @@ describe('local template reports', () => {
         reportVersion: 'v2',
         reportKind: 'stage',
         allowedReferences: ['stage-summary'],
+        stageGrowthAssessmentSources: [
+          {
+            reportId: 'weekly-report-1',
+            start: '2026-10-01',
+            end: '2026-10-07',
+            growthAssessment: {
+              learningReadiness: '能够独立完成课前准备。',
+              communicationCooperation: '小组交流时能倾听同伴。',
+              independenceRules: '能够按约定整理学习用品。',
+              overallUnderstanding: '本周学习状态稳定。',
+            },
+          },
+        ],
         scheduledTask: {
           id: 'task-test',
           name: '10月成长总结',
@@ -430,8 +443,8 @@ describe('local template reports', () => {
       summary: '10月份成长总结。',
       courseOverview: '10月份课程概况。',
       growthAssessment: {
-        learningReadiness: '10月份上课准备迅速，思维敏捷。',
-        communicationCooperation: '在小组活动中积极分享观点。',
+        learningReadiness: '教师观察显示，10月份上课准备迅速，思维敏捷。',
+        communicationCooperation: '根据教师观察，小组活动中积极分享观点。',
         independenceRules: '能按时整理好学习资料，遵守课堂约定。',
         overallUnderstanding: '阶段整体表现积极主动，探索精神强。',
       },
@@ -459,6 +472,19 @@ describe('local template reports', () => {
         reportVersion: 'v2',
         reportKind: 'stage',
         allowedReferences: ['stage-summary'],
+        stageGrowthAssessmentSources: [
+          {
+            reportId: 'weekly-report-1',
+            start: '2026-10-01',
+            end: '2026-10-07',
+            growthAssessment: {
+              learningReadiness: '能够独立完成课前准备。',
+              communicationCooperation: '小组交流时能倾听同伴。',
+              independenceRules: '能够按约定整理学习用品。',
+              overallUnderstanding: '本周学习状态稳定。',
+            },
+          },
+        ],
         scheduledTask: {
           id: 'task-test',
           name: '10月成长总结',
@@ -494,12 +520,23 @@ describe('local template reports', () => {
       ),
     ).toEqual(expect.objectContaining({ temperature: 1 }));
     expect(request.messages?.[1]?.content).toContain(report.studentName);
+    expect(request.messages?.[0]?.content).toContain(
+      '禁止使用积分、加减分记录',
+    );
+    expect(request.messages?.[0]?.content).toContain(
+      'areasToImprove（下一步重点）必须使用 scoreEvidenceForNextFocus',
+    );
+    expect(request.messages?.[0]?.content).toContain('禁止出现“教师观察显示”');
+    expect(request.messages?.[1]?.content).toContain('能够独立完成课前准备');
+    expect(request.messages?.[1]?.content).toContain(
+      'scoreEvidenceForNextFocus',
+    );
     expect(consoleLog).toHaveBeenCalledWith(
       expect.stringContaining('[SemesterReportWorker] Kimi 返回数据:'),
     );
     expect(content.growthAssessment).toEqual({
       learningReadiness: '10月份上课准备迅速，思维敏捷。',
-      communicationCooperation: '在小组活动中积极分享观点。',
+      communicationCooperation: '小组活动中积极分享观点。',
       independenceRules: '能按时整理好学习资料，遵守课堂约定。',
       overallUnderstanding: '阶段整体表现积极主动，探索精神强。',
     });
