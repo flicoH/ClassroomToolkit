@@ -15,6 +15,7 @@ const links = [
   { path: '/students', label: '学生档案', icon: '册' },
   { path: '/classrooms', label: '班级管理', icon: '班' },
   { path: '/feedback', label: '意见反馈', icon: '言' },
+  { path: '/report-ai-settings', label: 'AI 报告配置', icon: 'AI' },
 ]
 async function logout() {
   try {

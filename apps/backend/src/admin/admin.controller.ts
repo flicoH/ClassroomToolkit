@@ -18,6 +18,20 @@ export class AdminController {
   @Post('login-ip-blocks/remove') unblockIp(@Body() body: { ip?: unknown }) {
     return this.service.updateBlockedIp(body, true);
   }
+  @Get('report-ai-settings') reportAiSettings() {
+    return this.service.reportAiSettings();
+  }
+  @Post('report-ai-settings') saveReportAiSettings(
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.service.saveReportAiSettings(body);
+  }
+  @Post('report-ai-settings/remove') deleteReportAiSettings() {
+    return this.service.deleteReportAiSettings();
+  }
+  @Get('report-ai-settings/balance') reportAiBalance() {
+    return this.service.reportAiBalance();
+  }
   /** 获取平台师生班级总数、今日注册及活跃概览。 */
   @Get('dashboard/overview') overview() {
     return this.service.overview();

@@ -4,12 +4,19 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { AdminDatabase } from './admin.database';
 import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
 import type { AdminMetadata, AdminDirectory } from './admin.types';
 import { dateRange, pageQuery, shanghaiDay } from './analytics/range';
 import { FEATURES } from '../analytics/features';
+import {
+  decryptReportAiKey,
+  encryptReportAiKey,
+  envReportAiConfig,
+  readReportAiConfig,
+} from '../semester-reports/report-ai-config';
 /** 管理端跨教师查询与账号管理；不复用绑定 TeacherContext 的教师业务查询层。 */
 @Injectable()
 export class AdminService {
@@ -22,6 +29,88 @@ export class AdminService {
     const ip = normalizeIp(body?.ip);
     if (!ip) throw new BadRequestException('请输入有效的 IPv4 或 IPv6 地址');
     return this.database.updateBlockedIp(ip, remove);
+  }
+  async reportAiSettings() {
+    const repository = this.database.reportAiSettings();
+    const stored = await repository.findOne({ where: { id: 'default' } });
+    const effective = stored
+      ? {
+          baseUrl: stored.baseUrl,
+          model: stored.model,
+          apiKey: decryptReportAiKey(stored.apiKeyCiphertext),
+          source: 'database' as const,
+        }
+      : envReportAiConfig();
+    return {
+      baseUrl: effective?.baseUrl ?? '',
+      model: effective?.model ?? '',
+      apiKeyMasked: effective?.apiKey
+        ? `${effective.apiKey.slice(0, 4)}••••${effective.apiKey.slice(-4)}`
+        : '',
+      configured: Boolean(effective),
+      source: effective?.source ?? 'none',
+      updatedAt: stored?.updatedAt ?? null,
+    };
+  }
+  async saveReportAiSettings(body: Record<string, unknown>) {
+    const repository = this.database.reportAiSettings();
+    const existing = await repository.findOne({ where: { id: 'default' } });
+    const baseUrl = String(body.baseUrl ?? '')
+      .trim()
+      .replace(/\/$/, '');
+    const model = String(body.model ?? '').trim();
+    const submittedKey = String(body.apiKey ?? '').trim();
+    const fallbackKey = existing
+      ? decryptReportAiKey(existing.apiKeyCiphertext)
+      : envReportAiConfig()?.apiKey;
+    const apiKey = submittedKey || fallbackKey || '';
+    if (!baseUrl || !model || !apiKey)
+      throw new BadRequestException('服务地址、API Key 和模型均不能为空');
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch {
+      throw new BadRequestException('AI 服务地址格式无效');
+    }
+    if (
+      !['https:', 'http:'].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password
+    )
+      throw new BadRequestException('AI 服务地址必须是无凭据的 HTTP(S) 地址');
+    await repository.save(
+      repository.create({
+        id: 'default',
+        baseUrl,
+        model: model.slice(0, 100),
+        apiKeyCiphertext: encryptReportAiKey(apiKey),
+      }),
+    );
+    return this.reportAiSettings();
+  }
+  async deleteReportAiSettings() {
+    await this.database.reportAiSettings().delete({ id: 'default' });
+    return this.reportAiSettings();
+  }
+  async reportAiBalance() {
+    const repository = this.database.reportAiSettings();
+    const config = await readReportAiConfig(repository.manager);
+    if (!config) throw new BadRequestException('尚未配置 AI 服务');
+    let response: Response;
+    try {
+      response = await fetch(`${config.baseUrl}/users/me/balance`, {
+        headers: { authorization: `Bearer ${config.apiKey}` },
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      throw new ServiceUnavailableException('余额接口连接失败或超时');
+    }
+    const data = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok)
+      throw new ServiceUnavailableException(
+        `余额接口返回 HTTP ${response.status}`,
+      );
+    return { data, source: config.source, queriedAt: new Date().toISOString() };
   }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {

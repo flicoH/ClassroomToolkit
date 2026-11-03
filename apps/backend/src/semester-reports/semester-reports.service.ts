@@ -19,6 +19,7 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
 import { readReportPublicBaseUrl } from './report-public-url';
+import { readReportAiConfig } from './report-ai-config';
 import {
   detectCourseUnits as detectUnits,
   selectCoursePages,
@@ -439,12 +440,22 @@ export class SemesterReportsService {
         '课程资料内容较多，请按章节拆分 PDF 后再生成，避免漏读课程内容',
       );
     let generationMode: 'template' | 'ai';
-    try {
-      generationMode = resolveReportGenerationMode(input.generationMode);
-    } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : '报告生成方式无效',
-      );
+    const managedAiConfig = await readReportAiConfig(this.reports.manager);
+    if (
+      managedAiConfig &&
+      (!input.generationMode ||
+        input.generationMode === 'auto' ||
+        input.generationMode === 'ai')
+    ) {
+      generationMode = 'ai';
+    } else {
+      try {
+        generationMode = resolveReportGenerationMode(input.generationMode);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : '报告生成方式无效',
+        );
+      }
     }
     const students = await this.findStudents(studentIds);
     const stageStudentProfiles = scheduled

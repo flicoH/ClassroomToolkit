@@ -371,6 +371,12 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   INDEX idx_sr_reports_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告及生成任务';
 
+CREATE TABLE IF NOT EXISTS admin_report_ai_settings (
+  id VARCHAR(32) PRIMARY KEY, base_url VARCHAR(500) NOT NULL, model VARCHAR(100) NOT NULL,
+  api_key_ciphertext TEXT NOT NULL,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理员维护的报告 AI 服务配置';
+
 CREATE TABLE IF NOT EXISTS semester_report_shares (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL, report_id VARCHAR(64) NOT NULL,
   token_hash CHAR(64) NOT NULL UNIQUE, token_ciphertext TEXT NOT NULL,

@@ -79,23 +79,26 @@ curl http://127.0.0.1:3000/
 
 学期报告与课程解析配置：
 
-| 变量                              | 默认值 / 用途                                                             |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `SEMESTER_REPORT_PARSER_PROVIDER` | `kimi`；可设为 `docling`                                                  |
-| `KIMI_API_KEY`                    | Kimi 文件解析密钥；使用默认解析器时必填                                   |
-| `KIMI_BASE_URL`                   | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
-| `SEMESTER_REPORT_PARSER_URL`      | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
-| `SEMESTER_REPORT_PARSER_API_KEY`  | 可选的 Docling Bearer 密钥                                                |
-| `SEMESTER_REPORT_STORAGE_DIR`     | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
-| `REPORT_GENERATION_MODE`          | `auto`；可设 `template` 或 `ai`                                           |
-| `REPORT_AI_BASE_URL`              | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
-| `REPORT_AI_API_KEY`               | AI 报告生成服务密钥                                                       |
-| `REPORT_AI_MODEL`                 | AI 报告生成模型名                                                         |
-| `REPORT_AI_TIMEOUT_MS`            | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
-| `REPORT_PUBLIC_BASE_URL`          | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
-| `REPORT_SHARE_ENCRYPTION_KEY`     | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
+| 变量                                | 默认值 / 用途                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `SEMESTER_REPORT_PARSER_PROVIDER`   | `kimi`；可设为 `docling`                                                  |
+| `KIMI_API_KEY`                      | Kimi 文件解析密钥；使用默认解析器时必填                                   |
+| `KIMI_BASE_URL`                     | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
+| `SEMESTER_REPORT_PARSER_URL`        | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
+| `SEMESTER_REPORT_PARSER_API_KEY`    | 可选的 Docling Bearer 密钥                                                |
+| `SEMESTER_REPORT_STORAGE_DIR`       | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
+| `REPORT_GENERATION_MODE`            | `auto`；可设 `template` 或 `ai`                                           |
+| `REPORT_AI_BASE_URL`                | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
+| `REPORT_AI_API_KEY`                 | AI 报告生成服务密钥                                                       |
+| `REPORT_AI_MODEL`                   | AI 报告生成模型名                                                         |
+| `REPORT_AI_TIMEOUT_MS`              | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
+| `REPORT_AI_SETTINGS_ENCRYPTION_KEY` | 32 字节 Base64；加密 Admin 保存的 AI Key，未设置时回退分享加密密钥        |
+| `REPORT_PUBLIC_BASE_URL`            | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
+| `REPORT_SHARE_ENCRYPTION_KEY`       | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
 
 `REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
+
+管理员可通过 `/admin/report-ai-settings` 管理报告 AI 配置。数据库配置优先于 `.env`，删除后自动回退 `.env`；API Key 加密保存且接口仅返回掩码。余额接口由后端代理请求 `{REPORT_AI_BASE_URL}/users/me/balance`。
 
 AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内冻结的评价记录、课堂表现、课程范围与教师输入交给配置模型综合生成四维成长文字，不再填充固定套话。需要使用 Kimi K2.6 时将 `REPORT_AI_MODEL`（或兼容变量 `KIMI_MODEL`）设为 `kimi-k2.6`；后端会原样传递模型名。教师已填写的非空维度优先保留，空白维度采用 AI 结果。
 

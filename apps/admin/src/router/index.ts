@@ -54,6 +54,11 @@ const router = createRouter({
       component: () => import('../views/FeedbackView.vue'),
       meta: { title: '意见反馈' },
     },
+    {
+      path: '/report-ai-settings',
+      component: () => import('../views/ReportAiSettingsView.vue'),
+      meta: { title: 'AI 报告配置' },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

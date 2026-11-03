@@ -21,6 +21,7 @@ import type {
 } from './admin.types';
 import { teacherSqlTime, teacherUtcOffset } from './analytics/teacher-time';
 import { FeedbackEntity } from '../feedback/entities/feedback.entity';
+import { ReportAiSettingEntity } from './entities/report-ai-setting.entity';
 
 const eventDay =
   "DATE_FORMAT(DATE_ADD(e.createdAt, INTERVAL 8 HOUR), '%Y-%m-%d')";
@@ -59,6 +60,9 @@ export class AdminDatabase {
     @InjectRepository(FeedbackEntity)
     private readonly feedback: Repository<FeedbackEntity>,
   ) {}
+  reportAiSettings() {
+    return this.teachers.manager.getRepository(ReportAiSettingEntity);
+  }
 
   listBlockedIps() {
     return this.teachers.manager.find(BlockedIpEntity, {

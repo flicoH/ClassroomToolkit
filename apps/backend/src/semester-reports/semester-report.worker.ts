@@ -20,6 +20,7 @@ import {
   formatShanghaiDate,
   type ReportGenerationMode,
 } from './report-generation';
+import { readReportAiConfig } from './report-ai-config';
 
 /** Report prose should speak directly about the student, not expose evidence labels. */
 function cleanGrowthNarrative(value: unknown): string {
@@ -128,11 +129,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     );
     const isStage = candidate.snapshot?.reportKind === 'stage';
     try {
-      const hasAiSettings = [
-        process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL,
-        process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY,
-        process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL,
-      ].every((val) => val?.trim());
+      const hasAiSettings = Boolean(await readReportAiConfig(this.dataSource));
 
       // 阶段汇总报告只要配置了 AI 模型，强制以 AI 模式执行，不被旧快照中遗留的 template 覆盖
       const requestedMode =
@@ -514,13 +511,12 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       validateGeneratedReportContent(content, snapshot);
       return content;
     }
-    const base = process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL;
-    const apiKey = process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY;
-    const model = process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL;
-    if (!base || !apiKey || !model)
+    const aiConfig = await readReportAiConfig(this.dataSource);
+    if (!aiConfig)
       throw new Error(
         '未配置报告生成服务（REPORT_AI_BASE_URL、REPORT_AI_API_KEY、REPORT_AI_MODEL 或 KIMI_* 环境变量）',
       );
+    const { baseUrl: base, apiKey, model } = aiConfig;
     const isStage = snapshot.reportKind === 'stage';
     const isV2 = snapshot.reportVersion === 'v2';
     const scheduledStageName = (

@@ -1,7 +1,49 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { AdminService } from './admin.service';
 
 describe('AdminService', () => {
+  const originalEncryptionKey = process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY;
+  const originalBaseUrl = process.env.REPORT_AI_BASE_URL;
+  const originalApiKey = process.env.REPORT_AI_API_KEY;
+  const originalModel = process.env.REPORT_AI_MODEL;
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (originalEncryptionKey === undefined)
+      delete process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY;
+    else process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = originalEncryptionKey;
+    for (const [name, value] of [
+      ['REPORT_AI_BASE_URL', originalBaseUrl],
+      ['REPORT_AI_API_KEY', originalApiKey],
+      ['REPORT_AI_MODEL', originalModel],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  function reportAiDatabase() {
+    let row: Record<string, unknown> | null = null;
+    const repository = {
+      manager: { getRepository: () => repository },
+      findOne: jest.fn(async () => row),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => {
+        row = { ...value, updatedAt: new Date('2026-11-03T00:00:00Z') };
+        return row;
+      }),
+      delete: jest.fn(async () => {
+        row = null;
+        return { affected: 1 };
+      }),
+    };
+    return { reportAiSettings: () => repository, repository };
+  }
+
   function featureDatabase() {
     return {
       findFeatureUsage: jest.fn().mockResolvedValue([]),
@@ -124,5 +166,86 @@ describe('AdminService', () => {
       { date: '2025-01-03', count: 0, cumulative: 5 },
     ]);
     expect(result.total).toBe(2);
+  });
+
+  it('encrypts Admin-managed report AI credentials and returns only a mask', async () => {
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString('base64');
+    const database = reportAiDatabase();
+    const service = new AdminService(database as never);
+    const result = await service.saveReportAiSettings({
+      baseUrl: 'https://api.moonshot.cn/v1/',
+      model: 'kimi-k2.6',
+      apiKey: 'secret-report-key',
+    });
+
+    expect(result).toMatchObject({
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.6',
+      apiKeyMasked: 'secr••••-key',
+      configured: true,
+      source: 'database',
+    });
+    const saved = database.repository.save.mock.calls[0]![0];
+    expect(saved.apiKeyCiphertext).not.toContain('secret-report-key');
+  });
+
+  it('rejects an AI service URL containing embedded credentials', async () => {
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString('base64');
+    const service = new AdminService(reportAiDatabase() as never);
+    await expect(
+      service.saveReportAiSettings({
+        baseUrl: 'https://user:password@example.com/v1',
+        model: 'kimi-k2.6',
+        apiKey: 'secret-report-key',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('uses the effective credential for the balance endpoint without exposing it', async () => {
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString('base64');
+    const database = reportAiDatabase();
+    const service = new AdminService(database as never);
+    await service.saveReportAiSettings({
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.6',
+      apiKey: 'secret-report-key',
+    });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ available_balance: 8 }),
+    } as Response);
+
+    await expect(service.reportAiBalance()).resolves.toMatchObject({
+      data: { available_balance: 8 },
+      source: 'database',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.moonshot.cn/v1/users/me/balance',
+      expect.objectContaining({
+        headers: { authorization: 'Bearer secret-report-key' },
+      }),
+    );
+  });
+
+  it('maps a failed balance request to a service error', async () => {
+    process.env.REPORT_AI_BASE_URL = 'https://api.example.test/v1';
+    process.env.REPORT_AI_API_KEY = 'env-key';
+    process.env.REPORT_AI_MODEL = 'env-model';
+    const service = new AdminService(reportAiDatabase() as never);
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network'));
+
+    await expect(service.reportAiBalance()).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 });
