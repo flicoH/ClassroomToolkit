@@ -33,7 +33,13 @@ describe('student photo multipart endpoint', () => {
     app = module.createNestApplication();
     await app.init();
   });
-  beforeEach(() => database.setStudentPhoto.mockClear());
+  beforeEach(() => {
+    database.setStudentPhoto.mockClear();
+    database.findClassroom.mockReset();
+    database.findClassroom.mockImplementation(async (id) =>
+      id === 'class' ? { id, students: [{ id: 'class:one' }] } : undefined,
+    );
+  });
   afterAll(async () => app.close());
   it('accepts exactly 256KB, stores decoded bytes and deletes only the named student photo', async () => {
     const maximum = Buffer.alloc(studentPhotoMaxBytes);

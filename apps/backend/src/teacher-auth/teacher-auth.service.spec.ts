@@ -157,3 +157,70 @@ describe('blocked active sessions', () => {
     expect(database.findTeacherById).not.toHaveBeenCalled();
   });
 });
+
+describe('locked teacher accounts', () => {
+  it('blocks login when teacher status is locked', async () => {
+    const teacher: Teacher = {
+      id: 'teacher-locked',
+      username: 'locked_teacher',
+      name: '锁定教师',
+      email: 'locked@example.com',
+      avatar: '',
+      passwordHash: '',
+      passwordSalt: 'salt',
+      status: 'locked',
+      lockedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+    const database = {
+      isIpBlocked: jest.fn().mockResolvedValue(false),
+      findTeacherByUsername: jest.fn().mockResolvedValue(teacher),
+    };
+    const service = new TeacherAuthService(database as never);
+    (
+      service as unknown as {
+        verifyPassword: jest.Mock<Promise<boolean>, [string, Teacher]>;
+      }
+    ).verifyPassword = jest.fn().mockResolvedValue(true);
+
+    await expect(
+      service.login({ username: 'locked_teacher', password: 'secret1' }),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'TEACHER_ACCOUNT_LOCKED',
+        message: '该教师账号已被锁定，无法登录，请联系管理员处理',
+      },
+    });
+  });
+
+  it('revokes session and rejects authentication if teacher was locked after logging in', async () => {
+    const teacher: Teacher = {
+      id: 'teacher-locked',
+      username: 'locked_teacher',
+      name: '锁定教师',
+      email: 'locked@example.com',
+      avatar: '',
+      passwordHash: '',
+      passwordSalt: 'salt',
+      status: 'locked',
+      lockedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+    const database = {
+      isIpBlocked: jest.fn().mockResolvedValue(false),
+      findSessionByToken: jest.fn().mockResolvedValue({
+        id: 'session-locked',
+        teacherId: 'teacher-locked',
+        expiresAt: new Date(Date.now() + 100000).toISOString(),
+      }),
+      findTeacherById: jest.fn().mockResolvedValue(teacher),
+      deleteSession: jest.fn().mockResolvedValue(true),
+    };
+    const service = new TeacherAuthService(database as never);
+
+    await expect(service.authenticate('token-123')).rejects.toThrow(
+      '该教师账号已被锁定，登录已失效',
+    );
+    expect(database.deleteSession).toHaveBeenCalledWith('session-locked');
+  });
+});

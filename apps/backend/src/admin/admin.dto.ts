@@ -17,3 +17,19 @@ export class AdminQueryDto {
 export class ResetTeacherPasswordDto {
   password!: string;
 }
+
+/** 管理员锁定或解锁教师账号的请求参数。 */
+export class ToggleTeacherLockDto {
+  locked!: boolean;
+}
+
+/** 管理员设置教师 AI 报告使用权限的请求参数。 */
+export class ToggleTeacherAiPermissionDto {
+  enabled!: boolean;
+}
+
+/** 管理端配置 AI 报告权限的请求参数。 */
+export class UpdateReportAiPermissionDto {
+  teacherId!: string;
+  enabled!: boolean;
+}

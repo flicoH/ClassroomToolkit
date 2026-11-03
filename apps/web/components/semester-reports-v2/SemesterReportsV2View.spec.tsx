@@ -136,6 +136,7 @@ describe("SemesterReportsV2View", () => {
       if (url === "/api/pet-points") return { students: mockStudents };
       if (url.endsWith("/reports/rep-1")) return mockReports[0];
       if (url.endsWith("/reports")) return mockReports;
+      if (url.includes("/ai-permission")) return { hasPermission: true };
       return [];
     });
 
@@ -1672,6 +1673,7 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
     beforeEach(() => {
       mockScheduledTasks = [];
       api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/ai-permission")) return { hasPermission: true };
         if (url.includes("/scheduled-tasks")) return mockScheduledTasks;
         if (url.includes("/report-terms"))
           return [
@@ -1990,6 +1992,103 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
       const stageGrid = container.querySelector("#stageStudentsGrid");
       expect(stageGrid?.textContent).toContain("新入班同学");
       expect(stageGrid?.textContent).toContain("张小明");
+    });
+
+    it("displays permission alert and disables save task when teacher has no AI report permission", async () => {
+      api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/ai-permission")) return { hasPermission: false };
+        if (url.includes("/scheduled-tasks")) return [];
+        if (url.includes("/report-terms"))
+          return [
+            {
+              id: "term-1",
+              name: "2026-2027学年第一学期",
+              startDate: "2026-09-01",
+              endDate: "2027-01-20",
+              isCurrent: true
+            }
+          ];
+        if (url.includes("/report-subjects")) return [];
+        if (url === "/api/pet-points")
+          return {
+            students: [{ id: "stu-1", name: "张小明", classId: "cls-1", className: "三年级二班", score: 120 }]
+          };
+        return [];
+      });
+
+      await openStageScheduler();
+
+      expect(container.textContent).toContain("暂无 AI 汇总报告使用权限");
+      const saveBtn = container.querySelector("#btnSaveStageTask") as HTMLButtonElement;
+      expect(saveBtn).not.toBeNull();
+      expect(saveBtn.disabled).toBe(true);
+    });
+
+    it("receives real-time task status and progress updates via Server-Sent Events (SSE)", async () => {
+      let eventSourceInstance: {
+        url: string;
+        onmessage: ((event: { data: string }) => void) | null;
+        close: () => void;
+      } | null = null;
+
+      class MockEventSource {
+        url: string;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        onerror: (() => void) | null = null;
+        close = vi.fn();
+        constructor(url: string) {
+          this.url = url;
+          // eslint-disable-next-line @typescript-eslint/no-this-alias
+          eventSourceInstance = this;
+        }
+      }
+
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      try {
+        await openStageScheduler();
+
+        expect(eventSourceInstance).not.toBeNull();
+        expect(eventSourceInstance!.url).toBe("/api/semester-reports/scheduled-tasks/stream");
+
+        // 等待初始兜底 refreshTasks 完成
+        await act(async () => {
+          await new Promise(r => setTimeout(r, 50));
+        });
+
+        // 模拟服务端通过 SSE 推送任务进度与状态变动
+        await act(async () => {
+          eventSourceInstance!.onmessage?.({
+            data: JSON.stringify({
+              type: "tasks_sync",
+              tasks: [
+                {
+                  id: "task-sse-1",
+                  name: "实时推进任务",
+                  className: "三年级二班",
+                  startDate: "2026-09-01",
+                  endDate: "2026-09-30",
+                  executeAt: new Date(Date.now() + 60000).toISOString(),
+                  status: "running",
+                  totalCount: 10,
+                  completedCount: 6,
+                  progressPercent: 60,
+                  studentIds: ["stu-1"],
+                  studentNames: "张小明"
+                }
+              ]
+            })
+          });
+        });
+
+        const taskList = container.querySelector("#stageTasksListContainer");
+        expect(taskList?.textContent).toContain("实时推进任务");
+        expect(taskList?.textContent).toContain("正在生成报告");
+        expect(taskList?.textContent).toContain("60%");
+        expect(taskList?.textContent).toContain("已完成 6 / 10 位学生");
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 });

@@ -51,6 +51,7 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
       method: request.method,
       headers: {
         "content-type": request.headers.get("content-type") || "application/json",
+        accept: request.headers.get("accept") || "*/*",
         authorization: `Bearer ${token}`,
         ...loginIpHeaders(request),
         "x-analytics-event-id": request.headers.get("x-analytics-event-id") || "",
@@ -60,6 +61,21 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
     };
     if (isMultipart) init.duplex = "half";
     const response = await fetch(targetUrl, init);
+
+    const contentType = response.headers.get("content-type") || "";
+    // 支持 Server-Sent Events (SSE) 流式直传
+    if (response.ok && contentType.includes("text/event-stream")) {
+      return new Response(response.body, {
+        status: response.status,
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no"
+        }
+      });
+    }
+
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
     if (response.status === 401 || (response.status === 403 && data.code === "IP_LOGIN_BLOCKED"))

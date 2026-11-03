@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, formatTime } from '../lib/api'
 
 type Settings = {
@@ -9,6 +9,25 @@ type Settings = {
   configured: boolean
   source: 'database' | 'env' | 'none'
   updatedAt: string | null
+}
+
+type AuthorizedTeacher = {
+  teacherId: string
+  teacherName: string
+  teacherUsername: string
+  createdAt: string | null
+}
+
+type TeacherCandidate = {
+  id: string
+  name: string
+  username: string
+  status: string
+}
+
+type PermissionsResponse = {
+  authorizedTeachers: AuthorizedTeacher[]
+  allTeachers: TeacherCandidate[]
 }
 
 const settings = ref<Settings | null>(null)
@@ -21,6 +40,18 @@ const message = ref('')
 const error = ref('')
 const deleteArmed = ref(false)
 
+const authorizedTeachers = ref<AuthorizedTeacher[]>([])
+const allTeachers = ref<TeacherCandidate[]>([])
+const selectedTeacherToAdd = ref('')
+const permissionLoading = ref(false)
+const permissionMessage = ref('')
+const permissionError = ref('')
+
+const unauthorizedTeachers = computed(() => {
+  const authorizedSet = new Set(authorizedTeachers.value.map((t) => t.teacherId))
+  return allTeachers.value.filter((t) => !authorizedSet.has(t.id))
+})
+
 function apply(row: Settings) {
   settings.value = row
   baseUrl.value = row.baseUrl
@@ -29,6 +60,50 @@ function apply(row: Settings) {
 }
 async function load() {
   apply(await api<Settings>('report-ai-settings'))
+}
+async function loadPermissions() {
+  permissionLoading.value = true
+  permissionError.value = ''
+  try {
+    const res = await api<PermissionsResponse>('report-ai-permissions')
+    authorizedTeachers.value = res.authorizedTeachers || []
+    allTeachers.value = res.allTeachers || []
+  } catch (e) {
+    permissionError.value = (e as Error).message
+  } finally {
+    permissionLoading.value = false
+  }
+}
+async function addPermission() {
+  if (!selectedTeacherToAdd.value || permissionLoading.value) return
+  permissionLoading.value = true
+  permissionError.value = ''
+  permissionMessage.value = ''
+  try {
+    await api('report-ai-permissions', {}, { teacherId: selectedTeacherToAdd.value, enabled: true })
+    permissionMessage.value = '已成功为该教师开启 AI 汇总报告使用权限'
+    selectedTeacherToAdd.value = ''
+    await loadPermissions()
+  } catch (e) {
+    permissionError.value = (e as Error).message
+  } finally {
+    permissionLoading.value = false
+  }
+}
+async function removePermission(teacherId: string) {
+  if (permissionLoading.value) return
+  permissionLoading.value = true
+  permissionError.value = ''
+  permissionMessage.value = ''
+  try {
+    await api('report-ai-permissions', {}, { teacherId, enabled: false })
+    permissionMessage.value = '已成功撤销该教师的 AI 汇总报告使用权限'
+    await loadPermissions()
+  } catch (e) {
+    permissionError.value = (e as Error).message
+  } finally {
+    permissionLoading.value = false
+  }
 }
 async function save() {
   loading.value = true
@@ -77,7 +152,10 @@ async function queryBalance() {
     loading.value = false
   }
 }
-onMounted(() => void load().catch((e) => (error.value = (e as Error).message)))
+onMounted(() => {
+  void load().catch((e) => (error.value = (e as Error).message))
+  void loadPermissions().catch((e) => (permissionError.value = (e as Error).message))
+})
 </script>
 
 <template>
@@ -88,7 +166,7 @@ onMounted(() => void load().catch((e) => (error.value = (e as Error).message)))
       </p>
       <h1>AI 报告配置</h1>
       <p class="muted">
-        配置报告生成服务并查询账户 Token 余额。
+        配置报告生成服务、授权教师账号并查询账户 Token 余额。
       </p>
     </div>
   </div>
@@ -162,6 +240,106 @@ onMounted(() => void load().catch((e) => (error.value = (e as Error).message)))
       class="balance"
     >{{ JSON.stringify(balance, null, 2) }}</pre>
   </section>
+
+  <section class="panel ai-permissions-section">
+    <div class="section-header">
+      <div>
+        <h2>AI 汇总报告使用权限</h2>
+        <p class="muted">
+          权限限制机制：仅在此处配置授权的教师账号方可使用 AI
+          阶段汇总报告功能；未授权教师将受到系统权限限制并提示联系管理员。
+        </p>
+      </div>
+    </div>
+
+    <p
+      v-if="permissionMessage"
+      role="status"
+      class="success"
+    >
+      {{ permissionMessage }}
+    </p>
+    <p
+      v-if="permissionError"
+      role="alert"
+      class="error"
+    >
+      {{ permissionError }}
+    </p>
+
+    <div class="add-permission-row">
+      <select
+        v-model="selectedTeacherToAdd"
+        :disabled="permissionLoading"
+        class="teacher-select"
+      >
+        <option
+          value=""
+          disabled
+        >
+          选择待授权的教师账号…
+        </option>
+        <option
+          v-for="t in unauthorizedTeachers"
+          :key="t.id"
+          :value="t.id"
+        >
+          {{ t.name }}（{{ t.username }}）{{ t.status === 'locked' ? ' [已锁定]' : '' }}
+        </option>
+      </select>
+      <button
+        type="button"
+        class="primary small"
+        :disabled="!selectedTeacherToAdd || permissionLoading"
+        @click="addPermission"
+      >
+        {{ permissionLoading ? '正在授权…' : '添加授权' }}
+      </button>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>教师姓名</th>
+            <th>登录账号</th>
+            <th>授权时间</th>
+            <th>权限操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in authorizedTeachers"
+            :key="row.teacherId"
+          >
+            <td>
+              <strong>{{ row.teacherName }}</strong>
+            </td>
+            <td>
+              <code>{{ row.teacherUsername }}</code>
+            </td>
+            <td>{{ formatTime(row.createdAt) }}</td>
+            <td>
+              <button
+                type="button"
+                class="secondary small remove-btn"
+                :disabled="permissionLoading"
+                @click="removePermission(row.teacherId)"
+              >
+                移除授权
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p
+        v-if="!authorizedTeachers.length && !permissionLoading"
+        class="empty"
+      >
+        暂无授权教师。当前没有任何教师被授权使用 AI 阶段汇总报告。
+      </p>
+    </div>
+  </section>
 </template>
 
 <style scoped>
@@ -169,6 +347,35 @@ onMounted(() => void load().catch((e) => (error.value = (e as Error).message)))
   display: grid;
   gap: 16px;
   max-width: 820px;
+}
+.ai-permissions-section {
+  display: grid;
+  gap: 16px;
+  max-width: 820px;
+  margin-top: 24px;
+}
+.section-header h2 {
+  margin: 0 0 4px;
+}
+.add-permission-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.teacher-select {
+  min-height: 38px;
+  min-width: 280px;
+  padding: 0 12px;
+  border: 1px solid #d7dce5;
+  border-radius: 8px;
+  background: white;
+}
+.remove-btn {
+  color: #b91c1c;
+}
+.remove-btn:hover:not(:disabled) {
+  background: #fee2e2;
 }
 .status-row,
 .actions {

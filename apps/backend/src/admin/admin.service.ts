@@ -7,7 +7,13 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { AdminDatabase } from './admin.database';
-import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
+import {
+  AdminQueryDto,
+  ResetTeacherPasswordDto,
+  ToggleTeacherAiPermissionDto,
+  ToggleTeacherLockDto,
+  UpdateReportAiPermissionDto,
+} from './admin.dto';
 import type { AdminMetadata, AdminDirectory } from './admin.types';
 import { dateRange, pageQuery, shanghaiDay } from './analytics/range';
 import { FEATURES } from '../analytics/features';
@@ -158,6 +164,61 @@ export class AdminService {
     }
     return { data, source: config.source, queriedAt: new Date().toISOString() };
   }
+  /** 查询已授权 AI 报告权限的教师列表与全部教师概览。 */
+  async reportAiPermissions() {
+    const [authorized, allTeachers] = await Promise.all([
+      this.database.listReportAiTeacherPermissions(),
+      this.database.listActiveTeachers(),
+    ]);
+    return {
+      authorizedTeachers: authorized.map((row) => ({
+        teacherId: String(row.teacherId),
+        teacherName: String(row.teacherName),
+        teacherUsername: String(row.teacherUsername),
+        createdAt: row.createdAt ? String(row.createdAt) : null,
+      })),
+      allTeachers: allTeachers.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        username: String(row.username),
+        status: String(row.status ?? 'active'),
+      })),
+    };
+  }
+  /** 管理端快捷配置/切换教师 AI 报告权限。 */
+  async updateReportAiPermission(body: UpdateReportAiPermissionDto) {
+    if (!body?.teacherId || typeof body?.enabled !== 'boolean') {
+      throw new BadRequestException('教师ID或授权状态参数无效');
+    }
+    const updated = await this.database.setReportAiTeacherPermission(
+      body.teacherId,
+      body.enabled,
+    );
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      teacherId: body.teacherId,
+      hasAiReportPermission: body.enabled,
+    };
+  }
+  /** 管理员针对指定教师切换 AI 报告授权。 */
+  async toggleTeacherAiPermission(
+    id: string,
+    body: ToggleTeacherAiPermissionDto,
+  ) {
+    if (typeof body?.enabled !== 'boolean') {
+      throw new BadRequestException('授权状态参数无效');
+    }
+    const updated = await this.database.setReportAiTeacherPermission(
+      id,
+      body.enabled,
+    );
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      id,
+      teacherId: id,
+      hasAiReportPermission: body.enabled,
+    };
+  }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
     const password = body?.password;
@@ -175,6 +236,25 @@ export class AdminService {
     const updated = await this.database.resetTeacherPassword(id, hash, salt);
     if (!updated) throw new NotFoundException('教师不存在');
     return { reset: true };
+  }
+  /** 管理员锁定或解锁教师账号，锁定后注销该教师所有在线会话。 */
+  async toggleTeacherLock(id: string, body: ToggleTeacherLockDto) {
+    if (typeof body?.locked !== 'boolean') {
+      throw new BadRequestException('锁定状态参数无效');
+    }
+    const updated = await this.database.updateTeacherLock(id, body.locked);
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      id,
+      locked: body.locked,
+      status: body.locked ? 'locked' : 'active',
+    };
+  }
+  /** 管理员永久删除教师账号及名下全部关联业务数据。 */
+  async deleteTeacher(id: string) {
+    const deleted = await this.database.deleteTeacher(id);
+    if (!deleted) throw new NotFoundException('教师不存在');
+    return { deleted: true };
   }
   /** 采集起点由迁移保存，不能用第一条事件时间替代，以免将尚无使用误判为未采集。 */
   async metadata(): Promise<AdminMetadata> {
@@ -357,9 +437,12 @@ export class AdminService {
     const [profile] = await this.database.findTeacherById(id);
     if (!profile) throw new NotFoundException('教师不存在');
     const [stats] = await this.database.findTeacherStats(id);
+    const hasAiReportPermission =
+      await this.database.hasReportAiTeacherPermission(id);
     return {
       ...profile,
       ...stats,
+      hasAiReportPermission,
       logins: await this.logins({ ...q, teacherId: id }),
       features: await this.features({ ...q, teacherId: id, sort: 'uses' }),
     };

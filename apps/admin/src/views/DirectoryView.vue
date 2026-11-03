@@ -60,7 +60,9 @@ function searchRecords() {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">DIRECTORY</p>
+      <p class="eyebrow">
+        DIRECTORY
+      </p>
       <h1>{{ route.meta.title }}</h1>
       <p class="muted">
         {{
@@ -73,7 +75,10 @@ function searchRecords() {
       </p>
     </div>
   </div>
-  <form class="toolbar" @submit.prevent="searchRecords">
+  <form
+    class="toolbar"
+    @submit.prevent="searchRecords"
+  >
     <input
       v-model="search"
       type="search"
@@ -86,100 +91,142 @@ function searchRecords() {
       "
       aria-label="搜索"
       maxlength="100"
-    /><input
+    ><input
       v-if="kind !== 'teachers'"
       v-model="teacherSearch"
       placeholder="所属教师姓名或账号"
       aria-label="所属教师"
       maxlength="100"
-    /><input
+    ><input
       v-if="kind === 'students'"
       v-model="classroomSearch"
       placeholder="班级名称"
       aria-label="所属班级"
       maxlength="100"
-    /><button class="primary" :disabled="loading">查询</button
-    ><RouterLink
+    ><button
+      class="primary"
+      :disabled="loading"
+    >
+      查询
+    </button><RouterLink
       v-if="route.query.teacherId || route.query.classroomId"
       class="link"
       :to="route.path"
-      >清除归属筛选</RouterLink
     >
+      清除归属筛选
+    </RouterLink>
   </form>
-  <p v-if="error" class="error" role="alert">{{ error }} <button @click="load">重试</button></p>
-  <p v-if="loading" role="status" class="muted">正在加载…</p>
+  <p
+    v-if="error"
+    class="error"
+    role="alert"
+  >
+    {{ error }} <button @click="load">
+      重试
+    </button>
+  </p>
+  <p
+    v-if="loading"
+    role="status"
+    class="muted"
+  >
+    正在加载…
+  </p>
   <section class="panel">
     <div class="table-scroll">
       <table>
         <thead>
           <tr>
             <th>{{ kind === 'teachers' ? '教师' : kind === 'students' ? '学生' : '班级' }}</th>
-            <template v-if="kind === 'teachers'"
-              ><th>注册时间</th>
+            <template v-if="kind === 'teachers'">
+              <th>状态</th>
+              <th>注册时间</th>
               <th>最近登录</th>
               <th>班级数</th>
               <th>学生数</th>
-              <th>详情</th></template
-            ><template v-else
-              ><th>所属教师</th>
-              <template v-if="kind === 'students'"
-                ><th>学号</th>
+              <th>详情</th>
+            </template><template v-else>
+              <th>所属教师</th>
+              <template v-if="kind === 'students'">
+                <th>学号</th>
                 <th>性别</th>
-                <th>所属班级</th></template
-              ><template v-else
-                ><th>学生数</th>
-                <th>查看</th></template
-              ></template
-            >
+                <th>所属班级</th>
+              </template><template v-else>
+                <th>学生数</th>
+                <th>查看</th>
+              </template>
+            </template>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in data?.items" :key="row.id">
+          <tr
+            v-for="row in data?.items"
+            :key="row.id"
+          >
             <td>
-              <strong>{{ row.name }}</strong
-              ><small v-if="kind === 'teachers'">{{ row.username }}</small>
+              <strong>{{ row.name }}</strong><small v-if="kind === 'teachers'">{{ row.username }}</small>
             </td>
-            <template v-if="kind === 'teachers'"
-              ><td>{{ formatTime(row.createdAt) }}</td>
+            <template v-if="kind === 'teachers'">
+              <td>
+                <span
+                  :class="[
+                    'status-badge',
+                    row.status === 'locked' ? 'status-locked' : 'status-active',
+                  ]"
+                >
+                  {{ row.status === 'locked' ? '已锁定' : '正常' }}
+                </span>
+              </td>
+              <td>{{ formatTime(row.createdAt) }}</td>
               <td>{{ formatTime(row.lastLoginAt) }}</td>
               <td>
-                <RouterLink :to="{ path: '/classrooms', query: { teacherId: row.id } }">{{
-                  row.classrooms
-                }}</RouterLink>
+                <RouterLink :to="{ path: '/classrooms', query: { teacherId: row.id } }">
+                  {{ row.classrooms }}
+                </RouterLink>
               </td>
               <td>
-                <RouterLink :to="{ path: '/students', query: { teacherId: row.id } }">{{
-                  row.students
-                }}</RouterLink>
+                <RouterLink :to="{ path: '/students', query: { teacherId: row.id } }">
+                  {{ row.students }}
+                </RouterLink>
               </td>
-              <td><RouterLink :to="`/teachers/${row.id}`">查看详情 →</RouterLink></td></template
-            ><template v-else
-              ><td>
-                <RouterLink :to="`/teachers/${row.teacherId}`">{{
-                  row.teacherName || '已删除教师'
-                }}</RouterLink>
+              <td>
+                <RouterLink :to="`/teachers/${row.id}`">
+                  查看详情 →
+                </RouterLink>
               </td>
-              <template v-if="kind === 'students'"
-                ><td>{{ row.studentNo }}</td>
+            </template><template v-else>
+              <td>
+                <RouterLink :to="`/teachers/${row.teacherId}`">
+                  {{ row.teacherName || '已删除教师' }}
+                </RouterLink>
+              </td>
+              <template v-if="kind === 'students'">
+                <td>{{ row.studentNo }}</td>
                 <td>{{ row.gender || '未填写' }}</td>
-                <td>{{ row.classroomName || '—' }}</td></template
-              ><template v-else
-                ><td>{{ row.students }}</td>
+                <td>{{ row.classroomName || '—' }}</td>
+              </template><template v-else>
+                <td>{{ row.students }}</td>
                 <td>
                   <RouterLink
                     :to="{
                       path: '/students',
                       query: { classroomId: row.id, teacherId: row.teacherId },
                     }"
-                    >查看学生 →</RouterLink
                   >
-                </td></template
-              ></template
-            >
+                    查看学生 →
+                  </RouterLink>
+                </td>
+              </template>
+            </template>
           </tr>
         </tbody>
       </table>
-      <p v-if="!data?.items.length && !loading" class="empty">暂无符合条件的记录</p>
+      <p
+        v-if="!data?.items.length && !loading"
+        class="empty"
+      >
+        暂无符合条件的记录
+      </p>
     </div>
     <PaginationBar
       v-if="data"
@@ -190,3 +237,22 @@ function searchRecords() {
     />
   </section>
 </template>
+
+<style scoped>
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.status-active {
+  background: #dcfce7;
+  color: #166534;
+}
+.status-locked {
+  background: #fee2e2;
+  color: #991b1b;
+}
+</style>

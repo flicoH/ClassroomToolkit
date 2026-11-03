@@ -36,6 +36,8 @@ export class TeacherAuthDatabase {
   async saveTeacher(teacher: Teacher) {
     const entity = this.teachers.create({
       ...teacher,
+      status: teacher.status ?? 'active',
+      lockedAt: teacher.lockedAt ? new Date(teacher.lockedAt) : null,
       createdAt: new Date(teacher.createdAt),
     });
     return this.toTeacher(await this.teachers.save(entity));
@@ -78,6 +80,8 @@ export class TeacherAuthDatabase {
       avatar: entity.avatar,
       passwordHash: entity.passwordHash,
       passwordSalt: entity.passwordSalt,
+      status: entity.status ?? 'active',
+      lockedAt: entity.lockedAt ? entity.lockedAt.toISOString() : null,
       createdAt: entity.createdAt.toISOString(),
     };
   }

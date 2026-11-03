@@ -22,6 +22,7 @@ import type {
 import { teacherSqlTime, teacherUtcOffset } from './analytics/teacher-time';
 import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 import { ReportAiSettingEntity } from './entities/report-ai-setting.entity';
+import { ReportAiTeacherPermissionEntity } from './entities/report-ai-teacher-permission.entity';
 
 const eventDay =
   "DATE_FORMAT(DATE_ADD(e.createdAt, INTERVAL 8 HOUR), '%Y-%m-%d')";
@@ -117,6 +118,131 @@ export class AdminDatabase {
       await manager.delete(TeacherSessionEntity, { teacherId: id });
       return true;
     });
+  }
+
+  /** 在同一事务中更新教师账号锁定状态与锁定时间；若锁定则清空其有效会话。 */
+  async updateTeacherLock(id: string, locked: boolean) {
+    return this.teachers.manager.transaction(async (manager) => {
+      const result = await manager.update(
+        TeacherEntity,
+        { id },
+        {
+          status: locked ? 'locked' : 'active',
+          lockedAt: locked ? new Date() : null,
+        },
+      );
+      if (!result.affected) return false;
+      if (locked) {
+        await manager.delete(TeacherSessionEntity, { teacherId: id });
+      }
+      return true;
+    });
+  }
+
+  /**
+   * 在同一事务中彻底删除指定教师及其名下全部业务数据和会话。
+   * 遵循各模块数据隔离与外键约束，先清理从属业务表，最后删除教师主表。
+   */
+  async deleteTeacher(id: string) {
+    return this.teachers.manager.transaction(async (manager) => {
+      const teacher = await manager.findOne(TeacherEntity, { where: { id } });
+      if (!teacher) return false;
+
+      const businessTables = [
+        'teacher_auth_sessions',
+        'teacher_feedback',
+        'admin_report_ai_teacher_permissions',
+        'countdown_states',
+        'sticky_notes_notes',
+        'gacha_machine_draw_records',
+        'gacha_machine_rewards',
+        'random_picker_history_students',
+        'random_picker_histories',
+        'random_picker_students',
+        'random_picker_classes',
+        'seating_chart_seats',
+        'seating_chart_students',
+        'seating_chart_charts',
+        'task_stats_students',
+        'task_stats_tasks',
+        'pet_points_redemptions',
+        'pet_points_evaluation_records',
+        'pet_points_rewards',
+        'pet_points_rubrics',
+        'pet_points_settings',
+        'pet_points_students',
+        'semester_report_events',
+        'semester_report_shares',
+        'semester_reports',
+        'semester_report_documents',
+        'semester_report_subjects',
+        'semester_report_terms',
+        'student_students',
+        'student_groups',
+        'student_classrooms',
+      ];
+
+      for (const table of businessTables) {
+        await manager.query(`DELETE FROM \`${table}\` WHERE teacher_id = ?`, [
+          id,
+        ]);
+      }
+
+      await manager.delete(TeacherEntity, { id });
+      return true;
+    });
+  }
+
+  /** 列出全部教师的简要信息，供授权选择组件使用。 */
+  async listActiveTeachers() {
+    return this.teachers
+      .createQueryBuilder('t')
+      .select('t.id', 'id')
+      .addSelect('t.name', 'name')
+      .addSelect('t.username', 'username')
+      .addSelect('t.status', 'status')
+      .orderBy('t.createdAt', 'DESC')
+      .getRawMany<AdminDatabaseRow>();
+  }
+
+  /** 列出所有已授权 AI 报告权限的教师信息。 */
+  async listReportAiTeacherPermissions() {
+    return this.teachers.manager
+      .createQueryBuilder(ReportAiTeacherPermissionEntity, 'p')
+      .innerJoin(TeacherEntity, 't', 't.id = p.teacherId')
+      .select('p.teacherId', 'teacherId')
+      .addSelect('t.name', 'teacherName')
+      .addSelect('t.username', 'teacherUsername')
+      .addSelect(isoDate('p.createdAt'), 'createdAt')
+      .orderBy('p.createdAt', 'DESC')
+      .getRawMany<AdminDatabaseRow>();
+  }
+
+  /** 检查指定教师是否拥有 AI 报告权限。 */
+  async hasReportAiTeacherPermission(teacherId: string): Promise<boolean> {
+    return this.teachers.manager.existsBy(ReportAiTeacherPermissionEntity, {
+      teacherId,
+    });
+  }
+
+  /** 为指定教师设置或撤销 AI 报告权限。 */
+  async setReportAiTeacherPermission(teacherId: string, enabled: boolean) {
+    const teacher = await this.teachers.findOne({ where: { id: teacherId } });
+    if (!teacher) return false;
+    if (enabled) {
+      await this.teachers.manager
+        .createQueryBuilder()
+        .insert()
+        .into(ReportAiTeacherPermissionEntity)
+        .values({ teacherId })
+        .orIgnore()
+        .execute();
+    } else {
+      await this.teachers.manager.delete(ReportAiTeacherPermissionEntity, {
+        teacherId,
+      });
+    }
+    return true;
   }
 
   /** 统一使用 UTC 字符串边界，避免驱动再次按本机时区转换事件时间。 */
@@ -291,6 +417,11 @@ export class AdminDatabase {
       .addSelect('t.username', 'username')
       .addSelect('t.name', 'name')
       .addSelect('t.email', 'email')
+      .addSelect('t.status', 'status')
+      .addSelect(
+        isoDate("CONVERT_TZ(t.lockedAt, :offset, '+00:00')"),
+        'lockedAt',
+      )
       .addSelect(
         isoDate("CONVERT_TZ(t.createdAt, :offset, '+00:00')"),
         'createdAt',

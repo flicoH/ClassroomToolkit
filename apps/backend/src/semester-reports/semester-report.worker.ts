@@ -1,7 +1,14 @@
 import { captureReportVersion } from './report-history';
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
+import { ReportAiTeacherPermissionEntity } from '../admin/entities/report-ai-teacher-permission.entity';
+import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
 import {
   SemesterReportEntity,
   ReportEventEntity,
@@ -41,7 +48,10 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
   private lastRecoveryAt = 0;
   private lastEventCleanupAt = 0;
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Optional() private readonly eventsService?: ScheduledTasksEventsService,
+  ) {}
 
   onModuleInit() {
     void this.dataSource
@@ -128,6 +138,44 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       }),
     );
     const isStage = candidate.snapshot?.reportKind === 'stage';
+    if (isStage) {
+      const allowed =
+        (await this.dataSource?.manager
+          ?.existsBy?.(ReportAiTeacherPermissionEntity, {
+            teacherId: candidate.teacherId,
+          })
+          .catch(() => true)) ?? true;
+      if (!allowed) {
+        console.warn(
+          `[SemesterReportWorker] 教师 [${candidate.teacherId}] 暂无 AI 汇总报告使用权限，任务取消`,
+        );
+        await this.dataSource.manager.update(
+          SemesterReportEntity,
+          { id: candidate.id },
+          {
+            status: 'failed',
+            errorMessage:
+              '该教师暂无 AI 汇总报告使用权限，请联系管理员开启授权',
+          },
+        );
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_failed',
+          { reportId: candidate.id },
+        );
+        return;
+      }
+      const taskId =
+        (candidate.snapshot?.scheduledTask as { id?: string; taskId?: string })
+          ?.id ||
+        (candidate.snapshot?.scheduledTask as { id?: string; taskId?: string })
+          ?.taskId;
+      this.eventsService?.emitTasksChanged(
+        candidate.teacherId,
+        'task_progress',
+        { taskId, reportId: candidate.id },
+      );
+    }
     try {
       const aiConfig = await readReportAiConfig(this.dataSource);
       const hasAiSettings = Boolean(aiConfig);
@@ -182,6 +230,26 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           }),
         );
       });
+      if (isStage) {
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_progress',
+          { taskId, reportId: candidate.id },
+        );
+      }
     } catch (error) {
       const message = (
         error instanceof Error ? error.message : '生成失败'
@@ -239,6 +307,24 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
             }),
           );
         });
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_progress',
+          { taskId, reportId: candidate.id },
+        );
         return;
       }
       await repo.update(
@@ -259,6 +345,26 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           details: { message },
         }),
       );
+      if (isStage) {
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_failed',
+          { taskId, reportId: candidate.id },
+        );
+      }
     }
   }
 
@@ -282,6 +388,29 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       .execute();
 
     if (!updateResult?.affected) return;
+
+    try {
+      const qb = repo.createQueryBuilder?.('report');
+      if (
+        typeof qb?.where === 'function' &&
+        typeof qb?.getRawMany === 'function'
+      ) {
+        const dueTeachers = await qb
+          .select('DISTINCT report.teacherId', 'teacherId')
+          .where('report.status = :status', { status: 'queued' })
+          .andWhere(
+            "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
+          )
+          .getRawMany<{ teacherId: string }>();
+        for (const row of dueTeachers) {
+          if (row?.teacherId) {
+            this.eventsService?.emitTasksChanged(row.teacherId, 'task_queued');
+          }
+        }
+      }
+    } catch {
+      // 容错处理，不中断主轮询
+    }
 
     try {
       const qb = repo.createQueryBuilder?.('report');
