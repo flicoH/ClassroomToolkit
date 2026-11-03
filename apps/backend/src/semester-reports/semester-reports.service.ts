@@ -1,11 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
+  UnauthorizedException,
+  type MessageEvent,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EMPTY, from, interval, merge, Observable } from 'rxjs';
+import { map, switchMap, throttleTime } from 'rxjs/operators';
+import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
+import { ReportAiTeacherPermissionEntity } from '../admin/entities/report-ai-teacher-permission.entity';
 import {
   createHash,
   createCipheriv,
@@ -19,6 +27,7 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
 import { readReportPublicBaseUrl } from './report-public-url';
+import { readReportAiConfig } from './report-ai-config';
 import {
   detectCourseUnits as detectUnits,
   selectCoursePages,
@@ -110,7 +119,99 @@ export class SemesterReportsService {
     private readonly teacher: TeacherContext,
     @InjectRepository(StudentEntity)
     private readonly studentProfiles: Repository<StudentEntity>,
+    @Optional()
+    private readonly eventsService?: ScheduledTasksEventsService,
   ) {}
+
+  /**
+   * 采用 Server-Sent Events (SSE) 实时推送当前教师的阶段汇总定时任务队列快照与进度更新。
+   */
+  streamScheduledTasks(
+    teacherId = this.teacher?.teacherId,
+  ): Observable<MessageEvent> {
+    const targetId = teacherId || this.teacher?.teacherId;
+    if (!targetId) {
+      throw new UnauthorizedException('未登录');
+    }
+
+    const safeListTasks = async (id: string) => {
+      try {
+        return await this.listScheduledTasks(id);
+      } catch {
+        return [];
+      }
+    };
+
+    const initial$ = from(safeListTasks(targetId)).pipe(
+      map(
+        (tasks) =>
+          ({
+            data: { type: 'tasks_sync', tasks },
+          }) as MessageEvent,
+      ),
+    );
+
+    const updates$ = this.eventsService
+      ? this.eventsService.onTeacherEvents(targetId).pipe(
+          throttleTime(80, undefined, { leading: true, trailing: true }),
+          switchMap(async (event) => {
+            const tasks = await safeListTasks(targetId);
+            return {
+              data: {
+                type: 'tasks_sync',
+                tasks,
+                trigger: event.type,
+                taskId: event.taskId,
+              },
+            } as MessageEvent;
+          }),
+        )
+      : EMPTY;
+
+    const heartbeat$ = interval(20000).pipe(
+      map(
+        () =>
+          ({
+            data: { type: 'ping', timestamp: Date.now() },
+          }) as MessageEvent,
+      ),
+    );
+
+    return merge(initial$, updates$, heartbeat$);
+  }
+
+  /** 查询当前教师是否拥有 AI 报告权限。未授权时不能使用 AI 阶段汇总报告。 */
+  async hasAiReportPermission(
+    teacherId = this.teacher?.teacherId,
+  ): Promise<boolean> {
+    if (!teacherId) return false;
+    try {
+      return await this.reports.manager.existsBy(
+        ReportAiTeacherPermissionEntity,
+        { teacherId },
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async assertAiReportPermission(
+    teacherId = this.teacher?.teacherId,
+  ): Promise<void> {
+    const allowed = await this.hasAiReportPermission(teacherId);
+    if (!allowed) {
+      throw new ForbiddenException({
+        code: 'AI_REPORT_PERMISSION_DENIED',
+        message: '您暂无 AI 汇总报告使用权限，请联系管理员开启授权',
+      });
+    }
+  }
+
+  async aiReportPermission() {
+    return {
+      hasPermission: await this.hasAiReportPermission(),
+    };
+  }
 
   async listTerms() {
     return this.terms.find({
@@ -385,9 +486,17 @@ export class SemesterReportsService {
     studentPhoto?: string | null,
     scheduled?: ScheduledReportOptions,
   ) {
+    const teacherId = this.teacher?.teacherId;
+    const isStageReport =
+      Boolean(scheduled) ||
+      input.period === 'stage' ||
+      input.reportKind === 'stage' ||
+      input.isStageReport === true;
+    if (isStageReport || input.generationMode === 'ai') {
+      await this.assertAiReportPermission(teacherId);
+    }
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
-    const teacherId = this.teacher.teacherId;
     const term = await this.requireTerm(termId);
     const subject =
       subjectId === '*'
@@ -439,8 +548,12 @@ export class SemesterReportsService {
         '课程资料内容较多，请按章节拆分 PDF 后再生成，避免漏读课程内容',
       );
     let generationMode: 'template' | 'ai';
+    const managedAiConfig = await readReportAiConfig(this.reports.manager);
     try {
-      generationMode = resolveReportGenerationMode(input.generationMode);
+      generationMode = resolveReportGenerationMode(
+        input.generationMode,
+        Boolean(managedAiConfig),
+      );
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error ? error.message : '报告生成方式无效',
@@ -657,6 +770,7 @@ export class SemesterReportsService {
    * 将 scheduled 状态推进到 queued，因此退出登录不会丢失任务。
    */
   async createScheduledTask(input: Record<string, unknown>) {
+    await this.assertAiReportPermission();
     const executeAt = new Date(String(input.executeAt ?? ''));
     if (
       Number.isNaN(executeAt.getTime()) ||
@@ -700,6 +814,11 @@ export class SemesterReportsService {
     const requestedStudentIds = Array.isArray(input.studentIds)
       ? input.studentIds.filter((id): id is string => typeof id === 'string')
       : [];
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'tasks_changed',
+      { taskId },
+    );
     return {
       id: taskId,
       name,
@@ -720,7 +839,8 @@ export class SemesterReportsService {
     };
   }
 
-  async listScheduledTasks() {
+  async listScheduledTasks(teacherId = this.teacher?.teacherId) {
+    const targetTeacherId = teacherId || this.teacher?.teacherId;
     const rows = await this.reports
       .createQueryBuilder('report')
       .select('report.id', 'id')
@@ -760,7 +880,7 @@ export class SemesterReportsService {
         'contentStageTitle',
       )
       .where('report.teacherId = :teacherId', {
-        teacherId: this.teacher.teacherId,
+        teacherId: targetTeacherId,
       })
       .andWhere(
         "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
@@ -881,6 +1001,7 @@ export class SemesterReportsService {
   }
 
   async executeScheduledTask(id: string) {
+    await this.assertAiReportPermission();
     const result = await this.reports
       .createQueryBuilder()
       .update(SemesterReportEntity)
@@ -895,6 +1016,11 @@ export class SemesterReportsService {
       )
       .execute();
     if (!result.affected) throw new NotFoundException('未找到待执行的定时任务');
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'task_progress',
+      { taskId: id },
+    );
     return { id, status: 'running' };
   }
 
@@ -911,6 +1037,11 @@ export class SemesterReportsService {
       )
       .execute();
     if (!result.affected) throw new NotFoundException('未找到可取消的定时任务');
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'tasks_changed',
+      { taskId: id },
+    );
     return { id, deleted: true };
   }
 

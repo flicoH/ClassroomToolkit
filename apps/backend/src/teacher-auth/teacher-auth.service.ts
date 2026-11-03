@@ -56,6 +56,8 @@ export class TeacherAuthService {
       avatar,
       passwordHash: await this.hashPassword(password, salt),
       passwordSalt: salt,
+      status: 'active',
+      lockedAt: null,
       createdAt: new Date().toISOString(),
     };
 
@@ -97,6 +99,12 @@ export class TeacherAuthService {
         await ipLocation(clientKey),
       );
       throw new UnauthorizedException('用户名或密码错误');
+    }
+    if (teacher.status === 'locked') {
+      throw new ForbiddenException({
+        code: 'TEACHER_ACCOUNT_LOCKED',
+        message: '该教师账号已被锁定，无法登录，请联系管理员处理',
+      });
     }
     this.attempts.delete(attemptKey);
     const result = await this.createAuthResult(teacher);
@@ -175,6 +183,10 @@ export class TeacherAuthService {
     }
     const teacher = await this.database.findTeacherById(session.teacherId);
     if (!teacher) throw new UnauthorizedException('教师账号不存在');
+    if (teacher.status === 'locked') {
+      await this.database.deleteSession(session.id);
+      throw new UnauthorizedException('该教师账号已被锁定，登录已失效');
+    }
     return teacher;
   }
 
@@ -283,6 +295,7 @@ export class TeacherAuthService {
       name: teacher.name,
       email: teacher.email,
       avatar: teacher.avatar,
+      status: teacher.status ?? 'active',
     };
   }
 }

@@ -1,4 +1,10 @@
-import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
+import {
+  AdminQueryDto,
+  ResetTeacherPasswordDto,
+  ToggleTeacherAiPermissionDto,
+  ToggleTeacherLockDto,
+  UpdateReportAiPermissionDto,
+} from './admin.dto';
 import { AdminQueryPipe } from './analytics/query.pipe';
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AdminAccess } from './auth/admin-access';
@@ -17,6 +23,28 @@ export class AdminController {
   }
   @Post('login-ip-blocks/remove') unblockIp(@Body() body: { ip?: unknown }) {
     return this.service.updateBlockedIp(body, true);
+  }
+  @Get('report-ai-settings') reportAiSettings() {
+    return this.service.reportAiSettings();
+  }
+  @Post('report-ai-settings') saveReportAiSettings(
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.service.saveReportAiSettings(body);
+  }
+  @Post('report-ai-settings/remove') deleteReportAiSettings() {
+    return this.service.deleteReportAiSettings();
+  }
+  @Get('report-ai-settings/balance') reportAiBalance() {
+    return this.service.reportAiBalance();
+  }
+  @Get('report-ai-permissions') reportAiPermissions() {
+    return this.service.reportAiPermissions();
+  }
+  @Post('report-ai-permissions') updateReportAiPermission(
+    @Body() body: UpdateReportAiPermissionDto,
+  ) {
+    return this.service.updateReportAiPermission(body);
   }
   /** 获取平台师生班级总数、今日注册及活跃概览。 */
   @Get('dashboard/overview') overview() {
@@ -40,6 +68,27 @@ export class AdminController {
     @Body() body: ResetTeacherPasswordDto,
   ) {
     return this.service.resetTeacherPassword(id, body);
+  }
+  /** 管理员锁定或解锁教师账号。 */
+  @Post('teachers/:id/toggle-lock')
+  toggleTeacherLock(
+    @Param('id') id: string,
+    @Body() body: ToggleTeacherLockDto,
+  ) {
+    return this.service.toggleTeacherLock(id, body);
+  }
+  /** 管理员删除教师账号及全部关联数据。 */
+  @Post('teachers/:id/delete')
+  deleteTeacher(@Param('id') id: string) {
+    return this.service.deleteTeacher(id);
+  }
+  /** 管理员配置指定教师的 AI 报告使用权限。 */
+  @Post('teachers/:id/toggle-ai-permission')
+  toggleTeacherAiPermission(
+    @Param('id') id: string,
+    @Body() body: ToggleTeacherAiPermissionDto,
+  ) {
+    return this.service.toggleTeacherAiPermission(id, body);
   }
   /** 按姓名、学号、教师和班级筛选学生档案，返回分页结果。 */
   @Get('students') students(@Query(AdminQueryPipe) q: AdminQueryDto) {

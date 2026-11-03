@@ -1,7 +1,14 @@
 import { captureReportVersion } from './report-history';
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
+import { ReportAiTeacherPermissionEntity } from '../admin/entities/report-ai-teacher-permission.entity';
+import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
 import {
   SemesterReportEntity,
   ReportEventEntity,
@@ -20,6 +27,7 @@ import {
   formatShanghaiDate,
   type ReportGenerationMode,
 } from './report-generation';
+import { readReportAiConfig, resolveReportAiChatUrl } from './report-ai-config';
 
 /** Report prose should speak directly about the student, not expose evidence labels. */
 function cleanGrowthNarrative(value: unknown): string {
@@ -56,7 +64,10 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
   private lastRecoveryAt = 0;
   private lastEventCleanupAt = 0;
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Optional() private readonly eventsService?: ScheduledTasksEventsService,
+  ) {}
 
   onModuleInit() {
     void this.dataSource
@@ -143,17 +154,52 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       }),
     );
     const isStage = candidate.snapshot?.reportKind === 'stage';
+    if (isStage) {
+      const allowed =
+        (await this.dataSource?.manager
+          ?.existsBy?.(ReportAiTeacherPermissionEntity, {
+            teacherId: candidate.teacherId,
+          })
+          .catch(() => true)) ?? true;
+      if (!allowed) {
+        console.warn(
+          `[SemesterReportWorker] 教师 [${candidate.teacherId}] 暂无 AI 汇总报告使用权限，任务取消`,
+        );
+        await this.dataSource.manager.update(
+          SemesterReportEntity,
+          { id: candidate.id },
+          {
+            status: 'failed',
+            errorMessage:
+              '该教师暂无 AI 汇总报告使用权限，请联系管理员开启授权',
+          },
+        );
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_failed',
+          { reportId: candidate.id },
+        );
+        return;
+      }
+      const taskId =
+        (candidate.snapshot?.scheduledTask as { id?: string; taskId?: string })
+          ?.id ||
+        (candidate.snapshot?.scheduledTask as { id?: string; taskId?: string })
+          ?.taskId;
+      this.eventsService?.emitTasksChanged(
+        candidate.teacherId,
+        'task_progress',
+        { taskId, reportId: candidate.id },
+      );
+    }
     try {
-      const hasAiSettings = [
-        process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL,
-        process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY,
-        process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL,
-      ].every((val) => val?.trim());
+      const aiConfig = await readReportAiConfig(this.dataSource);
+      const hasAiSettings = Boolean(aiConfig);
 
       // 阶段汇总报告只要配置了 AI 模型，强制以 AI 模式执行，不被旧快照中遗留的 template 覆盖
       const requestedMode =
         isStage && hasAiSettings ? 'ai' : candidate.snapshot?.generationMode;
-      const mode = resolveReportGenerationMode(requestedMode);
+      const mode = resolveReportGenerationMode(requestedMode, hasAiSettings);
       console.log(
         `[SemesterReportWorker] 开始处理报告生成任务 [id=${candidate.id}], 学生: ${candidate.studentName}, 模式: ${mode}, 阶段汇总: ${isStage}`,
       );
@@ -200,6 +246,26 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           }),
         );
       });
+      if (isStage) {
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_progress',
+          { taskId, reportId: candidate.id },
+        );
+      }
     } catch (error) {
       const message = (
         error instanceof Error ? error.message : '生成失败'
@@ -223,9 +289,15 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           });
           if (!current) return;
           current.content = fallbackContent;
+          const fallbackAiConfig = await readReportAiConfig(
+            this.dataSource,
+          ).catch(() => null);
           current.aiResponse = candidate.aiResponse ?? {
             model:
-              process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL || null,
+              fallbackAiConfig?.model ||
+              process.env.REPORT_AI_MODEL ||
+              process.env.KIMI_MODEL ||
+              null,
             error: { message },
           };
           current.snapshot = {
@@ -251,6 +323,24 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
             }),
           );
         });
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_progress',
+          { taskId, reportId: candidate.id },
+        );
         return;
       }
       await repo.update(
@@ -271,6 +361,26 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           details: { message },
         }),
       );
+      if (isStage) {
+        const taskId =
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.id ||
+          (
+            candidate.snapshot?.scheduledTask as {
+              id?: string;
+              taskId?: string;
+            }
+          )?.taskId;
+        this.eventsService?.emitTasksChanged(
+          candidate.teacherId,
+          'task_failed',
+          { taskId, reportId: candidate.id },
+        );
+      }
     }
   }
 
@@ -294,6 +404,29 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       .execute();
 
     if (!updateResult?.affected) return;
+
+    try {
+      const qb = repo.createQueryBuilder?.('report');
+      if (
+        typeof qb?.where === 'function' &&
+        typeof qb?.getRawMany === 'function'
+      ) {
+        const dueTeachers = await qb
+          .select('DISTINCT report.teacherId', 'teacherId')
+          .where('report.status = :status', { status: 'queued' })
+          .andWhere(
+            "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
+          )
+          .getRawMany<{ teacherId: string }>();
+        for (const row of dueTeachers) {
+          if (row?.teacherId) {
+            this.eventsService?.emitTasksChanged(row.teacherId, 'task_queued');
+          }
+        }
+      }
+    } catch {
+      // 容错处理，不中断主轮询
+    }
 
     try {
       const qb = repo.createQueryBuilder?.('report');
@@ -530,13 +663,12 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       validateGeneratedReportContent(content, snapshot);
       return content;
     }
-    const base = process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL;
-    const apiKey = process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY;
-    const model = process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL;
-    if (!base || !apiKey || !model)
+    const aiConfig = await readReportAiConfig(this.dataSource);
+    if (!aiConfig)
       throw new Error(
         '未配置报告生成服务（REPORT_AI_BASE_URL、REPORT_AI_API_KEY、REPORT_AI_MODEL 或 KIMI_* 环境变量）',
       );
+    const { baseUrl: base, apiKey, model } = aiConfig;
     const isStage = snapshot.reportKind === 'stage';
     const isV2 = snapshot.reportVersion === 'v2';
     const scheduledStageName = (
@@ -603,13 +735,13 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       : 300000;
 
     let response: Response;
-    const url = `${base.replace(/\/$/, '')}/chat/completions`;
+    const url = resolveReportAiChatUrl(base);
     const requestStartedAt = Date.now();
     console.log(`
       [SemesterReportWorker] requestPayload=${requestPayload}
     `);
     console.log(
-      `[SemesterReportWorker] 正在向 AI 服务发请求: URL=${url}, Model=${effectiveModel}, Student=${report.studentName}, PayloadBytes=${Buffer.byteLength(requestPayload)}, TimeoutMs=${requestTimeoutMs}`,
+      `[SemesterReportWorker] 正在向 AI 服务发请求: Source=${aiConfig.source}, URL=${url}, Model=${effectiveModel}, Student=${report.studentName}, PayloadBytes=${Buffer.byteLength(requestPayload)}, TimeoutMs=${requestTimeoutMs}`,
     );
 
     try {

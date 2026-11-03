@@ -112,7 +112,27 @@ export function StageReportSchedulerView({
   const [stageCustomName, setStageCustomName] = useState("");
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [hasAiReportPermission, setHasAiReportPermission] = useState<boolean | null>(null);
   const completedTaskIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    let cancelled = false;
+    request
+      .get<{ hasPermission: boolean }, { hasPermission: boolean }>("/api/semester-reports/ai-permission")
+      .then(res => {
+        if (!cancelled) {
+          setHasAiReportPermission(Boolean(res?.hasPermission));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasAiReportPermission(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 通知主视图活跃任务数
   useEffect(() => {
@@ -127,6 +147,16 @@ export function StageReportSchedulerView({
       setToastMessage(prev => (prev === msg ? null : prev));
     }, 3500);
   }, []);
+
+  const onReportsChangedRef = useRef(onReportsChanged);
+  useEffect(() => {
+    onReportsChangedRef.current = onReportsChanged;
+  });
+
+  const showToastRef = useRef(showToast);
+  useEffect(() => {
+    showToastRef.current = showToast;
+  });
 
   // 只使用当前教师接口返回的学生，不用演示班级或学生补齐空数据。
   const enrichedStudents = useMemo(() => {
@@ -187,37 +217,83 @@ export function StageReportSchedulerView({
     return enrichedStudents.filter(s => belongsToClass(s, selectedClassId));
   }, [belongsToClass, enrichedStudents, selectedClassId]);
 
-  const refreshTasks = useCallback(async () => {
-    const rows = await request.get<ScheduledTaskResponse[], ScheduledTaskResponse[]>(
-      "/api/semester-reports/scheduled-tasks"
-    );
+  const applyTasksUpdate = useCallback((rows: ScheduledTaskResponse[]) => {
     const next = rows.map(fromScheduledTaskResponse);
     const newlyCompleted = next.filter(task => task.status === "completed" && !completedTaskIds.current.has(task.id));
     next.filter(task => task.status === "completed").forEach(task => completedTaskIds.current.add(task.id));
     setTasks(next);
-    if (newlyCompleted.length) onReportsChanged();
-  }, [onReportsChanged]);
+    if (newlyCompleted.length) {
+      onReportsChangedRef.current();
+    }
+  }, []);
 
+  const refreshTasks = useCallback(async () => {
+    try {
+      const rows = await request.get<ScheduledTaskResponse[], ScheduledTaskResponse[]>(
+        "/api/semester-reports/scheduled-tasks"
+      );
+      applyTasksUpdate(rows);
+    } catch {
+      // 容错处理，保留现有列表
+    }
+  }, [applyTasksUpdate]);
+
+  // 采用 Server-Sent Events (SSE) 实时接收任务状态与进度推送，替代前端短轮询
   useEffect(() => {
-    void refreshTasks().catch(() => showToast("云端定时任务加载失败，请稍后重试"));
-    const timer = setInterval(() => {
-      void refreshTasks().catch(() => undefined);
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [refreshTasks, showToast]);
+    // 首次进入组件先请求一次基础数据做兜底渲染
+    void refreshTasks().catch(() => showToastRef.current("云端定时任务加载失败，请稍后重试"));
+
+    // 运行环境中若不支持 EventSource（例如非浏览器端）则退出
+    if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
+      return;
+    }
+
+    const eventSource = new EventSource("/api/semester-reports/scheduled-tasks/stream");
+
+    eventSource.onmessage = event => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload?.type === "tasks_sync" && Array.isArray(payload.tasks)) {
+          applyTasksUpdate(payload.tasks as ScheduledTaskResponse[]);
+        }
+      } catch {
+        // 忽略非 JSON 或心跳包
+      }
+    };
+
+    eventSource.onerror = () => {
+      // 浏览器 EventSource 在连接中断时会自动按退避算法自动重连
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [applyTasksUpdate, refreshTasks]);
 
   const executeTask = useCallback(
     async (task: StageScheduledTask) => {
-      await request.post(`/api/semester-reports/scheduled-tasks/${task.id}/execute`);
-      setTasks(previous => previous.map(item => (item.id === task.id ? { ...item, status: "running" } : item)));
-      showToast(`任务【${task.name}】已加入服务端生成队列`);
-      await refreshTasks().catch(() => undefined);
+      if (hasAiReportPermission === false) {
+        showToast("您暂无 AI 汇总报告使用权限，请联系管理员开启授权");
+        return;
+      }
+      try {
+        await request.post(`/api/semester-reports/scheduled-tasks/${task.id}/execute`);
+        setTasks(previous => previous.map(item => (item.id === task.id ? { ...item, status: "running" } : item)));
+        showToast(`任务【${task.name}】已加入服务端生成队列`);
+        await refreshTasks().catch(() => undefined);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "任务执行失败");
+      }
     },
-    [refreshTasks, showToast]
+    [hasAiReportPermission, refreshTasks, showToast]
   );
 
   // 快捷设置时间
   function quickSetSeconds(sec: number) {
+    if (hasAiReportPermission === false) {
+      showToast("您暂无 AI 汇总报告使用权限，请联系管理员开启授权");
+      return;
+    }
     const target = new Date(Date.now() + sec * 1000);
     const fmtDate = formatLocalDate(target);
     const fmtTime = `${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
@@ -250,6 +326,10 @@ export function StageReportSchedulerView({
 
   // 保存任务（新建或修改）
   async function handleSaveTask(explicitTimestamp?: number, note?: string) {
+    if (hasAiReportPermission === false) {
+      showToast("您暂无 AI 汇总报告使用权限，请联系管理员开启授权");
+      return;
+    }
     if (selectedStudentIds.length === 0) {
       showToast("请至少勾选一位学生！");
       return;
@@ -385,6 +465,27 @@ export function StageReportSchedulerView({
         >
           {toastMessage}
         </div>
+      )}
+
+      {/* 0. 权限提示横幅 (未授权时展示) */}
+      {hasAiReportPermission === false && (
+        <section
+          role="alert"
+          aria-label="AI 报告权限提示"
+          className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-amber-900 shadow-xs dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-base dark:bg-amber-900/50">
+            🔒
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold">暂无 AI 汇总报告使用权限</h3>
+            <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+              当前教师账号尚未配置 AI 汇总报告权限。未授权状态下无法创建新的 AI
+              阶段汇总定时任务或立即触发离线分析。如需开启，请联系系统管理员在管理后台【AI
+              报告配置】中授权您的教师账号。
+            </p>
+          </div>
+        </section>
       )}
 
       {/* 1. 云端离线守护横幅 (强调退出登录也不影响) */}
@@ -804,22 +905,25 @@ export function StageReportSchedulerView({
             <span className="text-[11px] text-muted-foreground">快捷设定：</span>
             <button
               type="button"
+              disabled={hasAiReportPermission === false}
               onClick={() => quickSetSeconds(15)}
-              className="rounded-xl border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 hover:bg-purple-100"
+              className="rounded-xl border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               ⚡ 15秒后自动生成 (演示)
             </button>
             <button
               type="button"
+              disabled={hasAiReportPermission === false}
               onClick={() => quickSetFixed("today-20")}
-              className="rounded-xl border bg-muted/40 px-2 py-1 text-xs hover:bg-muted"
+              className="rounded-xl border bg-muted/40 px-2 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               今天 20:00
             </button>
             <button
               type="button"
+              disabled={hasAiReportPermission === false}
               onClick={() => quickSetFixed("friday-17")}
-              className="rounded-xl border bg-muted/40 px-2 py-1 text-xs hover:bg-muted"
+              className="rounded-xl border bg-muted/40 px-2 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               周五 17:00
             </button>
@@ -828,8 +932,12 @@ export function StageReportSchedulerView({
           <button
             type="button"
             id="btnSaveStageTask"
+            disabled={hasAiReportPermission === false}
+            title={hasAiReportPermission === false ? "暂无 AI 汇总报告使用权限" : undefined}
             onClick={() => handleSaveTask()}
-            className="flex items-center gap-1.5 rounded-xl bg-purple-600 px-5 py-2.5 text-xs font-bold text-white shadow-md transition hover:bg-purple-700 active:scale-95"
+            className={`flex items-center gap-1.5 rounded-xl bg-purple-600 px-5 py-2.5 text-xs font-bold text-white shadow-md transition ${
+              hasAiReportPermission === false ? "cursor-not-allowed opacity-50" : "hover:bg-purple-700 active:scale-95"
+            }`}
           >
             <Sparkles className="h-4 w-4" />
             <span>{editingTaskId ? "保存任务修改" : "保存并加入云端定时守护队列"}</span>
@@ -954,8 +1062,12 @@ export function StageReportSchedulerView({
                           <button
                             type="button"
                             id={`btn-execute-task-${task.id}`}
+                            disabled={hasAiReportPermission === false}
+                            title={hasAiReportPermission === false ? "暂无 AI 汇总报告使用权限" : undefined}
                             onClick={() => executeTask(task)}
-                            className="flex items-center gap-1 rounded-lg border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-100"
+                            className={`flex items-center gap-1 rounded-lg border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 transition ${
+                              hasAiReportPermission === false ? "cursor-not-allowed opacity-50" : "hover:bg-purple-100"
+                            }`}
                           >
                             <Play className="h-3 w-3" />
                             <span>立即执行</span>

@@ -9,9 +9,12 @@ import {
   Post,
   Query,
   Header,
+  Sse,
   UploadedFile,
   UseInterceptors,
+  type MessageEvent,
 } from '@nestjs/common';
+import { type Observable } from 'rxjs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Public } from '../auth/public.decorator';
 import { SemesterReportsService } from './semester-reports.service';
@@ -96,8 +99,15 @@ export class SemesterReportsController {
   generate(@Body() body: Record<string, unknown>) {
     return this.reports.generate(body);
   }
+  @Get('ai-permission') getAiReportPermission() {
+    return this.reports.aiReportPermission();
+  }
   @Get('scheduled-tasks') listScheduledTasks() {
     return this.reports.listScheduledTasks();
+  }
+  @Sse('scheduled-tasks/stream')
+  streamScheduledTasks(): Observable<MessageEvent> {
+    return this.reports.streamScheduledTasks();
   }
   @Post('scheduled-tasks')
   @TrackFeature('semester-reports', 'schedule-stage-report')

@@ -92,3 +92,11 @@ OPEN_BROWSER=0 pnpm --filter ClassRoomToolkitWeb dev
 与 Backend 配置相同的服务端 `LOGIN_PROXY_SECRET`，入口 Nginx 用 `proxy_set_header X-Real-IP $remote_addr` 覆盖来源头，并限制 Web 端口仅允许可信入口访问。登录与注册 BFF 将来源 IP 交给 Backend，用于登录分析与封禁判断。密钥不得使用 `NEXT_PUBLIC_` 前缀。被封 IP 登录或注册时页面显示“禁止账号登录，请联系管理员解封”；解封由 Admin 登录分析页执行。
 
 IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时撤销当前令牌并清除 Cookie；空闲页面和切回标签页不主动校验。退出后只显示“禁止账号登录，请联系管理员解封”。管理员认证不受影响，网络故障不会误判为封禁。
+
+### AI 阶段汇总任务队列实时推送 (SSE)
+
+在学期报告 V2 的【AI 阶段汇总定时任务中心】中，前端完全废除传统的 `setInterval` 轮询请求，改用 `EventSource` 与后端建立 Server-Sent Events 流式通信：
+
+- BFF 流式透传：Next.js `backend-proxy.ts` 自动识别 `text/event-stream` 内容类型，直接将后端响应流（ReadableStream）直传返回，并禁用响应缓冲（`X-Accel-Buffering: no`）。
+- 实时同步：前端页面挂载后订阅 `/api/semester-reports/scheduled-tasks/stream`，接收初始任务快照以及后续任意任务状态变化（新建、立即执行、后台 Worker 生成进度推进、任务完成或降级），毫秒级自动刷新任务卡片与学生执行进度条。
+- 自动重连与降级：利用浏览器 原生 `EventSource` 的自动重连机制，当环境不支持 SSE 时自动降级为单次请求，保证兼容性与鲁棒性。

@@ -79,23 +79,26 @@ curl http://127.0.0.1:3000/
 
 学期报告与课程解析配置：
 
-| 变量                              | 默认值 / 用途                                                             |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `SEMESTER_REPORT_PARSER_PROVIDER` | `kimi`；可设为 `docling`                                                  |
-| `KIMI_API_KEY`                    | Kimi 文件解析密钥；使用默认解析器时必填                                   |
-| `KIMI_BASE_URL`                   | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
-| `SEMESTER_REPORT_PARSER_URL`      | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
-| `SEMESTER_REPORT_PARSER_API_KEY`  | 可选的 Docling Bearer 密钥                                                |
-| `SEMESTER_REPORT_STORAGE_DIR`     | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
-| `REPORT_GENERATION_MODE`          | `auto`；可设 `template` 或 `ai`                                           |
-| `REPORT_AI_BASE_URL`              | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
-| `REPORT_AI_API_KEY`               | AI 报告生成服务密钥                                                       |
-| `REPORT_AI_MODEL`                 | AI 报告生成模型名                                                         |
-| `REPORT_AI_TIMEOUT_MS`            | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
-| `REPORT_PUBLIC_BASE_URL`          | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
-| `REPORT_SHARE_ENCRYPTION_KEY`     | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
+| 变量                                | 默认值 / 用途                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `SEMESTER_REPORT_PARSER_PROVIDER`   | `kimi`；可设为 `docling`                                                  |
+| `KIMI_API_KEY`                      | Kimi 文件解析密钥；使用默认解析器时必填                                   |
+| `KIMI_BASE_URL`                     | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
+| `SEMESTER_REPORT_PARSER_URL`        | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
+| `SEMESTER_REPORT_PARSER_API_KEY`    | 可选的 Docling Bearer 密钥                                                |
+| `SEMESTER_REPORT_STORAGE_DIR`       | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
+| `REPORT_GENERATION_MODE`            | `auto`；可设 `template` 或 `ai`                                           |
+| `REPORT_AI_BASE_URL`                | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
+| `REPORT_AI_API_KEY`                 | AI 报告生成服务密钥                                                       |
+| `REPORT_AI_MODEL`                   | AI 报告生成模型名                                                         |
+| `REPORT_AI_TIMEOUT_MS`              | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
+| `REPORT_AI_SETTINGS_ENCRYPTION_KEY` | 32 字节 Base64；加密 Admin 保存的 AI Key，未设置时回退分享加密密钥        |
+| `REPORT_PUBLIC_BASE_URL`            | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
+| `REPORT_SHARE_ENCRYPTION_KEY`       | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
 
 `REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
+
+管理员可通过 `/admin/report-ai-settings` 管理报告 AI 配置。AI 配置优先采用后端数据库存储的配置，未配置、解密失败或字段残缺时自动回退读取 `.env` 环境变量配置；删除数据库配置后同样自动回退 `.env`。API Key 加密保存且接口仅返回掩码。余额接口由后端代理请求 `/v1/users/me/balance`（Base URL 未包含 `/v1` 时自动补全），仅 Moonshot/Kimi 原生服务支持该端点。
 
 AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内冻结的评价记录、课堂表现、课程范围与教师输入交给配置模型综合生成四维成长文字，不再填充固定套话。需要使用 Kimi K2.6 时将 `REPORT_AI_MODEL`（或兼容变量 `KIMI_MODEL`）设为 `kimi-k2.6`；后端会原样传递模型名。教师已填写的非空维度优先保留，空白维度采用 AI 结果。
 
@@ -237,11 +240,15 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 | `POST`           | `/semester-reports/reports/generate`            | 生成学生报告                                                                                        |
 | `GET`            | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                                  |
 | `GET / POST`     | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType 与 stageCustomName 自定义替换“本阶段”） |
+| `GET` (SSE)      | `/semester-reports/scheduled-tasks/stream`      | 服务端 Server-Sent Events (SSE) 推送定时任务状态与进度快照，替代前端轮询                            |
 | `POST`           | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                                        |
 | `DELETE`         | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                                      |
 | `PATCH`          | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                                        |
 | `POST`           | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                                  |
 | `GET`            | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                                    |
+| `POST`           | `/admin/teachers/:id/reset-password`            | 管理员重置教师密码并强制失效该教师已有登录会话                                                      |
+| `POST`           | `/admin/teachers/:id/toggle-lock`               | 管理员锁定或解锁教师账号；锁定后即刻注销所有有效会话，并拦截后续登录（403 TEACHER_ACCOUNT_LOCKED）  |
+| `POST`           | `/admin/teachers/:id/delete`                    | 管理员永久删除教师账号及名下全部班级、学生、报告等业务数据与会话                                    |
 
 具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；AI 阶段定时报告支持周期循环调度（每周/每月自动顺延）与大模型故障时草稿模版自动兜底保障，公开报告仅通过高熵分享 Token 访问；班级学生管理、宠物积分与学期报告具备实时双向同步与自动补齐机制，新增入班学生即时同步至宠物积分与报告生成花名册中，且支持全候选学生标识集合关联检索周期加分明细与最值肯定统计，防止 0 分空实体覆盖已有积分。
 
@@ -343,3 +350,20 @@ apps/backend/
 代理部署时，Backend 与 Web 必须配置相同且至少 32 字符的 `LOGIN_PROXY_SECRET`，入口 Nginx 覆盖 `X-Real-IP`，Web 端口仅允许可信入口访问。Docker Compose 和部署脚本会拒绝缺失或不一致的密钥，避免把容器连接地址误记为用户 IP。所在地通过 HTTPS ipwho.is 查询，服务商会收到 IP，查询超时或失败显示未知，不阻断登录。历史数据不回填。
 
 IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时撤销当前令牌并清除 Cookie；空闲页面和切回标签页不主动校验。退出后只显示“禁止账号登录，请联系管理员解封”。管理员认证不受影响，网络故障不会误判为封禁。
+
+### AI 报告权限与配置控制
+
+管理端通过 `admin_report_ai_teacher_permissions` 表（`teacher_id` 主键，外键级联删除）管控教师使用 AI 汇总报告的权限名单：
+
+- 管理接口：`GET /admin/report-ai-permissions` 查询已授权名单与候选教师；`POST /admin/report-ai-permissions` 更新指定教师授权；`POST /admin/teachers/:id/toggle-ai-permission` 切换单人权限。
+- 教师端接口：`GET /semester-reports/ai-permission` 供教师端前端感知并显示权限提示卡片及控制按键状态。
+- 服务端拦截：教师端创建定时任务（`POST /semester-reports/scheduled-tasks`）、立即执行定时任务（`POST /semester-reports/scheduled-tasks/:id/execute`）以及请求 AI 阶段汇总生成（`POST /semester-reports/reports/generate`）时强制核验授权，未授权返回 `403 Forbidden` (`code: 'AI_REPORT_PERMISSION_DENIED'`)。
+- 异步 Worker 保护：后台 Worker 执行阶段任务前再次校验权限，若授权被中途撤销则将报告标记为 `failed`，避免继续消耗 AI Token。
+
+### 阶段汇总报告任务队列 SSE 实时通信
+
+为杜绝前端短轮询对服务器造成的频繁打点开销，学期报告模块引入了基于 Server-Sent Events 的流式事件通道：
+
+- 后端事件中枢：通过 `ScheduledTasksEventsService` 建立基于教师 ID 的专属事件广播通道。
+- SSE 端点：`GET /semester-reports/scheduled-tasks/stream`。教师端建立长连接后，首先接收 `tasks_sync` 初始完整任务列表快照；随后无论是前端手动创建/执行/删除任务，还是后台 `SemesterReportWorker` 异步推进处理进度、成功生成或发生降级，均以毫秒级时延将最新的状态快照与进度推送至客户端。
+- 链路保活：内置 25 秒心跳机制（`:keep-alive`），兼容各类反向代理中间件与网关长连接超时配置。

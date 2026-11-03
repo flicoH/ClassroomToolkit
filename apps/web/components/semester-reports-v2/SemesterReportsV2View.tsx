@@ -3357,7 +3357,7 @@ export function SemesterReportsV2View() {
           students={students}
           subjects={subjects}
           activeTerm={activeTerm}
-          onReportsChanged={() => void loadInitialData()}
+          onReportsChanged={loadInitialData}
           onNavigateToDashboard={() => {
             setActiveMainTab("dashboard");
             setCurrentFilterStatus("stage");

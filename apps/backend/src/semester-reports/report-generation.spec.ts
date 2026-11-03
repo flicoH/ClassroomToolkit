@@ -9,6 +9,12 @@ import {
   reportVisualsForSnapshot,
   replaceStageTerm,
 } from './report-generation';
+import {
+  readReportAiConfig,
+  encryptReportAiKey,
+  resolveReportAiBalanceUrl,
+  resolveReportAiChatUrl,
+} from './report-ai-config';
 
 const report = {
   studentName: '测试学生',
@@ -147,6 +153,103 @@ describe('report generation modes', () => {
   });
   it('rejects unsupported generation modes', () => {
     expect(() => resolveReportGenerationMode('other')).toThrow('报告生成方式');
+  });
+  it('respects hasAiConfig parameter reflecting backend database preference over env', () => {
+    // 环境变量未配置时，若后端配置已生效（hasAiConfig = true），自动采用 ai 模式
+    expect(resolveReportGenerationMode('auto', true)).toBe('ai');
+    expect(resolveReportGenerationMode('ai', true)).toBe('ai');
+    expect(resolveReportGenerationMode('template', true)).toBe('template');
+
+    // 环境变量未配置且后端未配置（hasAiConfig = false），auto 回退 template，ai 抛错
+    expect(resolveReportGenerationMode('auto', false)).toBe('template');
+    expect(() => resolveReportGenerationMode('ai', false)).toThrow(
+      'AI 生成需要配置',
+    );
+  });
+  it('prefers backend database AI config and safely falls back to .env', async () => {
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      1,
+    ).toString('base64');
+    process.env.REPORT_AI_BASE_URL = 'https://env.example.com/v1';
+    process.env.REPORT_AI_API_KEY = 'env-key';
+    process.env.REPORT_AI_MODEL = 'env-model';
+
+    // 1. 数据库有有效配置时，优先返回数据库配置
+    const mockDbSource = {
+      getRepository: () => ({
+        findOne: async () => ({
+          id: 'default',
+          baseUrl: 'https://db.example.com/v1/',
+          model: 'db-model',
+          apiKeyCiphertext: encryptReportAiKey('db-key'),
+        }),
+      }),
+    } as unknown as DataSource;
+
+    const dbConfig = await readReportAiConfig(mockDbSource);
+    expect(dbConfig).toEqual({
+      baseUrl: 'https://db.example.com/v1',
+      model: 'db-model',
+      apiKey: 'db-key',
+      source: 'database',
+    });
+
+    // 2. 数据库配置解密损坏时，安全回退到 .env
+    const corruptedDbSource = {
+      getRepository: () => ({
+        findOne: async () => ({
+          id: 'default',
+          baseUrl: 'https://db.example.com/v1/',
+          model: 'db-model',
+          apiKeyCiphertext: 'corrupted-key-data',
+        }),
+      }),
+    } as unknown as DataSource;
+
+    const fallbackConfig = await readReportAiConfig(corruptedDbSource);
+    expect(fallbackConfig).toEqual({
+      baseUrl: 'https://env.example.com/v1',
+      model: 'env-model',
+      apiKey: 'env-key',
+      source: 'env',
+    });
+
+    // 3. 数据库无记录时，回退到 .env
+    const emptyDbSource = {
+      getRepository: () => ({
+        findOne: async () => null,
+      }),
+    } as unknown as DataSource;
+
+    const envConfig = await readReportAiConfig(emptyDbSource);
+    expect(envConfig).toEqual({
+      baseUrl: 'https://env.example.com/v1',
+      model: 'env-model',
+      apiKey: 'env-key',
+      source: 'env',
+    });
+  });
+  it('correctly constructs /v1/users/me/balance and /v1/chat/completions regardless of trailing /v1', () => {
+    expect(resolveReportAiBalanceUrl('https://api.moonshot.cn')).toBe(
+      'https://api.moonshot.cn/v1/users/me/balance',
+    );
+    expect(resolveReportAiBalanceUrl('https://api.moonshot.cn/v1')).toBe(
+      'https://api.moonshot.cn/v1/users/me/balance',
+    );
+    expect(resolveReportAiBalanceUrl('https://api.moonshot.cn/v1/')).toBe(
+      'https://api.moonshot.cn/v1/users/me/balance',
+    );
+
+    expect(resolveReportAiChatUrl('https://api.moonshot.cn')).toBe(
+      'https://api.moonshot.cn/v1/chat/completions',
+    );
+    expect(resolveReportAiChatUrl('https://api.moonshot.cn/v1')).toBe(
+      'https://api.moonshot.cn/v1/chat/completions',
+    );
+    expect(resolveReportAiChatUrl('https://api.moonshot.cn/v1/')).toBe(
+      'https://api.moonshot.cn/v1/chat/completions',
+    );
   });
   it('generates a valid template inside the worker without any network request', async () => {
     const fetch = jest

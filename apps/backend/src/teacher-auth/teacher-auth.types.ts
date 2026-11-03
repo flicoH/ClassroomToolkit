@@ -6,6 +6,8 @@ export interface Teacher {
   avatar: string;
   passwordHash: string;
   passwordSalt: string;
+  status: 'active' | 'locked';
+  lockedAt?: string | null;
   createdAt: string;
 }
 
@@ -23,4 +25,5 @@ export interface TeacherProfile {
   name: string;
   email: string;
   avatar: string;
+  status: 'active' | 'locked';
 }

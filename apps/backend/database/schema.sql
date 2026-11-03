@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS teacher_auth_teachers (
   avatar VARCHAR(512) NOT NULL DEFAULT '' COMMENT '头像地址',
   password_hash VARCHAR(256) NOT NULL COMMENT '加盐后的密码哈希',
   password_salt VARCHAR(64) NOT NULL COMMENT '密码盐',
+  status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '账号状态：active正常 locked锁定',
+  locked_at DATETIME NULL COMMENT '锁定时间',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB COMMENT='教师账号表';
@@ -370,6 +372,20 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   INDEX idx_sr_reports_student (teacher_id, student_id, subject_id, period_start),
   INDEX idx_sr_reports_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告及生成任务';
+
+CREATE TABLE IF NOT EXISTS admin_report_ai_settings (
+  id VARCHAR(32) PRIMARY KEY, base_url VARCHAR(500) NOT NULL, model VARCHAR(100) NOT NULL,
+  api_key_ciphertext TEXT NOT NULL,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理员维护的报告 AI 服务配置';
+
+CREATE TABLE IF NOT EXISTS admin_report_ai_teacher_permissions (
+  teacher_id VARCHAR(64) PRIMARY KEY COMMENT '教师ID',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间',
+  CONSTRAINT fk_admin_report_ai_teacher
+    FOREIGN KEY (teacher_id) REFERENCES teacher_auth_teachers(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 报告权限配置教师表';
 
 CREATE TABLE IF NOT EXISTS semester_report_shares (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL, report_id VARCHAR(64) NOT NULL,
