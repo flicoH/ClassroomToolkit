@@ -377,11 +377,23 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
 
 export function resolveReportGenerationMode(
   requested?: unknown,
+  hasAiConfig?: boolean,
 ): ReportGenerationMode {
   const mode = requested ?? process.env.REPORT_GENERATION_MODE ?? 'auto';
   if (typeof mode !== 'string' || !['auto', 'template', 'ai'].includes(mode))
     throw new Error('报告生成方式必须是 auto、template 或 ai');
   if (mode === 'template') return 'template';
+
+  // 优先依据外部传入的有效配置（优先后端数据库配置，后降级.env）
+  if (hasAiConfig !== undefined) {
+    if (hasAiConfig) return 'ai';
+    if (mode === 'auto') return 'template';
+    throw new Error(
+      'AI 生成需要配置 REPORT_AI_BASE_URL、REPORT_AI_API_KEY、REPORT_AI_MODEL；也可选择本地模板生成',
+    );
+  }
+
+  // 未显式传入 hasAiConfig 时检查 process.env（包含部分配置时防静默吞掉的校验）
   const settings = [
     process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL,
     process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY,

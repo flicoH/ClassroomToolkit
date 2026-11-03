@@ -45,14 +45,49 @@ export function decryptReportAiKey(value: string) {
   ]).toString('utf8');
 }
 
+export function resolveReportAiBalanceUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  if (trimmed.endsWith('/v1')) {
+    return `${trimmed}/users/me/balance`;
+  }
+  return `${trimmed}/v1/users/me/balance`;
+}
+
+export function resolveReportAiChatUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  if (trimmed.endsWith('/v1')) {
+    return `${trimmed}/chat/completions`;
+  }
+  return `${trimmed}/v1/chat/completions`;
+}
+
+export function cleanApiKey(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+}
+
 export function envReportAiConfig(): ReportAiConfig | null {
   const baseUrl =
     process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL || '';
-  const apiKey =
-    process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY || '';
-  const model = process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL || '';
-  return baseUrl.trim() && apiKey.trim() && model.trim()
-    ? { baseUrl: baseUrl.replace(/\/$/, ''), apiKey, model, source: 'env' }
+  const apiKey = cleanApiKey(
+    process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY || '',
+  );
+  const model = (
+    process.env.REPORT_AI_MODEL ||
+    process.env.KIMI_MODEL ||
+    ''
+  ).trim();
+  return baseUrl.trim() && apiKey && model
+    ? {
+        baseUrl: baseUrl.trim().replace(/\/$/, ''),
+        apiKey,
+        model,
+        source: 'env',
+      }
     : null;
 }
 
@@ -68,12 +103,21 @@ export async function readReportAiConfig(
     // Unit tests and pre-migration deployments may not have the entity metadata yet.
   }
   if (row) {
-    return {
-      baseUrl: row.baseUrl.replace(/\/$/, ''),
-      apiKey: decryptReportAiKey(row.apiKeyCiphertext),
-      model: row.model,
-      source: 'database',
-    };
+    try {
+      const apiKey = cleanApiKey(decryptReportAiKey(row.apiKeyCiphertext));
+      const baseUrl = row.baseUrl.trim().replace(/\/$/, '');
+      const model = row.model.trim();
+      if (baseUrl && apiKey && model) {
+        return {
+          baseUrl,
+          apiKey,
+          model,
+          source: 'database',
+        };
+      }
+    } catch {
+      // 优先后端数据库配置；解密失败或格式损坏时回退到 .env
+    }
   }
   return envReportAiConfig();
 }

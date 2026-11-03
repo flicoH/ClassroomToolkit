@@ -98,7 +98,7 @@ curl http://127.0.0.1:3000/
 
 `REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
 
-管理员可通过 `/admin/report-ai-settings` 管理报告 AI 配置。数据库配置优先于 `.env`，删除后自动回退 `.env`；API Key 加密保存且接口仅返回掩码。余额接口由后端代理请求 `{REPORT_AI_BASE_URL}/users/me/balance`。
+管理员可通过 `/admin/report-ai-settings` 管理报告 AI 配置。AI 配置优先采用后端数据库存储的配置，未配置、解密失败或字段残缺时自动回退读取 `.env` 环境变量配置；删除数据库配置后同样自动回退 `.env`。API Key 加密保存且接口仅返回掩码。余额接口由后端代理请求 `/v1/users/me/balance`（Base URL 未包含 `/v1` 时自动补全），仅 Moonshot/Kimi 原生服务支持该端点。
 
 AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内冻结的评价记录、课堂表现、课程范围与教师输入交给配置模型综合生成四维成长文字，不再填充固定套话。需要使用 Kimi K2.6 时将 `REPORT_AI_MODEL`（或兼容变量 `KIMI_MODEL`）设为 `kimi-k2.6`；后端会原样传递模型名。教师已填写的非空维度优先保留，空白维度采用 AI 结果。
 

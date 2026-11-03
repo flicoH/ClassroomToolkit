@@ -12,10 +12,12 @@ import type { AdminMetadata, AdminDirectory } from './admin.types';
 import { dateRange, pageQuery, shanghaiDay } from './analytics/range';
 import { FEATURES } from '../analytics/features';
 import {
+  cleanApiKey,
   decryptReportAiKey,
   encryptReportAiKey,
   envReportAiConfig,
   readReportAiConfig,
+  resolveReportAiBalanceUrl,
 } from '../semester-reports/report-ai-config';
 /** 管理端跨教师查询与账号管理；不复用绑定 TeacherContext 的教师业务查询层。 */
 @Injectable()
@@ -33,14 +35,24 @@ export class AdminService {
   async reportAiSettings() {
     const repository = this.database.reportAiSettings();
     const stored = await repository.findOne({ where: { id: 'default' } });
-    const effective = stored
-      ? {
-          baseUrl: stored.baseUrl,
-          model: stored.model,
-          apiKey: decryptReportAiKey(stored.apiKeyCiphertext),
-          source: 'database' as const,
+    let dbConfig: { baseUrl: string; model: string; apiKey: string } | null =
+      null;
+    if (stored) {
+      try {
+        const apiKey = decryptReportAiKey(stored.apiKeyCiphertext).trim();
+        const baseUrl = stored.baseUrl.trim().replace(/\/$/, '');
+        const model = stored.model.trim();
+        if (apiKey && baseUrl && model) {
+          dbConfig = { baseUrl, model, apiKey };
         }
-      : envReportAiConfig();
+      } catch {
+        // 优先后端数据库配置；解密失败时安全回退到 .env
+      }
+    }
+    const envConfig = envReportAiConfig();
+    const effective = dbConfig
+      ? { ...dbConfig, source: 'database' as const }
+      : envConfig;
     return {
       baseUrl: effective?.baseUrl ?? '',
       model: effective?.model ?? '',
@@ -59,9 +71,9 @@ export class AdminService {
       .trim()
       .replace(/\/$/, '');
     const model = String(body.model ?? '').trim();
-    const submittedKey = String(body.apiKey ?? '').trim();
+    const submittedKey = cleanApiKey(body.apiKey);
     const fallbackKey = existing
-      ? decryptReportAiKey(existing.apiKeyCiphertext)
+      ? cleanApiKey(decryptReportAiKey(existing.apiKeyCiphertext))
       : envReportAiConfig()?.apiKey;
     const apiKey = submittedKey || fallbackKey || '';
     if (!baseUrl || !model || !apiKey)
@@ -96,20 +108,54 @@ export class AdminService {
     const repository = this.database.reportAiSettings();
     const config = await readReportAiConfig(repository.manager);
     if (!config) throw new BadRequestException('尚未配置 AI 服务');
+    const url = resolveReportAiBalanceUrl(config.baseUrl);
+    const maskedKey = `${config.apiKey.slice(0, 4)}••••${config.apiKey.slice(-4)}`;
+    console.log(
+      `[AdminService] 查询 AI Token 余额: URL=${url}, Source=${config.source}, Key=${maskedKey}`,
+    );
     let response: Response;
     try {
-      response = await fetch(`${config.baseUrl}/users/me/balance`, {
-        headers: { authorization: `Bearer ${config.apiKey}` },
+      response = await fetch(url, {
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          accept: 'application/json',
+        },
         signal: AbortSignal.timeout(15000),
       });
     } catch {
       throw new ServiceUnavailableException('余额接口连接失败或超时');
     }
-    const data = (await response.json().catch(() => null)) as unknown;
-    if (!response.ok)
-      throw new ServiceUnavailableException(
-        `余额接口返回 HTTP ${response.status}`,
+    const data = (await response.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    if (!response.ok) {
+      console.error(
+        `[AdminService] 余额接口响应错误: HTTP=${response.status}, URL=${url}, Body=${JSON.stringify(data)}`,
       );
+      const upstreamMessage =
+        (typeof data?.error === 'object' &&
+        data.error &&
+        'message' in data.error
+          ? String((data.error as { message?: unknown }).message)
+          : '') ||
+        (typeof data?.message === 'string' ? data.message : '') ||
+        '';
+      const detail = upstreamMessage ? ` (${upstreamMessage})` : '';
+      if (response.status === 401) {
+        throw new ServiceUnavailableException(
+          `余额接口返回 HTTP 401${detail}：认证失败，请检查 API Key 是否有效、是否含有多余前缀，或在管理后台重新输入保存`,
+        );
+      }
+      if (response.status === 404) {
+        throw new ServiceUnavailableException(
+          `余额接口返回 HTTP 404${detail}：当前 AI 服务商不支持 /v1/users/me/balance 余额查询端点（该接口为 Moonshot/Kimi 专用）`,
+        );
+      }
+      throw new ServiceUnavailableException(
+        `余额接口返回 HTTP ${response.status}${detail}`,
+      );
+    }
     return { data, source: config.source, queriedAt: new Date().toISOString() };
   }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */

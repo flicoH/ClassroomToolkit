@@ -20,7 +20,7 @@ import {
   formatShanghaiDate,
   type ReportGenerationMode,
 } from './report-generation';
-import { readReportAiConfig } from './report-ai-config';
+import { readReportAiConfig, resolveReportAiChatUrl } from './report-ai-config';
 
 /** Report prose should speak directly about the student, not expose evidence labels. */
 function cleanGrowthNarrative(value: unknown): string {
@@ -129,12 +129,13 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     );
     const isStage = candidate.snapshot?.reportKind === 'stage';
     try {
-      const hasAiSettings = Boolean(await readReportAiConfig(this.dataSource));
+      const aiConfig = await readReportAiConfig(this.dataSource);
+      const hasAiSettings = Boolean(aiConfig);
 
       // 阶段汇总报告只要配置了 AI 模型，强制以 AI 模式执行，不被旧快照中遗留的 template 覆盖
       const requestedMode =
         isStage && hasAiSettings ? 'ai' : candidate.snapshot?.generationMode;
-      const mode = resolveReportGenerationMode(requestedMode);
+      const mode = resolveReportGenerationMode(requestedMode, hasAiSettings);
       console.log(
         `[SemesterReportWorker] 开始处理报告生成任务 [id=${candidate.id}], 学生: ${candidate.studentName}, 模式: ${mode}, 阶段汇总: ${isStage}`,
       );
@@ -204,9 +205,15 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           });
           if (!current) return;
           current.content = fallbackContent;
+          const fallbackAiConfig = await readReportAiConfig(
+            this.dataSource,
+          ).catch(() => null);
           current.aiResponse = candidate.aiResponse ?? {
             model:
-              process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL || null,
+              fallbackAiConfig?.model ||
+              process.env.REPORT_AI_MODEL ||
+              process.env.KIMI_MODEL ||
+              null,
             error: { message },
           };
           current.snapshot = {
@@ -582,13 +589,13 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       : 300000;
 
     let response: Response;
-    const url = `${base.replace(/\/$/, '')}/chat/completions`;
+    const url = resolveReportAiChatUrl(base);
     const requestStartedAt = Date.now();
     console.log(`
       [SemesterReportWorker] requestPayload=${requestPayload}
     `);
     console.log(
-      `[SemesterReportWorker] 正在向 AI 服务发请求: URL=${url}, Model=${effectiveModel}, Student=${report.studentName}, PayloadBytes=${Buffer.byteLength(requestPayload)}, TimeoutMs=${requestTimeoutMs}`,
+      `[SemesterReportWorker] 正在向 AI 服务发请求: Source=${aiConfig.source}, URL=${url}, Model=${effectiveModel}, Student=${report.studentName}, PayloadBytes=${Buffer.byteLength(requestPayload)}, TimeoutMs=${requestTimeoutMs}`,
     );
 
     try {

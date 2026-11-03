@@ -441,21 +441,15 @@ export class SemesterReportsService {
       );
     let generationMode: 'template' | 'ai';
     const managedAiConfig = await readReportAiConfig(this.reports.manager);
-    if (
-      managedAiConfig &&
-      (!input.generationMode ||
-        input.generationMode === 'auto' ||
-        input.generationMode === 'ai')
-    ) {
-      generationMode = 'ai';
-    } else {
-      try {
-        generationMode = resolveReportGenerationMode(input.generationMode);
-      } catch (error) {
-        throw new BadRequestException(
-          error instanceof Error ? error.message : '报告生成方式无效',
-        );
-      }
+    try {
+      generationMode = resolveReportGenerationMode(
+        input.generationMode,
+        Boolean(managedAiConfig),
+      );
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : '报告生成方式无效',
+      );
     }
     const students = await this.findStudents(studentIds);
     const stageStudentProfiles = scheduled

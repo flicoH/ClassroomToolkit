@@ -232,9 +232,66 @@ describe('AdminService', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.moonshot.cn/v1/users/me/balance',
       expect.objectContaining({
-        headers: { authorization: 'Bearer secret-report-key' },
+        headers: {
+          authorization: 'Bearer secret-report-key',
+          accept: 'application/json',
+        },
       }),
     );
+  });
+
+  it('normalizes base URL missing /v1 to correctly request /v1/users/me/balance', async () => {
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString('base64');
+    const database = reportAiDatabase();
+    const service = new AdminService(database as never);
+    await service.saveReportAiSettings({
+      baseUrl: 'https://api.moonshot.cn',
+      model: 'kimi-k2.6',
+      apiKey: 'secret-report-key',
+    });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ available_balance: 10 }),
+    } as Response);
+
+    await expect(service.reportAiBalance()).resolves.toMatchObject({
+      data: { available_balance: 10 },
+      source: 'database',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.moonshot.cn/v1/users/me/balance',
+      expect.anything(),
+    );
+  });
+
+  it('falls back safely to .env when database AI configuration fails decryption', async () => {
+    process.env.REPORT_AI_BASE_URL = 'https://api.example.test/v1';
+    process.env.REPORT_AI_API_KEY = 'env-key-1234';
+    process.env.REPORT_AI_MODEL = 'env-model';
+    process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString('base64');
+    const database = reportAiDatabase({
+      id: 'default',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.6',
+      apiKeyCiphertext: 'corrupted-ciphertext',
+      updatedAt: new Date(),
+    });
+    const service = new AdminService(database as never);
+    const result = await service.reportAiSettings();
+    expect(result).toMatchObject({
+      baseUrl: 'https://api.example.test/v1',
+      model: 'env-model',
+      apiKeyMasked: 'env-••••1234',
+      configured: true,
+      source: 'env',
+    });
   });
 
   it('maps a failed balance request to a service error', async () => {
@@ -246,6 +303,27 @@ describe('AdminService', () => {
 
     await expect(service.reportAiBalance()).rejects.toBeInstanceOf(
       ServiceUnavailableException,
+    );
+  });
+
+  it('provides a descriptive guidance error when upstream balance returns HTTP 401', async () => {
+    process.env.REPORT_AI_BASE_URL = 'https://api.example.test/v1';
+    process.env.REPORT_AI_API_KEY = 'Bearer invalid-key';
+    process.env.REPORT_AI_MODEL = 'env-model';
+    const service = new AdminService(reportAiDatabase() as never);
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        error: {
+          message: 'Invalid Authentication',
+          code: 'invalid_authentication',
+        },
+      }),
+    } as Response);
+
+    await expect(service.reportAiBalance()).rejects.toThrow(
+      '余额接口返回 HTTP 401 (Invalid Authentication)：认证失败，请检查 API Key 是否有效',
     );
   });
 });
