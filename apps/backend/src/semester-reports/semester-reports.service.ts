@@ -107,7 +107,7 @@ interface ScheduledTaskPayload {
   stageTitle?: string;
   executeAt?: string | Date;
   repeatType?: string;
-  selectedStudents?: Array<{ requestedId?: string; name?: string }>;
+  selectedStudents?: unknown[];
 }
 
 @Injectable()
@@ -908,7 +908,6 @@ export class SemesterReportsService {
       // valid tasks after an application upgrade.
       .andWhere("JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL")
       .andWhere('report.status != :deleted', { deleted: 'deleted' })
-      .orderBy('report.createdAt', 'DESC')
       .getRawMany<{
         id: string;
         status: string;
@@ -967,7 +966,30 @@ export class SemesterReportsService {
               ? 'failed'
               : 'completed';
         const selectedStudents = Array.isArray(task.selectedStudents)
-          ? task.selectedStudents
+          ? task.selectedStudents.flatMap((student) => {
+              if (typeof student === 'string') {
+                return [{ requestedId: student, name: '' }];
+              }
+              if (!student || typeof student !== 'object') return [];
+              const value = student as {
+                requestedId?: unknown;
+                studentId?: unknown;
+                name?: unknown;
+              };
+              const requestedId =
+                typeof value.requestedId === 'string'
+                  ? value.requestedId
+                  : typeof value.studentId === 'string'
+                    ? value.studentId
+                    : '';
+              if (!requestedId) return [];
+              return [
+                {
+                  requestedId,
+                  name: typeof value.name === 'string' ? value.name : '',
+                },
+              ];
+            })
           : [];
         const totalCount = taskRows.length;
         const completedCount = taskRows.filter((row) =>
@@ -1044,7 +1066,12 @@ export class SemesterReportsService {
           createdAt: taskRows[0]?.createdAt ?? new Date(),
         };
       })
-      .filter((t): t is NonNullable<typeof t> => t !== null);
+      .filter((t): t is NonNullable<typeof t> => t !== null)
+      .sort(
+        (left, right) =>
+          parseDatabaseTimestamp(right.createdAt) -
+          parseDatabaseTimestamp(left.createdAt),
+      );
   }
 
   async executeScheduledTask(id: string) {
@@ -3094,6 +3121,10 @@ function parseDatabaseDate(value: Date | string | null | undefined) {
     mysqlDateTime ? `${mysqlDateTime[1]}T${mysqlDateTime[2]}+08:00` : value,
   );
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDatabaseTimestamp(value: Date | string | null | undefined) {
+  return parseDatabaseDate(value)?.getTime() ?? 0;
 }
 
 function parsePeriodBound(value: unknown, exclusiveEnd: boolean) {

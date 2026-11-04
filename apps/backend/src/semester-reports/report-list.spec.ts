@@ -374,6 +374,9 @@ describe('report list metadata query', () => {
     expect(query.andWhere).toHaveBeenCalledWith(
       "JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL",
     );
+    // Sorting JSON-backed report rows can make MySQL carry multi-megabyte
+    // snapshots into filesort and fail with ER_OUT_OF_SORTMEMORY.
+    expect(query.orderBy).not.toHaveBeenCalled();
   });
 
   it('keeps legacy scheduled tasks that only have scheduledTask identity', async () => {
@@ -397,6 +400,11 @@ describe('report list metadata query', () => {
             taskId: 'legacy-task',
             name: '历史阶段汇总',
             executeAt: '2026-10-01T12:00:00.000Z',
+            selectedStudents: [
+              'legacy-request-id',
+              null,
+              { studentId: 'legacy-storage-id', name: '历史学生乙' },
+            ],
           }),
         },
       ]),
@@ -418,6 +426,7 @@ describe('report list metadata query', () => {
         id: 'legacy-task',
         name: '历史阶段汇总',
         status: 'pending',
+        studentIds: ['legacy-request-id', 'legacy-storage-id'],
       }),
     ]);
   });
