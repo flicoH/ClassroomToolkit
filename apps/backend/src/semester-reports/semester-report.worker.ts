@@ -98,9 +98,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       .update()
       .set({ status: 'queued', errorMessage: null })
       .where('status = :status', { status: 'failed' })
-      .andWhere(
-        "JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.reportKind')) = 'stage'",
-      )
+      .andWhere("JSON_EXTRACT(snapshot, '$.scheduledTask') IS NOT NULL")
       .execute()
       .catch(() => undefined);
     this.schedule(1000);
@@ -153,7 +151,9 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         details: null,
       }),
     );
-    const isStage = candidate.snapshot?.reportKind === 'stage';
+    const isStage =
+      candidate.snapshot?.reportKind === 'stage' ||
+      Boolean(candidate.snapshot?.scheduledTask);
     if (isStage) {
       const allowed =
         (await this.dataSource?.manager
@@ -415,7 +415,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
           .select('DISTINCT report.teacherId', 'teacherId')
           .where('report.status = :status', { status: 'queued' })
           .andWhere(
-            "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
+            "JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL",
           )
           .getRawMany<{ teacherId: string }>();
         for (const row of dueTeachers) {
@@ -669,7 +669,8 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         '未配置报告生成服务（REPORT_AI_BASE_URL、REPORT_AI_API_KEY、REPORT_AI_MODEL 或 KIMI_* 环境变量）',
       );
     const { baseUrl: base, apiKey, model } = aiConfig;
-    const isStage = snapshot.reportKind === 'stage';
+    const isStage =
+      snapshot.reportKind === 'stage' || Boolean(snapshot.scheduledTask);
     const isV2 = snapshot.reportVersion === 'v2';
     const scheduledStageName = (
       snapshot.scheduledTask as { stageCustomName?: unknown } | undefined

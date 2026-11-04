@@ -118,6 +118,11 @@ type Snapshot = {
   reportDetails?: ReportDetails;
 };
 
+/** scheduledTask is authoritative for queue compatibility with pre-reportKind rows. */
+function isStageSnapshot(snapshot: Snapshot) {
+  return snapshot.reportKind === 'stage' || Boolean(snapshot.scheduledTask);
+}
+
 /** 两个固定位置保持照片及说明对应关系；旧单图只占第一位置，明确的双空位置不回退到旧图。 */
 export function classroomPhotosForSnapshot(snapshot: {
   classroomPhoto?: unknown;
@@ -289,7 +294,7 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
   const teacherEntry = (text: string) => [
     { text, sourceRefs: ['teacher-input'] },
   ];
-  const isStage = snapshot.reportKind === 'stage';
+  const isStage = isStageSnapshot(snapshot);
   const stageCustomName =
     (snapshot.scheduledTask as { stageCustomName?: string } | undefined)
       ?.stageCustomName ||
@@ -433,7 +438,7 @@ export function generateTemplateReport(report: SemesterReportEntity) {
           !selection.manualContent.trim(),
       )
     ) &&
-    snapshot.reportKind !== 'stage'
+    !isStageSnapshot(snapshot)
   )
     throw new Error('报告缺少可追溯的课程页码依据，请重新选择课程资料生成');
   const scores = snapshot.scoreSummary ?? {};
@@ -526,7 +531,7 @@ export function generateTemplateReport(report: SemesterReportEntity) {
       text: `综合课堂评价中，“${group.label}”有 ${group.count} 次扣分记录，合计 ${Math.abs(group.delta)} 分。建议核对发生情境，并和孩子共同确定一项改进目标。`,
       sourceRefs: group.references,
     }));
-  if (snapshot.reportKind === 'stage') {
+  if (isStageSnapshot(snapshot)) {
     const startStr = formatShanghaiDate(report.periodStart);
     const endStr = formatShanghaiDate(new Date(report.periodEnd.getTime() - 1));
     const stageName =
@@ -540,7 +545,7 @@ export function generateTemplateReport(report: SemesterReportEntity) {
     // 阶段时间内没有评价数据时保持为空，不伪造内容
   }
   const isV2OrStage =
-    snapshot.reportVersion === 'v2' || snapshot.reportKind === 'stage';
+    snapshot.reportVersion === 'v2' || isStageSnapshot(snapshot);
   const homeSuggestions: Entry[] = isV2OrStage
     ? []
     : courseReferences.length

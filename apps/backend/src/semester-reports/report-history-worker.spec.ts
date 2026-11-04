@@ -93,6 +93,58 @@ describe('generated report history', () => {
     expect(qb.execute).toHaveBeenCalled();
   });
 
+  it('recognizes a legacy queued task from scheduledTask without reportKind', async () => {
+    const stageRow = {
+      id: 'legacy-stage-report',
+      teacherId: 'teacher-1',
+      studentName: '历史学生',
+      periodType: 'term',
+      periodStart: new Date('2026-03-01'),
+      periodEnd: new Date('2026-05-30'),
+      status: 'queued',
+      content: null,
+      snapshot: {
+        reportVersion: 'v2',
+        generationMode: 'template',
+        allowedReferences: ['stage-summary'],
+        scheduledTask: { taskId: 'legacy-task', name: '历史阶段汇总' },
+      },
+    };
+    const reports = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(stageRow)
+        .mockResolvedValueOnce({ ...stageRow, status: 'generating' }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      save: jest.fn(),
+    };
+    const events = { create: jest.fn((value) => value), save: jest.fn() };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === SemesterReportEntity ? reports : events,
+      ),
+    };
+    const worker = new SemesterReportWorker({
+      getRepository: manager.getRepository,
+      transaction: jest.fn(async (callback) => callback(manager)),
+    } as unknown as DataSource);
+    const internals = worker as unknown as {
+      run(): Promise<void>;
+      requeueExpiredClaims(): Promise<void>;
+      queueDueScheduledReports(): Promise<void>;
+      processDocument(): Promise<boolean>;
+    };
+    jest.spyOn(internals, 'requeueExpiredClaims').mockResolvedValue();
+    jest.spyOn(internals, 'queueDueScheduledReports').mockResolvedValue();
+    jest.spyOn(internals, 'processDocument').mockResolvedValue(false);
+
+    await internals.run();
+
+    expect(reports.save).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'draft' }),
+    );
+  });
+
   it('generates stage report draft when scheduled task becomes queued', async () => {
     const stageRow = {
       id: 'stage-report-1',

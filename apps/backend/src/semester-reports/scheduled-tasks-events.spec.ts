@@ -126,5 +126,28 @@ describe('ScheduledTasksEventsService and SSE task stream', () => {
       expect(updatedEvent.data.tasks[0]?.status).toBe('running');
       expect(updatedEvent.data.tasks[0]?.progressPercent).toBe(50);
     });
+
+    it('propagates an initial read failure instead of emitting an empty queue', async () => {
+      const service = new SemesterReportsService(
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        { teacherId: 't-1' } as never,
+        {} as never,
+      );
+      const databaseError = new Error('database unavailable');
+      jest
+        .spyOn(service, 'listScheduledTasks')
+        .mockRejectedValue(databaseError);
+
+      await expect(
+        firstValueFrom(service.streamScheduledTasks('t-1')),
+      ).rejects.toBe(databaseError);
+    });
   });
 });

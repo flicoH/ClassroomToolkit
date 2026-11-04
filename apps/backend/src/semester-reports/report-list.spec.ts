@@ -371,6 +371,80 @@ describe('report list metadata query', () => {
       failedCount: 0,
       progressPercent: 0,
     });
+    expect(query.andWhere).toHaveBeenCalledWith(
+      "JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL",
+    );
+  });
+
+  it('keeps legacy scheduled tasks that only have scheduledTask identity', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'legacy-report',
+          status: 'scheduled',
+          studentId: 'legacy-student',
+          studentName: '历史学生',
+          className: '历史班级',
+          periodStart: '2026-09-01 00:00:00',
+          periodEnd: '2026-10-01 00:00:00',
+          createdAt: '2026-09-01 08:00:00',
+          scheduledTask: JSON.stringify({
+            taskId: 'legacy-task',
+            name: '历史阶段汇总',
+            executeAt: '2026-10-01T12:00:00.000Z',
+          }),
+        },
+      ]),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+
+    await expect(service.listScheduledTasks()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'legacy-task',
+        name: '历史阶段汇总',
+        status: 'pending',
+      }),
+    ]);
+  });
+
+  it('does not disguise a scheduled task query failure as an empty queue', async () => {
+    const databaseError = new Error('database unavailable');
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockRejectedValue(databaseError),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+
+    await expect(service.listScheduledTasks()).rejects.toBe(databaseError);
   });
 
   it('tolerates string dates, missing fields and malformed scheduledTask without throwing 500 error', async () => {
