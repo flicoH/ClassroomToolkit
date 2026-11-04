@@ -1,6 +1,7 @@
 import { StudentsDatabase } from './students.database';
 import { ClassroomEntity } from './entities/classroom.entity';
 import { StudentEntity } from './entities/student.entity';
+import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 
 describe('student photo persistence', () => {
   function setup() {
@@ -115,5 +116,90 @@ describe('student photo persistence', () => {
       database.setStudentPhoto('class', 'missing', 'photo'),
     ).rejects.toThrow('学生不存在');
     expect(students.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves pet points and completed pets when saveClassroom syncs student list', async () => {
+    let petState = {
+      id: 'teacher:class:stu-1',
+      logicalId: 'class:stu-1',
+      teacherId: 'teacher',
+      classId: 'class',
+      className: '一班',
+      name: '小明',
+      studentNo: '2026018',
+      score: 297,
+      petExperience: 97,
+      completedPets: 1,
+      trophies: 1,
+      level: 5,
+      stage: '第5形态',
+      petId: 'fox',
+      petName: '小狐狸',
+      rosterActive: true,
+    };
+    const petStudents = {
+      find: jest.fn(async () => [petState]),
+      findOne: jest.fn(async () => petState),
+      create: jest.fn((row) => row),
+      save: jest.fn(async (row) => {
+        petState = { ...petState, ...row };
+        return petState;
+      }),
+    };
+    const classrooms = {
+      findOne: jest.fn(async () => null),
+      create: jest.fn((row) => row),
+      save: jest.fn(async (row) => row),
+      manager: {} as Record<string, unknown>,
+    };
+    const students = {
+      find: jest.fn(async () => []),
+      create: jest.fn((row) => row),
+      save: jest.fn(async (rows) => rows),
+      delete: jest.fn(),
+    };
+    const groups = {
+      delete: jest.fn(),
+      create: jest.fn((row) => row),
+      save: jest.fn(),
+    };
+    const manager = {
+      getRepository: (entity: unknown) => {
+        if (entity === ClassroomEntity) return classrooms;
+        if (entity === StudentEntity) return students;
+        if (entity === PetStudentEntity) return petStudents;
+        return groups;
+      },
+    };
+    classrooms.manager.transaction = jest.fn((callback) => callback(manager));
+
+    const database = new StudentsDatabase(
+      classrooms as never,
+      groups as never,
+      students as never,
+      { teacherId: 'teacher' } as never,
+    );
+
+    await database.saveClassroom({
+      id: 'class',
+      name: '一班',
+      groups: [],
+      students: [
+        {
+          id: 'stu-1',
+          name: '小明',
+          studentNo: '2026016', // studentNo updated in classroom
+          gender: '',
+        },
+      ],
+    });
+
+    expect(petState.score).toBe(297);
+    expect(petState.petExperience).toBe(97);
+    expect(petState.completedPets).toBe(1);
+    expect(petState.trophies).toBe(1);
+    expect(petState.level).toBe(5);
+    expect(petState.stage).toBe('第5形态');
+    expect(petState.studentNo).toBe('2026016');
   });
 });

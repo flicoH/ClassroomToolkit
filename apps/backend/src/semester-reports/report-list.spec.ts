@@ -373,6 +373,63 @@ describe('report list metadata query', () => {
     });
   });
 
+  it('tolerates string dates, missing fields and malformed scheduledTask without throwing 500 error', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'report-raw-1',
+          status: 'draft',
+          studentId: 'stu-1',
+          studentName: '学生甲',
+          className: '一班',
+          periodStart: '2026-10-01 00:00:00', // string format from mysql driver
+          periodEnd: '2026-10-31 00:00:00', // string format from mysql driver
+          createdAt: '2026-10-01 10:00:00',
+          scheduledTask: {
+            id: 'task-raw-1',
+            name: '阶段测试',
+            executeAt: '2026-10-30T12:00:00.000Z',
+          },
+        },
+        {
+          id: 'report-raw-2',
+          status: 'scheduled',
+          studentId: 'stu-2',
+          studentName: '学生乙',
+          className: '一班',
+          periodStart: null,
+          periodEnd: null,
+          createdAt: null,
+          scheduledTask: 'invalid json text',
+        },
+      ]),
+    };
+    const reports = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const tasks = await service.listScheduledTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('task-raw-1');
+    expect(tasks[0].startDate).toBe('2026-10-01');
+    expect(tasks[0].endDate).toBe('2026-10-30');
+  });
+
   it('collects stage four-dimension sources from existing report text without score data', async () => {
     const query = {
       where: jest.fn().mockReturnThis(),

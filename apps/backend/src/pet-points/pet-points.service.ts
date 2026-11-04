@@ -198,6 +198,7 @@ export class PetPointsService {
               id: current.id,
               classId: dto.classId,
               className: canonical.className,
+              score: Math.max(0, current.score ?? 0),
             }
           : {
               ...item,

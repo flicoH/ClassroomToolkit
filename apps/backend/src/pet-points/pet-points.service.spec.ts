@@ -618,4 +618,38 @@ describe('PetPointsService transactional workflows', () => {
       3, -2,
     ]);
   });
+  it('preserves available score without resetting to 0 when a max-level pet is completed and rebound', async () => {
+    const t = setup();
+    await t.service.adjustScore({
+      ...t.meta(),
+      studentIds: ['one'],
+      delta: 100,
+      label: '满级',
+    });
+    const studentBefore = t.state().students[0]!;
+    expect(studentBefore.score).toBe(100);
+    expect(studentBefore.completionPending).toBe(true);
+
+    // 完成满级宠物结转
+    await t.service.completePet('one', t.meta());
+    const studentCompleted = t.state().students[0]!;
+    expect(studentCompleted.score).toBe(100);
+    expect(studentCompleted.petId).toBeNull();
+    expect(studentCompleted.completedPets).toBe(1);
+
+    // 绑定新宠物开始下一轮
+    await t.service.bindPet('one', {
+      ...t.meta(),
+      petId: 'cloud-bear',
+      petName: '小熊',
+    });
+    const studentRebound = t.state().students[0]!;
+    expect(studentRebound.score).toBe(100);
+    expect(studentRebound.petId).toBe('cloud-bear');
+
+    // 名册同步也不得将正积分重置为 0
+    await t.service.syncClassStudents({ classId: 'class' });
+    const studentSynced = t.state().students.find((s) => s.id === 'one')!;
+    expect(studentSynced.score).toBe(100);
+  });
 });

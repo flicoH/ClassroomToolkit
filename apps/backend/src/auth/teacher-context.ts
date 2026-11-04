@@ -15,7 +15,7 @@ export class TeacherContext {
 
   /** 从请求上下文读取当前教师 ID，供持久层做数据隔离。 */
   get teacherId() {
-    const teacherId = this.request.teacher?.id;
+    const teacherId = this.request?.teacher?.id;
     if (!teacherId) throw new UnauthorizedException('未登录');
     return teacherId;
   }

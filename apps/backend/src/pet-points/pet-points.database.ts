@@ -354,8 +354,31 @@ export class PetPointsDatabase {
             }
           } else {
             const studentId = stu.id;
+            const storageId = this.studentStorageId(studentId);
+            const existingInDb = await this.students.findOne({
+              where: { id: storageId },
+            });
+            if (existingInDb) {
+              existingInDb.name = stu.name;
+              existingInDb.studentNo = stu.studentNo;
+              existingInDb.group = stu.groupName ?? '';
+              existingInDb.className = cls.name;
+              existingInDb.classId = cls.id;
+              existingInDb.rosterActive = true;
+              await this.students.save(existingInDb);
+              existingById.set(existingInDb.id, existingInDb);
+              existingById.set(studentId, existingInDb);
+              if (stu.studentNo) {
+                existingById.set(`${cls.id}:${stu.studentNo}`, existingInDb);
+              }
+              activeStudentIds.add(existingInDb.id);
+              activeStudentIds.add(studentId);
+              matchedPetIds.add(existingInDb.id);
+              continue;
+            }
+
             const newPet = this.students.create({
-              id: this.studentStorageId(studentId),
+              id: storageId,
               logicalId: studentId,
               teacherId,
               classId: cls.id,
@@ -422,11 +445,77 @@ export class PetPointsDatabase {
           student.classId,
           student.studentNo,
         ),
+        order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
         lock: { mode: 'pessimistic_write' },
       });
+      // 防御：若当前库中存在旧记录且包含积分或进度，而传入对象为未初始化的空白数据，
+      // 则保留原有积分、成就和宠物形态，避免同步名册时因 ID 错配覆盖已有成果
+      const isIncomingBlank =
+        student.score === 0 &&
+        student.petExperience === 0 &&
+        student.completedPets === 0 &&
+        student.trophies === 0 &&
+        student.level === 1 &&
+        student.stage === '初始形态' &&
+        !student.petId;
+
+      const safeScore =
+        isIncomingBlank && current && (current.score ?? 0) > 0
+          ? current.score
+          : student.score;
+      const safeExp =
+        isIncomingBlank && current && (current.petExperience ?? 0) > 0
+          ? current.petExperience
+          : student.petExperience;
+      const safeCompleted =
+        isIncomingBlank && current && (current.completedPets ?? 0) > 0
+          ? current.completedPets
+          : student.completedPets;
+      const safeTrophies =
+        isIncomingBlank && current && (current.trophies ?? 0) > 0
+          ? current.trophies
+          : student.trophies;
+      const safeLevel =
+        isIncomingBlank && current && (current.level ?? 1) > 1
+          ? current.level
+          : student.level;
+      const safeStage =
+        isIncomingBlank &&
+        current &&
+        current.stage &&
+        current.stage !== '初始形态'
+          ? current.stage
+          : student.stage;
+      const safePetId =
+        isIncomingBlank && current && current.petId
+          ? current.petId
+          : student.petId;
+      const safePetName =
+        isIncomingBlank && current && current.petName
+          ? current.petName
+          : student.petName;
+      const safeProgress =
+        isIncomingBlank && current && (current.petProgress ?? 0) > 0
+          ? current.petProgress
+          : student.petProgress;
+      const safeHatched =
+        isIncomingBlank && current && Boolean(current.petHatched)
+          ? current.petHatched
+          : student.petHatched;
+
       const saved = await students.save(
         students.create({
           ...student,
+          score: safeScore,
+          petExperience: safeExp,
+          completedPets: safeCompleted,
+          trophies: safeTrophies,
+          level: safeLevel,
+          stage: safeStage,
+          petId: safePetId,
+          petName: safePetName,
+          petProgress: safeProgress,
+          petHatched: safeHatched,
           rosterActive: true,
           logicalId: student.id,
           id: current?.id ?? this.studentStorageId(student.id),
@@ -442,6 +531,7 @@ export class PetPointsDatabase {
   async findStudentById(studentId: string) {
     const row = await this.students.findOne({
       where: this.studentWhere(studentId),
+      order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
       ...(this.transactionManager
         ? { lock: { mode: 'pessimistic_write' as const } }
         : {}),
@@ -464,6 +554,7 @@ export class PetPointsDatabase {
           studentNo,
         },
       ],
+      order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
     });
     return row ? this.toStudent(row) : undefined;
   }
@@ -507,6 +598,7 @@ export class PetPointsDatabase {
       const students = manager.getRepository(PetStudentEntity);
       const current = await students.findOne({
         where: this.studentWhere(studentId),
+        order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
         lock: { mode: 'pessimistic_write' },
       });
       if (!current) return undefined;

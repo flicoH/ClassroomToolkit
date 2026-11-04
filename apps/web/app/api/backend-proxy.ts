@@ -81,7 +81,8 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
     if (response.status === 401 || (response.status === 403 && data.code === "IP_LOGIN_BLOCKED"))
       clearAuthCookie(result, request);
     return result;
-  } catch {
+  } catch (error) {
+    console.error(`[backend-proxy] Proxy request to ${targetUrl} failed:`, error);
     return NextResponse.json({ message: "后端服务连接失败" }, { status: 500 });
   }
 }

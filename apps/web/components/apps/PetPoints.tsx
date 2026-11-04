@@ -1301,7 +1301,13 @@ export function PetPoints() {
               onClick={() => {
                 setRewardStoreTab("商品列表");
                 setRewardStoreOpen(true);
-                setRewardStudentId(classStudents[0]?.id ?? "");
+                setRewardStudentId(current => {
+                  if (classStudents.some(s => s.id === current)) return current;
+                  const pending = classStudents.find(s => s.completionPending);
+                  if (pending) return pending.id;
+                  const highest = classStudents.slice().sort((a, b) => b.score - a.score)[0];
+                  return highest?.id ?? classStudents[0]?.id ?? "";
+                });
               }}
             >
               <Gift className="h-5 w-5" />
@@ -1655,9 +1661,24 @@ export function PetPoints() {
                 </div>
               </div>
               {student.completionPending && (
-                <Button className="mt-3 w-full" onClick={() => setHistoryStudentId(student.id)}>
-                  领取满级纪念，开始下一轮
-                </Button>
+                <div className="mt-3 flex gap-2">
+                  <Button className="flex-1" onClick={() => setHistoryStudentId(student.id)}>
+                    领取满级纪念，开始下一轮
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="font-bold text-amber-700 hover:bg-amber-50"
+                    onClick={() => {
+                      setRewardStoreTab("商品列表");
+                      setRewardStudentId(student.id);
+                      setRewardStoreOpen(true);
+                    }}
+                    aria-label={`为${student.name}兑换奖品`}
+                  >
+                    <Gift className="mr-1 h-4 w-4" />
+                    去兑换
+                  </Button>
+                </div>
               )}
               <div
                 className={cn(
@@ -2203,24 +2224,38 @@ export function PetPoints() {
                     <h4 className="font-black">当前养成</h4>
                     <p className="text-sm font-semibold text-slate-400">{historyStudent.petName ?? "尚未选择宠物"}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-lg font-bold text-rose-500"
-                    disabled={busy || !historyStudent.petId}
-                    onClick={() =>
-                      setConfirmAction({
-                        title: historyStudent.completionPending ? "完成本轮养成" : "重置当前宠物",
-                        description: historyStudent.completionPending
-                          ? "满级宠物将留存到养成成就和成长徽章，可选择新宠物开始下一轮。积分及徽章余额保留，溢出经验结转。领取后按当前等级设置赠送成长徽章。"
-                          : "清除当前宠物、经验和能量；保留积分、徽章和已有完成档案。",
-                        confirmLabel: historyStudent.completionPending ? "完成并选新宠物" : "确认重置",
-                        onConfirm: () => resetPet(historyStudent)
-                      })
-                    }
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                    {historyStudent.completionPending ? "完成本轮" : "重置"}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="rounded-lg font-bold text-amber-700 hover:bg-amber-50"
+                      onClick={() => {
+                        setRewardStoreTab("商品列表");
+                        setRewardStudentId(historyStudent.id);
+                        setRewardStoreOpen(true);
+                      }}
+                    >
+                      <Gift className="mr-1.5 h-4 w-4" />
+                      去兑换（可用 {historyStudent.score} 分）
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-lg font-bold text-rose-500"
+                      disabled={busy || !historyStudent.petId}
+                      onClick={() =>
+                        setConfirmAction({
+                          title: historyStudent.completionPending ? "完成本轮养成" : "重置当前宠物",
+                          description: historyStudent.completionPending
+                            ? "满级宠物将留存到养成成就和成长徽章，可选择新宠物开始下一轮。积分及徽章余额保留，溢出经验结转。领取后按当前等级设置赠送成长徽章。"
+                            : "清除当前宠物、经验和能量；保留积分、徽章和已有完成档案。",
+                          confirmLabel: historyStudent.completionPending ? "完成并选新宠物" : "确认重置",
+                          onConfirm: () => resetPet(historyStudent)
+                        })
+                      }
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      {historyStudent.completionPending ? "完成本轮" : "重置"}
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {Array.from({ length: maxPetLevel }, (_, index) => {

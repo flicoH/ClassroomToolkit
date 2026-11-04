@@ -12,6 +12,7 @@
     "db:seed": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; mysql -h ${MYSQL_HOST:-127.0.0.1} -P ${MYSQL_PORT:-3306} -u ${MYSQL_USER:-root} ${MYSQL_PASSWORD:+-p$MYSQL_PASSWORD} < database/seed.sql'",
     "migration:run": "pnpm run build && typeorm migration:run -d dist/database/data-source.js",
     "migration:revert": "pnpm run build && typeorm migration:revert -d dist/database/data-source.js",
+    "db:repair-pet-scores": "pnpm run build && node dist/database/scripts/repair-corrupted-pet-scores.js",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "dev": "nest start --watch --path tsconfig.dev.json --host 0.0.0.0",

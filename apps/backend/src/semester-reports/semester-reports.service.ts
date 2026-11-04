@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
   Optional,
@@ -97,6 +98,18 @@ type ScheduledReportOptions = {
   }>;
 };
 
+interface ScheduledTaskPayload {
+  taskId?: string;
+  id?: string;
+  name?: string;
+  classId?: string;
+  stageCustomName?: string;
+  stageTitle?: string;
+  executeAt?: string | Date;
+  repeatType?: string;
+  selectedStudents?: Array<{ requestedId?: string; name?: string }>;
+}
+
 @Injectable()
 export class SemesterReportsService {
   constructor(
@@ -126,10 +139,14 @@ export class SemesterReportsService {
   /**
    * 采用 Server-Sent Events (SSE) 实时推送当前教师的阶段汇总定时任务队列快照与进度更新。
    */
-  streamScheduledTasks(
-    teacherId = this.teacher?.teacherId,
-  ): Observable<MessageEvent> {
-    const targetId = teacherId || this.teacher?.teacherId;
+  streamScheduledTasks(teacherId?: string): Observable<MessageEvent> {
+    let targetId: string;
+    try {
+      targetId = teacherId || this.teacher?.teacherId;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new UnauthorizedException('未登录');
+    }
     if (!targetId) {
       throw new UnauthorizedException('未登录');
     }
@@ -839,165 +856,205 @@ export class SemesterReportsService {
     };
   }
 
-  async listScheduledTasks(teacherId = this.teacher?.teacherId) {
-    const targetTeacherId = teacherId || this.teacher?.teacherId;
-    const rows = await this.reports
-      .createQueryBuilder('report')
-      .select('report.id', 'id')
-      .addSelect('report.status', 'status')
-      .addSelect('report.studentId', 'studentId')
-      .addSelect('report.studentName', 'studentName')
-      .addSelect('report.className', 'className')
-      .addSelect('report.periodStart', 'periodStart')
-      .addSelect('report.periodEnd', 'periodEnd')
-      .addSelect('report.createdAt', 'createdAt')
-      .addSelect(
-        "JSON_EXTRACT(report.snapshot, '$.scheduledTask')",
-        'scheduledTask',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageCustomName'))",
-        'snapshotStageCustomName',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageTitle'))",
-        'snapshotStageTitle',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageCustomName'))",
-        'taskStageCustomName',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageTitle'))",
-        'taskStageTitle',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageCustomName'))",
-        'contentStageCustomName',
-      )
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageTitle'))",
-        'contentStageTitle',
-      )
-      .where('report.teacherId = :teacherId', {
-        teacherId: targetTeacherId,
-      })
-      .andWhere(
-        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
-      )
-      .andWhere('report.status != :deleted', { deleted: 'deleted' })
-      .orderBy('report.createdAt', 'DESC')
-      .getRawMany<{
-        id: string;
-        status: string;
-        studentId: string;
-        studentName: string;
-        className: string;
-        periodStart: Date;
-        periodEnd: Date;
-        createdAt: Date;
-        scheduledTask: string | ScheduledReportOptions;
-        snapshotStageCustomName?: string;
-        snapshotStageTitle?: string;
-        taskStageCustomName?: string;
-        taskStageTitle?: string;
-        contentStageCustomName?: string;
-        contentStageTitle?: string;
-      }>();
-    const groups = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const task =
-        typeof row.scheduledTask === 'string'
-          ? (JSON.parse(row.scheduledTask) as ScheduledReportOptions)
-          : row.scheduledTask;
-      if (!task?.taskId && !(task as unknown as { id?: string })?.id) continue;
-      const id = task.taskId ?? (task as unknown as { id: string }).id;
-      groups.set(id, [...(groups.get(id) ?? []), row]);
+  async listScheduledTasks(teacherId?: string) {
+    let targetTeacherId: string;
+    try {
+      targetTeacherId = teacherId || this.teacher?.teacherId;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new UnauthorizedException('未登录');
     }
-    return [...groups.entries()].map(([id, taskRows]) => {
-      const rawTask = taskRows[0]!.scheduledTask;
-      const task =
-        typeof rawTask === 'string'
-          ? (JSON.parse(rawTask) as ScheduledReportOptions & { id?: string })
-          : (rawTask as ScheduledReportOptions & { id?: string });
-      const statuses = new Set(taskRows.map((row) => row.status));
-      const status = statuses.has('scheduled')
-        ? 'pending'
-        : statuses.has('queued') || statuses.has('generating')
-          ? 'running'
-          : statuses.has('failed')
-            ? 'failed'
-            : 'completed';
-      const selectedStudents = Array.isArray(task.selectedStudents)
-        ? task.selectedStudents
-        : [];
-      const totalCount = taskRows.length;
-      const completedCount = taskRows.filter((row) =>
-        ['draft', 'published'].includes(row.status),
-      ).length;
-      const failedCount = taskRows.filter(
-        (row) => row.status === 'failed',
-      ).length;
-      const processingCount = taskRows.filter((row) =>
-        ['queued', 'generating'].includes(row.status),
-      ).length;
+    if (!targetTeacherId) {
+      throw new UnauthorizedException('未登录');
+    }
 
-      let stageCustomName =
-        (task as { stageCustomName?: string }).stageCustomName ||
-        (task as { stageTitle?: string }).stageTitle ||
-        '';
-
-      if (!stageCustomName) {
-        const clean = (val?: string) =>
-          val && val !== 'null' && val !== 'undefined' ? val.trim() : '';
-        for (const r of taskRows) {
-          const candidate =
-            clean(r.taskStageCustomName) ||
-            clean(r.snapshotStageCustomName) ||
-            clean(r.taskStageTitle) ||
-            clean(r.snapshotStageTitle) ||
-            clean(r.contentStageCustomName) ||
-            clean(r.contentStageTitle);
-          if (candidate) {
-            stageCustomName = candidate;
-            break;
+    try {
+      const rows = await this.reports
+        .createQueryBuilder('report')
+        .select('report.id', 'id')
+        .addSelect('report.status', 'status')
+        .addSelect('report.studentId', 'studentId')
+        .addSelect('report.studentName', 'studentName')
+        .addSelect('report.className', 'className')
+        .addSelect('report.periodStart', 'periodStart')
+        .addSelect('report.periodEnd', 'periodEnd')
+        .addSelect('report.createdAt', 'createdAt')
+        .addSelect(
+          "JSON_EXTRACT(report.snapshot, '$.scheduledTask')",
+          'scheduledTask',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageCustomName'))",
+          'snapshotStageCustomName',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageTitle'))",
+          'snapshotStageTitle',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageCustomName'))",
+          'taskStageCustomName',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageTitle'))",
+          'taskStageTitle',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageCustomName'))",
+          'contentStageCustomName',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageTitle'))",
+          'contentStageTitle',
+        )
+        .where('report.teacherId = :teacherId', {
+          teacherId: targetTeacherId,
+        })
+        .andWhere(
+          "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.reportKind')) = 'stage'",
+        )
+        .andWhere('report.status != :deleted', { deleted: 'deleted' })
+        .orderBy('report.createdAt', 'DESC')
+        .getRawMany<{
+          id: string;
+          status: string;
+          studentId: string;
+          studentName: string;
+          className: string;
+          periodStart: Date;
+          periodEnd: Date;
+          createdAt: Date;
+          scheduledTask: string | ScheduledReportOptions;
+          snapshotStageCustomName?: string;
+          snapshotStageTitle?: string;
+          taskStageCustomName?: string;
+          taskStageTitle?: string;
+          contentStageCustomName?: string;
+          contentStageTitle?: string;
+        }>();
+      const groups = new Map<string, typeof rows>();
+      for (const row of rows) {
+        let task: ScheduledTaskPayload | null = null;
+        if (typeof row.scheduledTask === 'string') {
+          try {
+            task = JSON.parse(row.scheduledTask) as ScheduledTaskPayload;
+          } catch {
+            continue;
           }
+        } else if (row.scheduledTask && typeof row.scheduledTask === 'object') {
+          task = row.scheduledTask as ScheduledTaskPayload;
         }
+        if (!task || typeof task !== 'object') continue;
+        if (!task.taskId && !task.id) continue;
+        const id = String(task.taskId ?? task.id);
+        groups.set(id, [...(groups.get(id) ?? []), row]);
       }
+      return [...groups.entries()]
+        .map(([id, taskRows]) => {
+          if (!taskRows || taskRows.length === 0) return null;
+          const rawTask = taskRows[0]!.scheduledTask;
+          let task: ScheduledTaskPayload = {};
+          if (typeof rawTask === 'string') {
+            try {
+              task = JSON.parse(rawTask) as ScheduledTaskPayload;
+            } catch {
+              task = {};
+            }
+          } else if (rawTask && typeof rawTask === 'object') {
+            task = rawTask as ScheduledTaskPayload;
+          }
+          task = task && typeof task === 'object' ? task : {};
+          const statuses = new Set(taskRows.map((row) => row.status));
+          const status = statuses.has('scheduled')
+            ? 'pending'
+            : statuses.has('queued') || statuses.has('generating')
+              ? 'running'
+              : statuses.has('failed')
+                ? 'failed'
+                : 'completed';
+          const selectedStudents = Array.isArray(task.selectedStudents)
+            ? task.selectedStudents
+            : [];
+          const totalCount = taskRows.length;
+          const completedCount = taskRows.filter((row) =>
+            ['draft', 'published'].includes(row.status),
+          ).length;
+          const failedCount = taskRows.filter(
+            (row) => row.status === 'failed',
+          ).length;
+          const processingCount = taskRows.filter((row) =>
+            ['queued', 'generating'].includes(row.status),
+          ).length;
 
-      return {
-        id,
-        name: task.name,
-        classId: task.classId,
-        className:
-          new Set(taskRows.map((row) => row.className)).size === 1
-            ? taskRows[0]!.className
-            : '跨班挑选',
-        studentIds: selectedStudents.length
-          ? selectedStudents.map((student) => student.requestedId)
-          : taskRows.map((row) => row.studentId),
-        studentNames: selectedStudents.length
-          ? selectedStudents.map((student) => student.name).join('、')
-          : taskRows.map((row) => row.studentName).join('、'),
-        startDate: formatShanghaiDate(taskRows[0]!.periodStart),
-        endDate: formatShanghaiDate(
-          new Date(taskRows[0]!.periodEnd.getTime() - 1),
-        ),
-        executeAt: String(task.executeAt),
-        repeatType: (task as { repeatType?: string }).repeatType || 'none',
-        stageCustomName,
-        status,
-        totalCount,
-        completedCount,
-        generatedCount: completedCount,
-        processingCount,
-        failedCount,
-        progressPercent: totalCount
-          ? Math.round(((completedCount + failedCount) / totalCount) * 100)
-          : 0,
-        createdAt: taskRows[0]!.createdAt,
-      };
-    });
+          let stageCustomName = task.stageCustomName || task.stageTitle || '';
+
+          if (!stageCustomName) {
+            const clean = (val?: string) =>
+              val && val !== 'null' && val !== 'undefined' ? val.trim() : '';
+            for (const r of taskRows) {
+              const candidate =
+                clean(r.taskStageCustomName) ||
+                clean(r.snapshotStageCustomName) ||
+                clean(r.taskStageTitle) ||
+                clean(r.snapshotStageTitle) ||
+                clean(r.contentStageCustomName) ||
+                clean(r.contentStageTitle);
+              if (candidate) {
+                stageCustomName = candidate;
+                break;
+              }
+            }
+          }
+
+          const rawEnd = taskRows[0]?.periodEnd;
+          const endDateObj =
+            rawEnd instanceof Date ? rawEnd : rawEnd ? new Date(rawEnd) : null;
+          const endDate =
+            endDateObj && !Number.isNaN(endDateObj.getTime())
+              ? formatShanghaiDate(new Date(endDateObj.getTime() - 1))
+              : formatShanghaiDate(taskRows[0]?.periodStart ?? new Date());
+
+          const rawStart = taskRows[0]?.periodStart;
+          const startDate = rawStart ? formatShanghaiDate(rawStart) : '';
+
+          return {
+            id,
+            name: task.name || '阶段汇总任务',
+            classId: task.classId || '',
+            className:
+              new Set(taskRows.map((row) => row.className)).size === 1
+                ? taskRows[0]!.className
+                : '跨班挑选',
+            studentIds: selectedStudents.length
+              ? selectedStudents.map((student) => student.requestedId)
+              : taskRows.map((row) => row.studentId),
+            studentNames: selectedStudents.length
+              ? selectedStudents.map((student) => student.name).join('、')
+              : taskRows.map((row) => row.studentName).join('、'),
+            startDate,
+            endDate,
+            executeAt: task.executeAt
+              ? String(task.executeAt)
+              : new Date().toISOString(),
+            repeatType: task.repeatType || 'none',
+            stageCustomName,
+            status,
+            totalCount,
+            completedCount,
+            generatedCount: completedCount,
+            processingCount,
+            failedCount,
+            progressPercent: totalCount
+              ? Math.round(((completedCount + failedCount) / totalCount) * 100)
+              : 0,
+            createdAt: taskRows[0]?.createdAt ?? new Date(),
+          };
+        })
+        .filter((t): t is NonNullable<typeof t> => t !== null);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      return [];
+    }
   }
 
   async executeScheduledTask(id: string) {

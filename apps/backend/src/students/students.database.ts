@@ -106,19 +106,41 @@ export class StudentsDatabase {
           const existingById = new Map<string, PetStudentEntity>();
           for (const pet of existingPets) {
             existingById.set(pet.id, pet);
-            if (pet.logicalId) existingById.set(pet.logicalId, pet);
-            if (pet.studentNo) existingById.set(pet.studentNo, pet);
+            if (pet.id.startsWith(`${teacherId}:`)) {
+              existingById.set(pet.id.slice(teacherId.length + 1), pet);
+            }
+            if (pet.logicalId) {
+              existingById.set(pet.logicalId, pet);
+              if (pet.logicalId.startsWith(`${teacherId}:`)) {
+                existingById.set(
+                  pet.logicalId.slice(teacherId.length + 1),
+                  pet,
+                );
+              }
+            }
+            if (pet.studentNo) {
+              existingById.set(pet.studentNo, pet);
+              existingById.set(`${classroom.id}:${pet.studentNo}`, pet);
+            }
           }
           const activeIds = new Set<string>();
 
           for (const student of classroom.students) {
             const sid = this.studentStorageId(classroom.id, student.id);
+            const storageId = `${teacherId}:${sid}`.slice(0, 64);
             activeIds.add(sid);
             activeIds.add(student.id);
+            activeIds.add(storageId);
             const current =
+              existingById.get(storageId) ??
               existingById.get(sid) ??
               existingById.get(student.id) ??
-              existingById.get(student.studentNo);
+              (student.studentNo
+                ? existingById.get(`${classroom.id}:${student.studentNo}`)
+                : undefined) ??
+              (student.studentNo
+                ? existingById.get(student.studentNo)
+                : undefined);
 
             if (current) {
               current.name = student.name;
@@ -133,8 +155,28 @@ export class StudentsDatabase {
               activeIds.add(current.id);
               if (current.logicalId) activeIds.add(current.logicalId);
             } else {
+              // 防御：在尝试新建 score 为 0 的档案前，先检查 DB 中是否已存在以 storageId 为主键的档案
+              const existingInDb = await petStudents.findOne({
+                where: { id: storageId },
+              });
+              if (existingInDb) {
+                existingInDb.name = student.name;
+                existingInDb.studentNo = student.studentNo;
+                existingInDb.group = student.group ?? '';
+                existingInDb.className = classroom.name;
+                existingInDb.classId = classroom.id;
+                existingInDb.logicalId = sid;
+                existingInDb.rosterActive = true;
+                await petStudents.save(existingInDb);
+                activeIds.add(existingInDb.id);
+                if (existingInDb.logicalId)
+                  activeIds.add(existingInDb.logicalId);
+                existingById.set(existingInDb.id, existingInDb);
+                continue;
+              }
+
               const newPet = petStudents.create({
-                id: `${teacherId}:${sid}`.slice(0, 64),
+                id: storageId,
                 logicalId: sid,
                 teacherId,
                 classId: classroom.id,
@@ -161,7 +203,14 @@ export class StudentsDatabase {
               await petStudents.save(newPet);
               existingById.set(newPet.id, newPet);
               existingById.set(sid, newPet);
-              existingById.set(student.studentNo, newPet);
+              existingById.set(storageId, newPet);
+              if (student.studentNo) {
+                existingById.set(student.studentNo, newPet);
+                existingById.set(
+                  `${classroom.id}:${student.studentNo}`,
+                  newPet,
+                );
+              }
               activeIds.add(newPet.id);
               activeIds.add(sid);
             }
@@ -173,7 +222,8 @@ export class StudentsDatabase {
             if (
               !activeIds.has(pid) &&
               !activeIds.has(pet.studentNo) &&
-              !activeIds.has(pet.id)
+              !activeIds.has(pet.id) &&
+              !activeIds.has(`${classroom.id}:${pet.studentNo}`)
             ) {
               if (pet.rosterActive) {
                 pet.rosterActive = false;
