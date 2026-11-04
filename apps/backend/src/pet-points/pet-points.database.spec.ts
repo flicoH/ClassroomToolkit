@@ -153,4 +153,58 @@ describe('pet state and history persistence', () => {
       lock: { mode: 'pessimistic_write' },
     });
   });
+
+  it('deduplicates students with identical class and student numbers in findStudents', async () => {
+    const duplicateRows = [
+      {
+        id: 'canonical-1',
+        teacherId: 'teacher',
+        classId: 'grade-1',
+        studentNo: '2026001',
+        name: '林俊杰',
+        score: 15,
+        rosterActive: true,
+      },
+      {
+        id: 'legacy-dup-1',
+        teacherId: 'teacher',
+        classId: 'grade-1',
+        studentNo: '2026001',
+        name: '周杰伦',
+        score: 0,
+        rosterActive: true,
+      },
+    ] as PetStudentEntity[];
+
+    const students = {
+      find: jest.fn().mockResolvedValue(duplicateRows),
+      manager: {
+        getRepository: jest
+          .fn()
+          .mockReturnValue({ find: jest.fn().mockResolvedValue([]) }),
+      },
+    };
+    const settings = {
+      findOneBy: jest
+        .fn()
+        .mockResolvedValue({ maxLevel: 10, finalEnergy: 200, version: 1 }),
+    };
+
+    const database = new PetPointsDatabase(
+      students as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      settings as never,
+      { teacherId: 'teacher' } as TeacherContext,
+    );
+
+    const result = await database.findStudents();
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('canonical-1');
+    expect(result[0].studentNo).toBe('2026001');
+    expect(result[0].name).toBe('林俊杰');
+    expect(result[0].score).toBe(15);
+  });
 });

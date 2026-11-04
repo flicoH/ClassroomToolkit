@@ -126,8 +126,12 @@ export class StudentsDatabase {
               current.group = student.group ?? '';
               current.className = classroom.name;
               current.classId = classroom.id;
+              current.logicalId = sid;
               current.rosterActive = true;
               await petStudents.save(current);
+              // 登记已激活的实体 ID 与逻辑 ID，防止同班同学号更新时被后续清理逻辑误判为已离班
+              activeIds.add(current.id);
+              if (current.logicalId) activeIds.add(current.logicalId);
             } else {
               const newPet = petStudents.create({
                 id: `${teacherId}:${sid}`.slice(0, 64),
@@ -155,12 +159,22 @@ export class StudentsDatabase {
                 rosterActive: true,
               });
               await petStudents.save(newPet);
+              existingById.set(newPet.id, newPet);
+              existingById.set(sid, newPet);
+              existingById.set(student.studentNo, newPet);
+              activeIds.add(newPet.id);
+              activeIds.add(sid);
             }
           }
 
           for (const pet of existingPets) {
             const pid = pet.logicalId || pet.id;
-            if (!activeIds.has(pid) && !activeIds.has(pet.studentNo)) {
+            // 排除活跃名册中的实体 ID、逻辑 ID 及学号，仅注销真正已被移出班级的冗余档案
+            if (
+              !activeIds.has(pid) &&
+              !activeIds.has(pet.studentNo) &&
+              !activeIds.has(pet.id)
+            ) {
               if (pet.rosterActive) {
                 pet.rosterActive = false;
                 await petStudents.save(pet);

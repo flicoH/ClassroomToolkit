@@ -394,23 +394,41 @@ function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): Stu
   };
 }
 
-/** 用班级学生名单替换当前班级数据，同时保留已有积分和宠物进度。 */
+/** 用班级学生名单替换当前班级数据，同时保留已有积分和宠物进度，并保障同班学号唯一。 */
 function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroom) {
-  const currentById = new Map(currentStudents.map(student => [student.id, student]));
-  const nextClassStudents = classroom.students.map(student => {
+  // 建立多维度映射（逻辑ID、班级+学号、纯学号），确保新老学生名册变更时仍能准确继承原有积分
+  const currentById = new Map<string, StudentPet>();
+  for (const s of currentStudents) {
+    currentById.set(s.id, s);
+    if (s.classId && s.studentNo) {
+      currentById.set(`${s.classId}:${s.studentNo}`, s);
+    }
+    currentById.set(s.studentNo, s);
+  }
+  const seenClassStudentNos = new Set<string>();
+  const nextClassStudents: StudentPet[] = [];
+  for (const student of classroom.students) {
+    // 过滤同班级内重复学号，保证页面名册与状态映射唯一
+    if (seenClassStudentNos.has(student.studentNo)) continue;
+    seenClassStudentNos.add(student.studentNo);
     const apiStudent = toPetPointStudent(classroom, student);
-    const currentStudent = currentById.get(apiStudent.id);
-    return currentStudent
-      ? {
-          ...currentStudent,
-          name: apiStudent.name,
-          studentNo: apiStudent.studentNo,
-          classId: apiStudent.classId,
-          className: apiStudent.className,
-          group: apiStudent.group
-        }
-      : apiStudent;
-  });
+    const currentStudent =
+      currentById.get(apiStudent.id) ??
+      currentById.get(`${classroom.id}:${student.studentNo}`) ??
+      currentById.get(student.studentNo);
+    nextClassStudents.push(
+      currentStudent
+        ? {
+            ...currentStudent,
+            name: apiStudent.name,
+            studentNo: apiStudent.studentNo,
+            classId: apiStudent.classId,
+            className: apiStudent.className,
+            group: apiStudent.group
+          }
+        : apiStudent
+    );
+  }
   return [...currentStudents.filter(student => student.classId !== classroom.id), ...nextClassStudents];
 }
 
@@ -548,7 +566,16 @@ export function PetPoints() {
       setCompletionBadgesDraft(String(overview.settings.completionBadges ?? 1));
     setMaxPetEnergy(nextFinalEnergy);
     if (settingsPanelRef.current !== "等级规则") setMaxPetEnergyDraft(nextFinalEnergy);
-    setStudents(overview.students.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
+    // 初始加载概览数据时防御性去重，防止后端历史遗留数据导致前端出现同班同学号重复卡片
+    const seenStudentKeys = new Set<string>();
+    const deduplicatedStudents: StudentPet[] = [];
+    for (const student of overview.students) {
+      const key = `${student.classId || ""}:${student.studentNo}`;
+      if (seenStudentKeys.has(key)) continue;
+      seenStudentKeys.add(key);
+      deduplicatedStudents.push(student);
+    }
+    setStudents(deduplicatedStudents.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
     setRubrics(overview.rubrics);
     setRewards(overview.rewards);
     setRecords(overview.records);
@@ -707,10 +734,19 @@ export function PetPoints() {
     };
   }, [hydrated, requestClassrooms]);
 
-  const classStudents = useMemo(
-    () => students.filter(student => student.classId === activeClass.id),
-    [activeClass.id, students]
-  );
+  // 当前选中班级的学生列表展示，依据学号保持唯一，避免列表渲染产生相同 Key
+  const classStudents = useMemo(() => {
+    const seen = new Set<string>();
+    const list: StudentPet[] = [];
+    for (const student of students) {
+      if (student.classId === activeClass.id) {
+        if (seen.has(student.studentNo)) continue;
+        seen.add(student.studentNo);
+        list.push(student);
+      }
+    }
+    return list;
+  }, [activeClass.id, students]);
 
   const groupOptions = useMemo(
     () => [

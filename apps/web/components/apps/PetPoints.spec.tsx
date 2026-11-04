@@ -544,4 +544,26 @@ describe("PetPoints persisted workflows", () => {
     await click(button("确认评分"));
     expect(document.body.textContent).toContain("已为 1 名学生完成评分，跳过 1 名请假学生");
   });
+
+  it("deduplicates students with the same student number in the same class", async () => {
+    const original = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      if (typeof args === "string" && args === "/api/pet-points") {
+        const overview = await original(args);
+        return {
+          ...overview,
+          students: [
+            { ...student, id: "one", studentNo: "2026001", name: "林俊杰", score: 10 },
+            { ...student, id: "legacy-one", studentNo: "2026001", name: "周杰伦", score: 0 }
+          ]
+        };
+      }
+      return original(args);
+    });
+    await mount();
+    const cards = document.querySelectorAll("[data-student-card]");
+    expect(cards).toHaveLength(1);
+    expect(document.body.textContent).toContain("林俊杰");
+    expect(document.body.textContent).toContain("#2026001");
+  });
 });

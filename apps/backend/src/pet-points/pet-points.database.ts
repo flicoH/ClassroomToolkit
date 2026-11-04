@@ -208,17 +208,25 @@ export class PetPointsDatabase {
     return { maxLevel, finalEnergy, version, completionBadges };
   }
 
-  /** 查询当前教师的宠物积分学生列表，自动同步班级管理中最新名册。 */
+  /** 查询当前教师的宠物积分学生列表，自动同步班级管理中最新名册并防御性去重。 */
   async findStudents() {
     await this.syncRosterFromClassrooms();
     const rows = await this.students.find({
       where: { teacherId: this.teacherContext.teacherId, rosterActive: true },
       order: { score: 'DESC', studentNo: 'ASC' },
     });
-    return rows.map((row) => this.toStudent(row));
+    const seen = new Set<string>();
+    const deduplicated: PetStudentEntity[] = [];
+    for (const row of rows) {
+      const key = `${row.classId}:${row.studentNo}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduplicated.push(row);
+    }
+    return deduplicated.map((row) => this.toStudent(row));
   }
 
-  /** 确保当前教师名下班级的所有学生都同步至宠物积分名册。 */
+  /** 确保当前教师名下班级的所有学生都同步至宠物积分名册，并防重防覆盖。 */
   private async syncRosterFromClassrooms() {
     const teacherId = this.teacherContext.teacherId;
     const manager = this.transactionManager ?? this.students.manager;
@@ -237,8 +245,46 @@ export class PetPointsDatabase {
         where: { teacherId },
       });
 
+      // 针对已有数据中可能存在的同班级同学号重复记录先进行整理归并
+      const grouped = new Map<string, PetStudentEntity[]>();
+      for (const row of existingRows) {
+        if (row.classId && row.studentNo) {
+          const key = `${row.classId}:${row.studentNo}`;
+          const list = grouped.get(key) ?? [];
+          list.push(row);
+          grouped.set(key, list);
+        }
+      }
+      for (const [, rows] of grouped.entries()) {
+        if (rows.length > 1) {
+          // 优先保留积分最高、已有认领宠物或处于激活状态的主档案，多余的重复记录置为非激活以保护历史数据
+          rows.sort(
+            (a, b) =>
+              b.score - a.score ||
+              Number(Boolean(b.petId)) - Number(Boolean(a.petId)) ||
+              Number(b.rosterActive) - Number(a.rosterActive),
+          );
+          const [, ...redundant] = rows;
+          for (const extra of redundant) {
+            if (extra.rosterActive) {
+              extra.rosterActive = false;
+              await this.students.save(extra);
+            }
+          }
+        }
+      }
+
       const existingById = new Map<string, PetStudentEntity>();
       for (const row of existingRows) {
+        if (
+          !row.rosterActive &&
+          grouped
+            .get(`${row.classId}:${row.studentNo}`)
+            ?.some((r) => r.rosterActive && r.id !== row.id)
+        ) {
+          // 跳过已被标记为非激活的重复记录
+          continue;
+        }
         existingById.set(row.id, row);
         if (row.logicalId) existingById.set(row.logicalId, row);
         existingById.set(
@@ -253,16 +299,27 @@ export class PetPointsDatabase {
       }
 
       const activeStudentIds = new Set<string>();
+      const activeStudentNos = new Set<string>();
+      const matchedPetIds = new Set<string>();
       const rules = await this.getSettings();
 
       for (const cls of classrooms) {
         for (const stu of cls.students ?? []) {
           activeStudentIds.add(stu.id);
-          const current =
+          activeStudentNos.add(`${cls.id}:${stu.studentNo}`);
+          let current =
             existingById.get(stu.id) ??
             existingById.get(`${cls.id}:${stu.studentNo}`);
 
+          if (current && matchedPetIds.has(current.id)) {
+            // 已被同班其他学生占用的实体不复用，避免产生同名覆盖
+            current = undefined;
+          }
+
           if (current) {
+            matchedPetIds.add(current.id);
+            activeStudentIds.add(current.id);
+            if (current.logicalId) activeStudentIds.add(current.logicalId);
             let changed = false;
             if (current.name !== stu.name) {
               current.name = stu.name;
@@ -282,6 +339,10 @@ export class PetPointsDatabase {
             }
             if (current.group !== (stu.groupName ?? '')) {
               current.group = stu.groupName ?? '';
+              changed = true;
+            }
+            if (current.logicalId !== stu.id) {
+              current.logicalId = stu.id;
               changed = true;
             }
             if (!current.rosterActive) {
@@ -321,6 +382,12 @@ export class PetPointsDatabase {
               rosterActive: true,
             });
             await this.students.save(newPet);
+            existingById.set(newPet.id, newPet);
+            existingById.set(studentId, newPet);
+            existingById.set(`${cls.id}:${stu.studentNo}`, newPet);
+            activeStudentIds.add(newPet.id);
+            activeStudentIds.add(studentId);
+            matchedPetIds.add(newPet.id);
           }
         }
       }
@@ -329,7 +396,8 @@ export class PetPointsDatabase {
         if (row.classId && classrooms.some((c) => c.id === row.classId)) {
           if (
             !activeStudentIds.has(row.logicalId || '') &&
-            !activeStudentIds.has(row.id)
+            !activeStudentIds.has(row.id) &&
+            !activeStudentNos.has(`${row.classId}:${row.studentNo}`)
           ) {
             if (row.rosterActive) {
               row.rosterActive = false;
@@ -349,7 +417,11 @@ export class PetPointsDatabase {
     return this.run(async (manager) => {
       const students = manager.getRepository(PetStudentEntity);
       const current = await students.findOne({
-        where: this.studentWhere(student.id),
+        where: this.studentWhere(
+          student.id,
+          student.classId,
+          student.studentNo,
+        ),
         lock: { mode: 'pessimistic_write' },
       });
       const saved = await students.save(
@@ -753,14 +825,23 @@ export class PetPointsDatabase {
       : `pet-${createHash('sha256').update(qualified).digest('hex').slice(0, 60)}`;
   }
 
-  /** 同时兼容新旧两种学生主键查询条件。 */
-  private studentWhere(studentId: string) {
+  /** 同时兼容新旧两种学生主键以及同班学号查询条件。 */
+  private studentWhere(
+    studentId: string,
+    classId?: string,
+    studentNo?: string,
+  ) {
     const teacherId = this.teacherContext.teacherId;
-    return [
+    const conditions: Record<string, unknown>[] = [
       { id: this.studentStorageId(studentId), teacherId },
       { id: studentId, teacherId },
       { logicalId: studentId, teacherId },
     ];
+    // 兼容历史数据通过同班同学号关联的情况，防止主键或前缀格式不一致导致查询落空
+    if (classId && studentNo) {
+      conditions.push({ teacherId, classId, studentNo });
+    }
+    return conditions;
   }
 
   /** 把带教师前缀的存储 ID 转回前端使用的逻辑学生 ID。 */
