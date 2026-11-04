@@ -921,9 +921,9 @@ export class SemesterReportsService {
           studentId: string;
           studentName: string;
           className: string;
-          periodStart: Date;
-          periodEnd: Date;
-          createdAt: Date;
+          periodStart: Date | string;
+          periodEnd: Date | string;
+          createdAt: Date | string;
           scheduledTask: string | ScheduledReportOptions;
           snapshotStageCustomName?: string;
           snapshotStageTitle?: string;
@@ -1007,15 +1007,17 @@ export class SemesterReportsService {
           }
 
           const rawEnd = taskRows[0]?.periodEnd;
-          const endDateObj =
-            rawEnd instanceof Date ? rawEnd : rawEnd ? new Date(rawEnd) : null;
+          const endDateObj = parseDatabaseDate(rawEnd);
           const endDate =
             endDateObj && !Number.isNaN(endDateObj.getTime())
               ? formatShanghaiDate(new Date(endDateObj.getTime() - 1))
               : formatShanghaiDate(taskRows[0]?.periodStart ?? new Date());
 
           const rawStart = taskRows[0]?.periodStart;
-          const startDate = rawStart ? formatShanghaiDate(rawStart) : '';
+          const startDateObj = parseDatabaseDate(rawStart);
+          const startDate = startDateObj
+            ? formatShanghaiDate(startDateObj)
+            : '';
 
           return {
             id,
@@ -3089,6 +3091,21 @@ function shanghaiMidnight(value: string | Date) {
   const date =
     value instanceof Date ? formatShanghaiDate(value) : value.slice(0, 10);
   return new Date(`${date}T00:00:00+08:00`);
+}
+
+function parseDatabaseDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  // MySQL DATETIME has no timezone. Interpret the driver's raw string in the
+  // application's Shanghai timezone so CI/server host timezone cannot shift it.
+  const mysqlDateTime =
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(value);
+  const parsed = new Date(
+    mysqlDateTime ? `${mysqlDateTime[1]}T${mysqlDateTime[2]}+08:00` : value,
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function parsePeriodBound(value: unknown, exclusiveEnd: boolean) {
