@@ -2090,5 +2090,127 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
         vi.unstubAllGlobals();
       }
     });
+
+    it("allows selecting all students in a class with > 30 students and saves to queue without 400 error", async () => {
+      // 构造超过 30 名（例如 35 名）学生的班级
+      const largeStudentList = Array.from({ length: 35 }, (_, idx) => ({
+        id: `stu-large-${idx + 1}`,
+        name: `学生${idx + 1}`,
+        classId: "cls-large",
+        className: "三年级二班",
+        score: 100 + idx,
+        pet: { name: "闪电狐", level: 3, stage: "成长体" }
+      }));
+
+      let scheduledTaskPayload: Record<string, unknown> | null = null;
+      api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/ai-permission")) return { hasPermission: true };
+        if (url.includes("/scheduled-tasks")) return [];
+        if (url.includes("/report-terms")) return mockTerms;
+        if (url.includes("/report-subjects")) return mockSubjects;
+        if (url === "/api/pet-points") return { students: largeStudentList };
+        if (url === "/api/classes") {
+          return [
+            {
+              id: "cls-large",
+              name: "三年级二班",
+              students: largeStudentList.map((s, idx) => ({ id: s.id, name: s.name, studentNo: `${idx + 1}` }))
+            }
+          ];
+        }
+        if (url.includes("/reports")) return [];
+        return [];
+      });
+
+      api.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+        if (url.includes("/scheduled-tasks")) {
+          scheduledTaskPayload = body;
+          return {
+            id: "task-large-batch",
+            name: body.name || "阶段汇总任务",
+            classId: body.classId,
+            className: "三年级二班",
+            studentIds: body.studentIds,
+            studentNames: largeStudentList.map(s => s.name).join("、"),
+            startDate: body.startDate,
+            endDate: body.endDate,
+            executeAt: body.executeAt,
+            status: "pending",
+            repeatType: "none",
+            totalCount: 35,
+            completedCount: 0,
+            processingCount: 0,
+            failedCount: 0,
+            progressPercent: 0
+          };
+        }
+        return {};
+      });
+
+      await openStageScheduler();
+
+      // 点击“全选本班”
+      const selectAllBtn = Array.from(container.querySelectorAll("button")).find(b =>
+        b.textContent?.includes("全选本班")
+      );
+      expect(selectAllBtn).toBeTruthy();
+      await act(async () => {
+        selectAllBtn?.click();
+      });
+
+      // 验证提示全选有效学生（35人）
+      expect(container.textContent).toContain("已全选有效学生 (35人)");
+
+      // 点击保存队列
+      const saveBtn = container.querySelector("#btnSaveStageTask") as HTMLButtonElement;
+      expect(saveBtn).toBeTruthy();
+      await act(async () => {
+        saveBtn.click();
+      });
+
+      // 验证发送给后端的 scheduled-tasks 请求中包含全部 35 名学生
+      expect(scheduledTaskPayload).not.toBeNull();
+      expect(Array.isArray(scheduledTaskPayload!.studentIds)).toBe(true);
+      expect((scheduledTaskPayload!.studentIds as string[]).length).toBe(35);
+      expect(container.textContent).toContain("定时任务已持久化到云端");
+    });
+
+    it("deduplicates task items to prevent duplicate key warning and duplicate card rendering", async () => {
+      const duplicateTask = {
+        id: "task-dup-1",
+        name: "防重复测试任务",
+        classId: "cls-1",
+        className: "三年级二班",
+        studentIds: ["stu-1"],
+        studentNames: "张小明",
+        startDate: "2026-09-01",
+        endDate: "2026-09-30",
+        executeAt: new Date(Date.now() + 60000).toISOString(),
+        status: "pending",
+        repeatType: "none",
+        totalCount: 1,
+        completedCount: 0,
+        processingCount: 0,
+        failedCount: 0,
+        progressPercent: 0
+      };
+
+      api.get.mockImplementation(async (url: string) => {
+        if (url.includes("/ai-permission")) return { hasPermission: true };
+        // 模拟接口因边界或并发返回了包含相同 id 的两条记录
+        if (url.includes("/scheduled-tasks")) return [duplicateTask, { ...duplicateTask }];
+        if (url.includes("/report-terms")) return mockTerms;
+        if (url.includes("/report-subjects")) return mockSubjects;
+        if (url === "/api/pet-points") return { students: mockStudents };
+        return [];
+      });
+
+      await openStageScheduler();
+
+      // 验证虽然接口提供了两条相同 id 的任务，渲染时严格去重只有 1 个任务卡片，避免 React duplicate key 报错
+      const cards = container.querySelectorAll("#stageTasksListContainer [role='listitem']");
+      expect(cards).toHaveLength(1);
+      expect(container.querySelector("#scheduledTasksListCount")?.textContent).toBe("1");
+    });
   });
 });

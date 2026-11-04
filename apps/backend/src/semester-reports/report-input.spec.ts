@@ -1352,4 +1352,80 @@ describe('report generation input', () => {
       process.env = previous;
     }
   });
+
+  it('allows scheduled tasks to queue more than 30 students (up to 200) for entire class', async () => {
+    const { service, internals, reports } = setup();
+    const qb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    reports.createQueryBuilder = jest.fn().mockReturnValue(qb);
+    const students35 = Array.from({ length: 35 }, (_, idx) => ({
+      id: `stu-${idx + 1}`,
+      name: `学生${idx + 1}`,
+      className: '一班',
+    }));
+    internals.findStudents.mockResolvedValue(students35);
+    (
+      service as unknown as { assertAiReportPermission: jest.Mock }
+    ).assertAiReportPermission = jest.fn().mockResolvedValue(true);
+
+    const scheduledTask = await service.createScheduledTask({
+      name: '全班阶段汇总',
+      termId: 'term',
+      generationMode: 'template',
+      studentIds: students35.map((s) => s.id),
+      startDate: '2026-09-01',
+      endDate: '2026-09-30',
+      executeAt: new Date(Date.now() + 60000).toISOString(),
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '内容' },
+      ],
+    });
+
+    expect(scheduledTask.studentIds).toHaveLength(35);
+    expect(reports.save).toHaveBeenCalledTimes(35);
+  });
+
+  it('rejects regular synchronous generate with > 30 students', async () => {
+    const { service, internals } = setup();
+    const students35 = Array.from({ length: 35 }, (_, idx) => `stu-${idx + 1}`);
+    internals.findStudents.mockResolvedValue(
+      students35.map((id) => ({ id, name: id, className: '一班' })),
+    );
+    await expect(
+      service.generate({
+        ...request,
+        studentIds: students35,
+      }),
+    ).rejects.toThrow('请选择学期、学科及 1 至 30 名学生');
+  });
+
+  it('rejects scheduled tasks exceeding 200 students', async () => {
+    const { service } = setup();
+    (
+      service as unknown as { assertAiReportPermission: jest.Mock }
+    ).assertAiReportPermission = jest.fn().mockResolvedValue(true);
+    const students201 = Array.from(
+      { length: 201 },
+      (_, idx) => `stu-${idx + 1}`,
+    );
+    await expect(
+      service.createScheduledTask({
+        name: '超额阶段汇总',
+        termId: 'term',
+        studentIds: students201,
+        startDate: '2026-09-01',
+        endDate: '2026-09-30',
+        executeAt: new Date(Date.now() + 60000).toISOString(),
+        courseSelections: [
+          { subjectId: 'subject', courseScope: '', manualContent: '内容' },
+        ],
+      }),
+    ).rejects.toThrow('请选择学期、学科及 1 至 200 名学生');
+  });
 });

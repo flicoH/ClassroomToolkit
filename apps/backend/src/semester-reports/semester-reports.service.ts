@@ -507,7 +507,7 @@ export class SemesterReportsService {
       await this.assertAiReportPermission(teacherId);
     }
     const { period, start, end, termId, subjectId, studentIds } =
-      this.validateRequest(input);
+      this.validateRequest(input, Boolean(scheduled) || isStageReport);
     const term = await this.requireTerm(termId);
     const subject =
       subjectId === '*'
@@ -2253,7 +2253,7 @@ export class SemesterReportsService {
     }
   }
 
-  private validateRequest(input: Record<string, unknown>) {
+  private validateRequest(input: Record<string, unknown>, isScheduled = false) {
     const period = input.period as (typeof periods)[number];
     if (!periods.includes(period))
       throw new BadRequestException('周期必须是 week、month 或 term');
@@ -2278,14 +2278,20 @@ export class SemesterReportsService {
     const studentIds = Array.isArray(input.studentIds)
       ? [...new Set(input.studentIds.map(String))]
       : [];
+    // 同步生成限制 30 人避免请求超时与手工批阅过载；离线守护队列与阶段任务支持整班批量生成（上限 200 人）
+    const maxStudents = isScheduled ? 200 : 30;
     if (
       !termId ||
       !subjectId ||
       (subjectId === '*' && input.reportVersion !== 'v2') ||
       studentIds.length < 1 ||
-      studentIds.length > 30
+      studentIds.length > maxStudents
     )
-      throw new BadRequestException('请选择学期、学科及 1 至 30 名学生');
+      throw new BadRequestException(
+        isScheduled
+          ? `请选择学期、学科及 1 至 ${maxStudents} 名学生`
+          : '请选择学期、学科及 1 至 30 名学生',
+      );
     return { period, start, end, termId, subjectId, studentIds };
   }
 

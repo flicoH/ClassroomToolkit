@@ -95,7 +95,14 @@ export function StageReportSchedulerView({
   onActiveTaskCountChange
 }: StageReportSchedulerViewProps) {
   // 任务队列
-  const [tasks, setTasks] = useState<StageScheduledTask[]>(initialTasks);
+  const [tasks, setTasks] = useState<StageScheduledTask[]>(() => {
+    const seen = new Set<string>();
+    return initialTasks.filter(task => {
+      if (!task?.id || seen.has(task.id)) return false;
+      seen.add(task.id);
+      return true;
+    });
+  });
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
   // 表单状态
@@ -134,11 +141,21 @@ export function StageReportSchedulerView({
     };
   }, []);
 
+  // 保证任务列表 ID 唯一性，避免并发 SSE 同步与本地更新产生重复键
+  const uniqueTasks = useMemo(() => {
+    const seen = new Set<string>();
+    return tasks.filter(task => {
+      if (!task?.id || seen.has(task.id)) return false;
+      seen.add(task.id);
+      return true;
+    });
+  }, [tasks]);
+
   // 通知主视图活跃任务数
   useEffect(() => {
-    const activeCount = tasks.filter(t => t.status === "pending" || t.status === "running").length;
+    const activeCount = uniqueTasks.filter(t => t.status === "pending" || t.status === "running").length;
     onActiveTaskCountChange?.(activeCount);
-  }, [tasks, onActiveTaskCountChange]);
+  }, [uniqueTasks, onActiveTaskCountChange]);
 
   // 显示提示
   const showToast = useCallback((msg: string) => {
@@ -218,7 +235,15 @@ export function StageReportSchedulerView({
   }, [belongsToClass, enrichedStudents, selectedClassId]);
 
   const applyTasksUpdate = useCallback((rows: ScheduledTaskResponse[]) => {
-    const next = rows.map(fromScheduledTaskResponse);
+    const seen = new Set<string>();
+    const next: StageScheduledTask[] = [];
+    for (const row of rows) {
+      const task = fromScheduledTaskResponse(row);
+      if (task?.id && !seen.has(task.id)) {
+        seen.add(task.id);
+        next.push(task);
+      }
+    }
     const newlyCompleted = next.filter(task => task.status === "completed" && !completedTaskIds.current.has(task.id));
     next.filter(task => task.status === "completed").forEach(task => completedTaskIds.current.add(task.id));
     setTasks(next);
@@ -334,6 +359,10 @@ export function StageReportSchedulerView({
       showToast("请至少勾选一位学生！");
       return;
     }
+    if (selectedStudentIds.length > 200) {
+      showToast("云端定时汇总任务单次最多支持 200 名学生！");
+      return;
+    }
 
     const explicitDate = explicitTimestamp ? new Date(explicitTimestamp) : null;
     const effectiveSchedDate = explicitDate ? formatLocalDate(explicitDate) : schedDate;
@@ -393,11 +422,14 @@ export function StageReportSchedulerView({
       const newTask = fromScheduledTaskResponse(response);
       if (editingTaskId) {
         await request.delete(`/api/semester-reports/scheduled-tasks/${editingTaskId}`);
-        setTasks(previous => [newTask, ...previous.filter(task => task.id !== editingTaskId)]);
+        setTasks(previous => [
+          newTask,
+          ...previous.filter(task => task.id !== editingTaskId && task.id !== newTask.id)
+        ]);
         cancelEditingTask();
         showToast(`✅ 已成功修改任务【${taskName}】，云端调度已更新`);
       } else {
-        setTasks(previous => [newTask, ...previous]);
+        setTasks(previous => [newTask, ...previous.filter(task => task.id !== newTask.id)]);
         showToast(`✅ 定时任务已持久化到云端${note ? ` (${note})` : ""}`);
       }
     } catch (error) {
@@ -587,16 +619,25 @@ export function StageReportSchedulerView({
               <button
                 type="button"
                 onClick={() => {
+                  let ids: string[];
                   if (selectedClassId === "all") {
-                    setSelectedStudentIds(enrichedStudents.filter(s => s.weeklyCount > 0).map(s => s.id));
+                    ids = enrichedStudents.filter(s => s.weeklyCount > 0).map(s => s.id);
                   } else {
-                    setSelectedStudentIds(
-                      enrichedStudents
-                        .filter(s => belongsToClass(s, selectedClassId) && s.weeklyCount > 0)
-                        .map(s => s.id)
-                    );
+                    ids = enrichedStudents
+                      .filter(s => belongsToClass(s, selectedClassId) && s.weeklyCount > 0)
+                      .map(s => s.id);
                   }
-                  showToast("已全选当前班级有效学生");
+                  if (ids.length === 0) {
+                    showToast("当前班级暂无有效周报学生可供选择");
+                    return;
+                  }
+                  if (ids.length > 200) {
+                    setSelectedStudentIds(ids.slice(0, 200));
+                    showToast("已选中前 200 名有效学生（单次定时任务上限为 200 人）");
+                  } else {
+                    setSelectedStudentIds(ids);
+                    showToast(`已全选有效学生 (${ids.length}人)`);
+                  }
                 }}
                 className="rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-300"
               >
@@ -675,9 +716,16 @@ export function StageReportSchedulerView({
                       showToast(`${stu.name}在阶段内无任何有效周报，无法生成阶段报告`);
                       return;
                     }
-                    setSelectedStudentIds(prev =>
-                      prev.includes(stu.id) ? prev.filter(x => x !== stu.id) : [...prev, stu.id]
-                    );
+                    setSelectedStudentIds(prev => {
+                      if (prev.includes(stu.id)) {
+                        return prev.filter(x => x !== stu.id);
+                      }
+                      if (prev.length >= 200) {
+                        showToast("定时任务单次最多支持 200 名学生，已达到上限");
+                        return prev;
+                      }
+                      return [...prev, stu.id];
+                    });
                   }}
                   className={`flex items-center justify-between gap-2 rounded-xl border p-2.5 transition ${
                     !hasWeekly ? "cursor-not-allowed bg-muted/40 opacity-50" : "cursor-pointer hover:bg-muted/40"
@@ -953,7 +1001,7 @@ export function StageReportSchedulerView({
               <Clock className="h-5 w-5 text-indigo-600" />
               <span>云端定时汇总任务队列</span>
               <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
-                共 <span id="scheduledTasksListCount">{tasks.length}</span> 个任务
+                共 <span id="scheduledTasksListCount">{uniqueTasks.length}</span> 个任务
               </span>
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -966,7 +1014,7 @@ export function StageReportSchedulerView({
             type="button"
             onClick={() => {
               cancelEditingTask();
-              setTaskName(`新阶段成长汇总任务 (${tasks.length + 1})`);
+              setTaskName(`新阶段成长汇总任务 (${uniqueTasks.length + 1})`);
               showToast("已重置表单，可输入新任务参数");
             }}
             className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
@@ -983,12 +1031,12 @@ export function StageReportSchedulerView({
           role="list"
           data-view-mode="list"
         >
-          {tasks.length === 0 ? (
+          {uniqueTasks.length === 0 ? (
             <div className="rounded-2xl border bg-muted/20 p-8 text-center text-xs text-muted-foreground">
               暂无云端定时任务。请在上发表单配置学生与时间后加入队列。
             </div>
           ) : (
-            tasks.map(task => {
+            uniqueTasks.map(task => {
               const isPending = task.status === "pending";
               const isRunning = task.status === "running";
               const isCompleted = task.status === "completed";
