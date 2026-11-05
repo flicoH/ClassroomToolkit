@@ -43,7 +43,7 @@ import {
 } from "@/components/icons/CartoonAppIcons";
 
 const menuItems: MenuItemData[] = [
-  { name: "倒计时", icon: CartoonCountdownIcon, contentKey: "countdown" },
+  { name: "计时器", icon: CartoonCountdownIcon, contentKey: "countdown" },
   { name: "随机点名", icon: CartoonRandomPickerIcon, contentKey: "randomPicker" },
   { name: "学生管理", icon: CartoonStudentsIcon, contentKey: "studentManagement" },
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
