@@ -139,24 +139,24 @@ describe('report student identity compatibility', () => {
     expect(saveMock).not.toHaveBeenCalled();
   });
 
-  it('gathers candidate IDs across teacher prefix, logical ID and colon suffix for evaluation records', async () => {
+  it('keeps full persisted IDs and excludes inferred roster aliases from evaluation records', async () => {
     const service = Object.assign(
       Object.create(SemesterReportsService.prototype) as SemesterReportsService,
       { teacher: { teacherId: 'teacher' } },
     );
 
-    const candidates = service['getStudentCandidateIds']({
+    const student = {
       id: 'teacher:cls-1:uuid-99',
       logicalId: 'uuid-99',
       classId: 'cls-1',
       studentNo: '10',
-    });
+    };
+    const candidates = service['getStudentCandidateIds'](student);
 
     expect(candidates).toContain('teacher:cls-1:uuid-99');
     expect(candidates).toContain('cls-1:uuid-99');
     expect(candidates).toContain('uuid-99');
     expect(candidates).toContain('teacher:uuid-99');
-    expect(candidates).toContain('cls-1:10');
-    expect(candidates).toContain('teacher:cls-1:10');
+    expect(candidates).toHaveLength(4);
   });
 });

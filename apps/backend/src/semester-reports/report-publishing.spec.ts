@@ -1029,6 +1029,38 @@ describe('report publishing', () => {
     expect(row.snapshot!.scoreSummary).toEqual(original.snapshot!.scoreSummary);
   });
 
+  it('uses audited snapshot evidence for draft reads and publication', async () => {
+    const { service, row, scores, summary } = liveDraft();
+    const pet = {
+      petId: 'coral-whale',
+      petName: '珊瑚鲸',
+      stage: '第2形态',
+      level: 2,
+      petHatched: true,
+    };
+    row.snapshot = {
+      ...row.snapshot,
+      reportKind: 'stage',
+      reportScoreSummaryRepaired: true,
+      reportScoreSummary: summary,
+      pet,
+      petHistoryStatus: 'recorded',
+    };
+    const expected = {
+      pet,
+      petHistoryStatus: 'recorded',
+      scoreDetails: {
+        positiveItems: summary.positiveItems,
+        count: summary.count,
+      },
+    };
+    expect((await service.getReport('report')).content).toMatchObject(expected);
+    expect((await service.publish('report')).report.content).toMatchObject(
+      expected,
+    );
+    expect(scores).not.toHaveBeenCalled();
+  });
+
   it('freezes the latest points atomically at publishing, resumes live counts after withdrawal', async () => {
     const { service, row, scores, summary } = liveDraft();
     const published = await service.publish('report');

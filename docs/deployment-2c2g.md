@@ -140,3 +140,86 @@ gzip -dc /绝对路径/备份/mysql.sql.gz | docker compose --env-file deploy/.e
 ```
 
 首次部署失败尚无 `.2c2g-release.env` 时，使用显式 `BACKEND_IMAGE_TAG`/`FRONTEND_IMAGE_TAG`，省略第二个 `--env-file`。恢复 PDF 时挂载 `classroom_reports_data`，先清理旧文件再解压 `reports.tar.gz`，恢复 uid/gid 1000 和目录权限；这是人工恢复操作，不由部署脚本自动执行。最后恢复原加密密钥、选择兼容的镜像并执行部署验收。环境或数据库密码变更应采用单独维护流程，不能仅改文件假定已有 MySQL 卷自动改密码。
+
+## 线上阶段报告证据修复
+
+适用范围为已有正文的 v2 阶段草稿和已发布阶段报告。学生学号调整后，旧存储 ID 可能混存评价或宠物历史。用线上真实报告 ID、教师 ID、学生存储 ID 和逐条核对的证据修复单份报告。本地报告 ID 不用于推断线上记录。
+
+脚本只更新该报告的 `snapshot` 及数据库自动更新时间。积分展示按已核对的评价重新汇总，草稿及其后续发布使用该次冻结的统计。宠物展示使用已核对的原始历史快照，必须早于报告周期的排他结束时间，也不得晚于原快照截止时刻。报告的 AI 正文、原证据引用、分享链接、宠物积分明细及宠物历史表均保留。若 AI 正文也受旧证据影响，教师需另行审核和修订。
+
+### 准备与核对
+
+先部署包含此脚本及草稿读取逻辑的新 Backend 镜像。本操作不需要额外迁移。在运行后端相同的时区和数据库环境中执行，使用 MySQL 8.0。账号需可读取三张业务表，以及更新 `semester_reports.snapshot`。请先核对线上备份可恢复，再创建一个仅部署人员可访问的持久目录存放清单和本次快照备份。
+
+通过线上教师端详情或下列只读查询定位目标报告。若多条符合条件，按学生、周期、生成时间和状态确定要修复的那一份。
+
+```sql
+SELECT id, teacher_id, student_id, student_name, period_start, period_end, status
+FROM semester_reports
+WHERE teacher_id = '<线上教师ID>'
+  AND student_name IN ('庄坤翔', '林郅宸')
+  AND JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.reportKind')) = 'stage'
+  AND status IN ('draft', 'published')
+ORDER BY created_at DESC;
+```
+
+可用以下查询确认宠物积分存储 ID。若同名学生在多个班级出现，结合上一步的目标报告和原始班级核对。仅把已纳入核对范围的存储 ID 加入清单。
+
+```sql
+SELECT id, logical_id, class_id, student_no, name, roster_active
+FROM pet_points_students
+WHERE teacher_id = '<线上教师ID>'
+  AND name IN ('庄坤翔', '林郅宸')
+ORDER BY class_id, name, id;
+```
+
+每份报告一份 `manifest.json`。第一次可只填写归属与候选来源 ID，脚本列出该教师下周期内的评价和截止前的宠物历史候选。候选 ID 可包括旧存储 ID，由部署人员根据正式名册与原始记录核对。若候选清单提示截断，缩小候选来源范围后再查，或从数据库补齐明细。
+
+```json
+{
+  "teacherId": "online-teacher-id",
+  "reportId": "online-report-id",
+  "studentId": "online-report-student-id",
+  "sourceStudentIds": ["online-report-student-id", "verified-legacy-id"]
+}
+```
+
+确认后加入 `scoreRecordIds`（该学生在整个报告周期内经核对的**完整**评价记录 ID 列表，含加减分）和 `petHistoryId`（该学生截至报告截止时间最后一条可信形态记录 ID，使用 JSON 字符串）。只修复一项时省略另一项。显式填写 `scoreRecordIds: []` 会把报告评价展示冻结为零条。旧 ID 曾被混用时，只选能确认属于目标学生的记录。若无法确认完整评价集合或截止时的宠物形态，省略对应字段，待取得证据后再处理。
+
+### 预览与执行
+
+在已有运行环境中可直接执行编译产物。通过线上后端的 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD` 环境变量连接，`--target` 必须与连接目标一致。下例使用 2c2g Compose 的目标库。在仓库根目录执行，将 `REPAIR_DIR` 设为私有持久目录的绝对路径，并确保容器中的 UID 1000 有权限读写。
+
+```sh
+stage_repair() {
+  docker compose --env-file deploy/.env.2c2g --env-file deploy/.2c2g-release.env \
+    -f deploy/compose.2c2g.yml run --rm --no-deps -v "${REPAIR_DIR:?}:/repair:Z" \
+    backend node dist/database/scripts/repair-stage-report-evidence.js \
+    --target mysql:3306/classroom_toolkit --manifest /repair/manifest.json "$@"
+}
+
+stage_repair
+```
+
+填入经核对的证据 ID 后再次执行 `stage_repair`。预览应显示 `affected: 1`、评价明细统计、拟展示的宠物以及 `fingerprint`。核对目标与备份后，用该次预览的指纹执行。每份报告用不同的备份文件名。
+
+```sh
+stage_repair --apply '<本次预览指纹>' --backup /repair/report-before.json
+stage_repair
+```
+
+执行会锁定报告并重新校验归属、证据和预览指纹。在实际更新前以 0600 权限创建并同步备份，已有文件会被拒绝覆盖。执行后复查应为 `affected: 0`，再打开线上报告检查积分图、宠物形态和原正文。已发布报告还应通过原分享链接复查。重试相同变更应为 0 条。
+
+### 失败处理和恢复
+
+任何范围或校验错误均停止并回滚事务。预览指纹变化时重新预览与人工核对。若写入备份后执行失败，保留该文件并先查报告快照，再决定是否使用新备份路径重试。
+
+```sh
+stage_repair --restore /repair/report-before.json
+```
+
+恢复命令核对数据库实例、教师、报告、学生、报告状态和前后快照指纹。报告快照或状态后来有变化时会拒绝覆盖，交由部署人员对比新旧内容。恢复后打开报告复查，并按业务需要留存或安全删除含学生信息的清单和备份。
+
+### 验证记录
+
+独立 MySQL 8.0 实例使用脱敏数据验证了只读候选查询、跨教师和越界记录拒绝、超出 JavaScript 安全整数的宠物历史 ID、预览指纹、备份权限、执行、重复执行、回滚及快照变化后拒绝回滚。后端回归覆盖修复快照在草稿和发布响应中生效。
