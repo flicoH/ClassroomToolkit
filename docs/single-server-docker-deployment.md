@@ -548,3 +548,39 @@ journalctl -u nginx --since '30 minutes ago'
 接口为 `POST /admin/teachers/:id/reset-password`，请求体为 `{ "password": "新密码" }`；沿用管理端 Cookie 认证和 `X-Admin-Request: 1` 请求头。普通教师账号不能调用此接口。密码使用现有教师登录的加盐哈希规则保存，不返回明文或哈希；密码更新与撤销该教师已有会话在同一数据库事务内完成，教师需重新登录。此功能不需要新增数据库迁移。
 
 发布时先完成 `Deploy Backend`，再完成 `Deploy Frontend`。仅更新前端会导致重置接口返回 404。
+
+### 2026 年 10 月两份阶段报告积分专项修复
+
+`deploy/repair-october-stage-reports.py` 将两份 MySQL 备份的归属核对、清单生成、指纹预览、应用与回滚封装为单机 Docker 部署命令。适用于已核对的生产 MySQL 实例，以及庄坤翔和林郅宸的两份原阶段报告。分别恢复 43 条和 38 条评价的报告积分展示。早到按原始加分记录计数。修复范围是指定报告的积分展示快照。清单省略宠物字段，使用原报告已有的宠物快照。
+
+前置条件为服务器使用 Python 3.6 以上、已发布包含 `repair-stage-report-evidence.js` 的 Backend 镜像、运行用户可使用 Docker 并能读两份备份。用 UID 1000 的部署账号运行，以便该账号与容器都能访问私有工作目录和 0600 清单。准备前核对数据库备份可恢复。
+
+```bash
+cd /opt/classroom-toolkit
+sudo install -d -m 0700 -o 1000 -g 1000 /var/backups/classroom-stage-repair
+
+./deploy/repair-october-stage-reports.py zhuang prepare \
+  backup-20261101-002154.sql backup-20261103-033211.sql
+./deploy/repair-october-stage-reports.py lin prepare \
+  backup-20261101-002154.sql backup-20261103-033211.sql
+```
+
+`prepare` 只读查询线上数据并比对 SQL 备份，无需导入备份。两份备份须对 81 个线上评价 ID 给出一致归属。成功后分别生成受保护的清单并预览。单独复查可执行 `./deploy/repair-october-stage-reports.py lin preview`，庄坤翔用 `zhuang preview`。同名清单已有不同内容时停止，先核对并归档原文件再准备。
+
+确认报告 ID 和评价笔数。若 `affected: 1`，分别用该学生本次预览的完整指纹执行。若 `affected: 0`，展示快照已符合预期，无需写入。
+
+```bash
+./deploy/repair-october-stage-reports.py zhuang apply '<庄坤翔的预览指纹>'
+./deploy/repair-october-stage-reports.py lin apply '<林郅宸的预览指纹>'
+```
+
+两次应用各自使用独立事务，在工作目录分别保存 `october-2026-zhuang-scores-before.json`、`october-2026-lin-scores-before.json`，脚本写入后会再次预览。最终应显示 `affected: 0`，并可在原草稿中看到恢复后的积分。生产实例、归属、周期、数量或指纹不符时停止。应用失败后保留已写出的备份，先重新预览。若需重试且已有同名备份，为新操作指定 `--backup-name october-2026-lin-scores-before-retry1.json`。
+
+```bash
+./deploy/repair-october-stage-reports.py zhuang restore
+./deploy/repair-october-stage-reports.py lin restore
+```
+
+回滚按实际应用时使用的备份执行；使用自定义备份名时，回滚也传同一个 `--backup-name`。自定义名须保留目标学生的 `october-2026-<学生>-scores-before` 前缀。原修复后的快照若有后续编辑，底层脚本会拒绝回滚。可在本地用 `python3 -m unittest discover -s deploy/tests -p test_repair_october_stage_reports.py` 跑脱敏备份与模拟部署回归。
+
+专项入口也在独立 MySQL 实例使用脱敏的 81 条评价和两份归属备份实测。两份报告均通过只读准备、写入、重复执行和快照回滚。该演练直接调用编译后的 Backend 修复脚本，服务器上的 Compose 路径以实际 `prepare` 结果验收。
