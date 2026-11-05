@@ -128,7 +128,8 @@ jobs:
   wait-for-backend:
     name: Wait for matching backend deployment
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cover backend verification, publishing and deployment, plus startup margin.
+    timeout-minutes: 90
 
     steps:
       - name: Wait for backend workflow when this commit triggered one

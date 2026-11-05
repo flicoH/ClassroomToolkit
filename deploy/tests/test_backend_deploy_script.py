@@ -105,6 +105,13 @@ class BackendDeploymentTests(unittest.TestCase):
         self.assertFalse(any('up' in e and 'docling-parser' in e for e in events))
         self.assertTrue(any('stop' in e and 'docling-parser' in e for e in events))
 
+    def test_service_health_waits_are_bounded(self):
+        events = self.run_deploy('kimi')
+        for service, seconds in [('mysql', '180'), ('backend', '300')]:
+            start = next(e for e in events if 'up' in e and service in e)
+            self.assertIn('--wait-timeout', start)
+            self.assertEqual(start[start.index('--wait-timeout') + 1], seconds)
+
     def test_placeholder_login_proxy_secret_is_rejected(self):
         self.run_deploy('kimi', expected_status=1, proxy_secret='CHANGE_ME_LOGIN_PROXY_SECRET')
 

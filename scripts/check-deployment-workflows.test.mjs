@@ -156,3 +156,43 @@ for (const [app, workflow] of [
     });
   }
 }
+
+test("backend deployment has a slow-release budget and frontend waits for the complete workflow", () => {
+  assert.equal(backend.jobs.deploy["timeout-minutes"], 30);
+  const total = ["verify", "publish", "deploy"].reduce(
+    (minutes, job) => minutes + backend.jobs[job]["timeout-minutes"],
+    0
+  );
+  assert.ok(frontend.jobs["wait-for-backend"]["timeout-minutes"] > total);
+});
+
+test("backend SSH connections fail promptly on unreachable or disconnected servers", () => {
+  for (const name of ["Test SSH connection", "Deploy backend containers"]) {
+    const command = backend.jobs.deploy.steps.find(step => step.name === name).run;
+    for (const option of [
+      "BatchMode=yes",
+      "ConnectTimeout=15",
+      "ConnectionAttempts=1",
+      "ServerAliveInterval=15",
+      "ServerAliveCountMax=3"
+    ]) {
+      assert.ok(command.includes(`-o ${option}`), `${name} must set ${option}`);
+    }
+  }
+});
+
+test("backend runtime copies isolated production dependencies instead of the workspace store", () => {
+  const dockerfile = readFileSync(new URL("../deploy/docker/backend.Dockerfile", import.meta.url), "utf8");
+  const runtime = dockerfile.split(" AS runner\n")[1].split("FROM python:")[0];
+  assert.match(
+    dockerfile,
+    /pnpm --config\.inject-workspace-packages=true --filter ClassRoomToolkitBackend deploy --prod \/prod\/backend/
+  );
+  assert.match(runtime, /COPY --from=production-dependencies --chown=node:node \/prod\/backend\/node_modules/);
+  assert.doesNotMatch(runtime, /COPY .*\/app\/node_modules/);
+  const build = builds.find(step => step.with?.target === "runner");
+  assert.equal(build.with.load, true);
+  const smoke = backend.jobs.publish.steps.find(step => step.name === "Smoke test backend runtime dependencies");
+  assert.ok(smoke.run.includes("require(name)"));
+  assert.notEqual(smoke["continue-on-error"], true);
+});

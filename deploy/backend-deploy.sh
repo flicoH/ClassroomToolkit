@@ -161,7 +161,7 @@ else
 fi
 
 log "Starting MySQL"
-compose up -d --wait mysql
+compose up -d --wait --wait-timeout 180 mysql
 
 log "Running database migrations"
 # Migrations must never consume a deployment script supplied via stdin.
@@ -169,9 +169,9 @@ compose --profile tools run -T --rm migrate </dev/null
 
 log "Starting backend with $PARSER_PROVIDER PDF parsing"
 if [[ "$PARSER_PROVIDER" == docling ]]; then
-  compose --profile docling up -d --wait --force-recreate --remove-orphans --pull=never docling-parser backend
+  compose --profile docling up -d --wait --wait-timeout 300 --force-recreate --remove-orphans --pull=never docling-parser backend
 else
-  compose up -d --wait --force-recreate --remove-orphans --pull=never backend
+  compose up -d --wait --wait-timeout 300 --force-recreate --remove-orphans --pull=never backend
 fi
 
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"

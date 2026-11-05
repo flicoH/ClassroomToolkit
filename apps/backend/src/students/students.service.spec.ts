@@ -1,6 +1,6 @@
 import { StudentsService } from './students.service';
 import { Classroom } from './students.types';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('StudentsService', () => {
   it('rejects malformed classroom and student bodies before persistence', async () => {
@@ -137,6 +137,55 @@ describe('StudentsService', () => {
       name: '一年级 1 班',
     });
     expect(updated.students).toHaveLength(1);
+  });
+
+  it('deletes a classroom when more than one classroom exists', async () => {
+    const database = {
+      findClassrooms: jest.fn().mockResolvedValue([
+        { id: 'class-1', name: '一年级', groups: [], students: [] },
+        { id: 'class-2', name: '二年级', groups: [], students: [] },
+      ]),
+      deleteClassroom: jest.fn().mockResolvedValue(true),
+    };
+    const service = new StudentsService(database as never);
+
+    const result = await service.deleteClassroom('class-1');
+
+    expect(result).toEqual({ deleted: true });
+    expect(database.deleteClassroom).toHaveBeenCalledWith('class-1');
+  });
+
+  it('refuses to delete a classroom when only one classroom exists', async () => {
+    const database = {
+      findClassrooms: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'class-1', name: '一年级', groups: [], students: [] },
+        ]),
+      deleteClassroom: jest.fn(),
+    };
+    const service = new StudentsService(database as never);
+
+    await expect(service.deleteClassroom('class-1')).rejects.toThrow(
+      new BadRequestException('至少保留一个班级，无法删除'),
+    );
+    expect(database.deleteClassroom).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException when deleting a non-existent classroom', async () => {
+    const database = {
+      findClassrooms: jest.fn().mockResolvedValue([
+        { id: 'class-1', name: '一年级', groups: [], students: [] },
+        { id: 'class-2', name: '二年级', groups: [], students: [] },
+      ]),
+      deleteClassroom: jest.fn(),
+    };
+    const service = new StudentsService(database as never);
+
+    await expect(service.deleteClassroom('class-999')).rejects.toThrow(
+      new NotFoundException('班级不存在'),
+    );
+    expect(database.deleteClassroom).not.toHaveBeenCalled();
   });
 
   it('saves added students through the backend store so they can be read after relogin', async () => {

@@ -265,13 +265,23 @@ export class StudentsDatabase {
     });
   }
 
-  /** 删除当前教师名下的班级。 */
+  /** 删除当前教师名下的班级及包含的分组与学生档案。 */
   async deleteClassroom(id: string) {
-    const result = await this.classrooms.delete({
-      id,
-      teacherId: this.teacherContext.teacherId,
+    const teacherId = this.teacherContext.teacherId;
+    return this.classrooms.manager.transaction(async (manager) => {
+      const classrooms = manager.getRepository(ClassroomEntity);
+      const students = manager.getRepository(StudentEntity);
+      const groups = manager.getRepository(StudentGroupEntity);
+      const existing = await classrooms.findOne({
+        where: { id, teacherId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!existing) return false;
+      await groups.delete({ classroomId: id, teacherId });
+      await students.delete({ classroomId: id, teacherId });
+      const result = await classrooms.delete({ id, teacherId });
+      return Boolean(result.affected);
     });
-    return Boolean(result.affected);
   }
 
   /** 将 TypeORM 班级实体转换为前端使用的班级结构。 */

@@ -25,6 +25,7 @@ describe('student photo persistence', () => {
       })),
       create: jest.fn((row) => row),
       save: jest.fn(),
+      delete: jest.fn(async () => ({ affected: 1 })),
       manager: {} as Record<string, unknown>,
     };
     const students = {
@@ -116,6 +117,20 @@ describe('student photo persistence', () => {
       database.setStudentPhoto('class', 'missing', 'photo'),
     ).rejects.toThrow('学生不存在');
     expect(students.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes classroom along with its groups and students in a transaction', async () => {
+    const { database, classrooms, students } = setup();
+    const result = await database.deleteClassroom('class');
+    expect(result).toBe(true);
+    expect(students.delete).toHaveBeenCalledWith({
+      classroomId: 'class',
+      teacherId: 'teacher',
+    });
+    expect(classrooms.delete).toHaveBeenCalledWith({
+      id: 'class',
+      teacherId: 'teacher',
+    });
   });
 
   it('preserves pet points and completed pets when saveClassroom syncs student list', async () => {

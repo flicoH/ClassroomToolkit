@@ -234,42 +234,43 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 
 ## 常用接口
 
-| 方法             | 路径                                            | 说明                                                                                                |
-| ---------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `POST`           | `/auth/teacher/register`                        | 注册教师                                                                                            |
-| `POST`           | `/auth/teacher/login`                           | 登录并创建会话                                                                                      |
-| `GET`            | `/auth/teacher/me`                              | 获取当前教师                                                                                        |
-| `POST`           | `/auth/teacher/logout`                          | 注销当前会话                                                                                        |
-| `GET / POST`     | `/classes`                                      | 查询或创建班级                                                                                      |
-| `POST`           | `/classes/:classroomId/students`                | 新增学生                                                                                            |
-| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId`     | 编辑或删除学生                                                                                      |
-| `GET / POST`     | `/task-stats`                                   | 查询或创建任务                                                                                      |
-| `GET / POST`     | `/seating-charts`                               | 查询或创建座位表                                                                                    |
-| `POST`           | `/random-picker/pick`                           | 执行随机点名                                                                                        |
-| `GET / PATCH`    | `/countdown`                                    | 读取或更新倒计时                                                                                    |
-| `GET / POST`     | `/sticky-notes`                                 | 查询或创建便签                                                                                      |
-| `GET`            | `/pet-points`                                   | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板）                                          |
-| `POST`           | `/pet-points/scores/adjust`                     | 调整学生积分                                                                                        |
-| `GET`            | `/gacha-machine`                                | 获取扭蛋机奖励与记录                                                                                |
-| `POST`           | `/gacha-machine/draw`                           | 执行抽奖                                                                                            |
-| `POST`           | `/gacha-machine/rewards`                        | 新增奖励                                                                                            |
-| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`              | 编辑或删除奖励                                                                                      |
-| `POST`           | `/feedback`                                     | 提交教师意见反馈                                                                                    |
-| `GET / POST`     | `/semester-reports/report-terms`                | 查询或创建报告学期                                                                                  |
-| `GET / POST`     | `/semester-reports/report-subjects`             | 查询或创建报告学科                                                                                  |
-| `GET / POST`     | `/semester-reports/course-documents`            | 查询或上传课程资料                                                                                  |
-| `POST`           | `/semester-reports/reports/generate`            | 生成学生报告                                                                                        |
-| `GET`            | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                                  |
-| `GET / POST`     | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType 与 stageCustomName 自定义替换“本阶段”） |
-| `GET` (SSE)      | `/semester-reports/scheduled-tasks/stream`      | 服务端 Server-Sent Events (SSE) 推送定时任务状态与进度快照，替代前端轮询                            |
-| `POST`           | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                                        |
-| `DELETE`         | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                                      |
-| `PATCH`          | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                                        |
-| `POST`           | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                                  |
-| `GET`            | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                                    |
-| `POST`           | `/admin/teachers/:id/reset-password`            | 管理员重置教师密码并强制失效该教师已有登录会话                                                      |
-| `POST`           | `/admin/teachers/:id/toggle-lock`               | 管理员锁定或解锁教师账号；锁定后即刻注销所有有效会话，并拦截后续登录（403 TEACHER_ACCOUNT_LOCKED）  |
-| `POST`           | `/admin/teachers/:id/delete`                    | 管理员永久删除教师账号及名下全部班级、学生、报告等业务数据与会话                                    |
+| 方法                   | 路径                                            | 说明                                                                                                |
+| ---------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `POST`                 | `/auth/teacher/register`                        | 注册教师                                                                                            |
+| `POST`                 | `/auth/teacher/login`                           | 登录并创建会话                                                                                      |
+| `GET`                  | `/auth/teacher/me`                              | 获取当前教师                                                                                        |
+| `POST`                 | `/auth/teacher/logout`                          | 注销当前会话                                                                                        |
+| `GET / POST`           | `/classes`                                      | 查询或创建班级                                                                                      |
+| `GET / PATCH / DELETE` | `/classes/:classroomId`                         | 查询详情、编辑或删除班级（至少保留一个班级，级联清理学生与分组）                                    |
+| `POST`                 | `/classes/:classroomId/students`                | 新增学生                                                                                            |
+| `PATCH / DELETE`       | `/classes/:classroomId/students/:studentId`     | 编辑或删除学生                                                                                      |
+| `GET / POST`           | `/task-stats`                                   | 查询或创建任务                                                                                      |
+| `GET / POST`           | `/seating-charts`                               | 查询或创建座位表                                                                                    |
+| `POST`                 | `/random-picker/pick`                           | 执行随机点名                                                                                        |
+| `GET / PATCH`          | `/countdown`                                    | 读取或更新倒计时                                                                                    |
+| `GET / POST`           | `/sticky-notes`                                 | 查询或创建便签                                                                                      |
+| `GET`                  | `/pet-points`                                   | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板）                                          |
+| `POST`                 | `/pet-points/scores/adjust`                     | 调整学生积分                                                                                        |
+| `GET`                  | `/gacha-machine`                                | 获取扭蛋机奖励与记录                                                                                |
+| `POST`                 | `/gacha-machine/draw`                           | 执行抽奖                                                                                            |
+| `POST`                 | `/gacha-machine/rewards`                        | 新增奖励                                                                                            |
+| `PATCH / DELETE`       | `/gacha-machine/rewards/:rewardId`              | 编辑或删除奖励                                                                                      |
+| `POST`                 | `/feedback`                                     | 提交教师意见反馈                                                                                    |
+| `GET / POST`           | `/semester-reports/report-terms`                | 查询或创建报告学期                                                                                  |
+| `GET / POST`           | `/semester-reports/report-subjects`             | 查询或创建报告学科                                                                                  |
+| `GET / POST`           | `/semester-reports/course-documents`            | 查询或上传课程资料                                                                                  |
+| `POST`                 | `/semester-reports/reports/generate`            | 生成学生报告                                                                                        |
+| `GET`                  | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                                  |
+| `GET / POST`           | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType 与 stageCustomName 自定义替换“本阶段”） |
+| `GET` (SSE)            | `/semester-reports/scheduled-tasks/stream`      | 服务端 Server-Sent Events (SSE) 推送定时任务状态与进度快照，替代前端轮询                            |
+| `POST`                 | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                                        |
+| `DELETE`               | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                                      |
+| `PATCH`                | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                                        |
+| `POST`                 | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                                  |
+| `GET`                  | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                                    |
+| `POST`                 | `/admin/teachers/:id/reset-password`            | 管理员重置教师密码并强制失效该教师已有登录会话                                                      |
+| `POST`                 | `/admin/teachers/:id/toggle-lock`               | 管理员锁定或解锁教师账号；锁定后即刻注销所有有效会话，并拦截后续登录（403 TEACHER_ACCOUNT_LOCKED）  |
+| `POST`                 | `/admin/teachers/:id/delete`                    | 管理员永久删除教师账号及名下全部班级、学生、报告等业务数据与会话                                    |
 
 具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；AI 阶段定时报告支持周期循环调度（每周/每月自动顺延）与大模型故障时草稿模版自动兜底保障，公开报告仅通过高熵分享 Token 访问；班级学生管理、宠物积分与学期报告具备实时双向同步与自动补齐机制，新增入班学生即时同步至宠物积分与报告生成花名册中，且支持完整存储及逻辑学生标识关联检索周期加分明细与最值肯定统计，防止 0 分空实体覆盖已有积分。
 
@@ -389,11 +390,11 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
 - SSE 端点：`GET /semester-reports/scheduled-tasks/stream`。教师端建立长连接后，首先接收 `tasks_sync` 初始完整任务列表快照；随后无论是前端手动创建/执行/删除任务，还是后台 `SemesterReportWorker` 异步推进处理进度、成功生成或发生降级，均以毫秒级时延将最新的状态快照与进度推送至客户端。
 - 链路保活：内置 25 秒心跳机制（`:keep-alive`），兼容各类反向代理中间件与网关长连接超时配置。
 
-### 历史 AI 报告 Token 用量自动回填与脚本
+### 历史 AI 报告 Token 用量与独立回填脚本
 
-在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。系统已支持自动迁移与独立脚本双重机制：
+在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。结构迁移与历史回填分别执行：
 
-- **上线后自动执行**：在部署执行数据库迁移（`migration:run`，包括 `backend-deploy.sh`、`2c2g-deploy.sh` 及 `deploy.sh`）时，迁移脚本 `20261104020000-add-report-token-calls.ts` 会在建表后自动扫描全部落库的 `ai_response`，安全提取 Token 用量、模型名称与响应标识并幂等写入 `semester_report_token_calls`（使用 `hist-${reportId}` 主键，自动跳过已追踪报告），无需运维人员手动执行回填。
+- **部署只执行结构迁移**：`20261104020000-add-report-token-calls.ts` 仅幂等创建调用流水表，不扫描或回填历史报告。已有流水保留，已执行过该迁移的数据库不会重跑；历史 Token 统计不会因本次部署自动补齐。独立回填脚本不属于发布流程，生产执行前须满足环境和范围限制、可恢复备份、预览与隔离验证等项目保障要求。
 - **独立回填脚本（手动执行/演练）**：
   - 预览模式（统计预计影响行数与 Token 增量，不写入数据）：
     ```bash
@@ -404,3 +405,9 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
     pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls
     ```
 - **动态降级**：后台查询逻辑已具备动态兼容能力，未执行回填时也能直接解析 `ai_response` 中的 `usage` 并展示在列表及详情中。
+
+### 后端部署超时
+
+后端 Actions 部署任务预算为 30 分钟；SSH 建连最多等待 15 秒，断连检测使用 15 秒间隔、连续 3 次无响应退出。MySQL 和应用健康等待上限分别为 180 秒、300 秒。前端等待完整后端工作流的预算为 90 分钟。镜像拉取、数据库迁移仍可能耗时，需结合最后一条部署日志排查；超时不会自动回滚，失败不更新发布标记。详见 [部署说明](../../docs/single-server-docker-deployment.md)。
+
+后端 Docker 运行镜像通过 `pnpm --config.inject-workspace-packages=true deploy --prod` 仅打包后端生产依赖，避免携带前端框架和开发工具。容器工作目录和启动/迁移命令保持兼容；发布任务加载实际 Linux 镜像，检查生产依赖、Sharp 原生模块及迁移 CLI 可用，并拒绝混入 Next.js、Vue、ESLint、TypeScript 或 Jest。此次失败日志显示 183 MB 镜像层在约 15 分钟内仅下载 5.94 MB，尚未进入迁移；精简镜像减少下载量，但服务器到 GHCR 的网络瓶颈仍需实际部署确认。
