@@ -1557,7 +1557,7 @@ export function SemesterReportsV2View() {
         const genRes = await request
           .post<{ reports: ReportSummaryItem[] }, { reports: ReportSummaryItem[] }>(`${base}/reports/generate`, {
             period: composePeriod,
-            generationMode: "auto",
+            generationMode: composePeriod === "week" ? "template" : "auto",
             start: composeStart,
             end: composeEnd,
             termId: previewValidation.termId,

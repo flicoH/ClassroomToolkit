@@ -412,6 +412,8 @@ export function StageReportSchedulerView({
           generationMode: "ai",
           executeAt: new Date(targetTime).toISOString(),
           repeatType,
+          periodPreset,
+          isSemesterReport: periodPreset === "current-term",
           courseSelections: subjects.map(subject => ({
             subjectId: subject.id,
             courseScope: "",
@@ -698,7 +700,9 @@ export function StageReportSchedulerView({
                 <span>
                   已选中 <strong className="font-bold text-purple-600">{selectedStudentIds.length}</strong> 位学生
                 </span>
-                <span className="text-[11px] text-muted-foreground">涵盖多学科已发布周报</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {periodPreset === "current-term" ? "涵盖各阶段已发布汇总报告" : "涵盖多学科已发布周报"}
+                </span>
               </div>
             </div>
           </div>

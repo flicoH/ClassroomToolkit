@@ -573,6 +573,102 @@ describe('report list metadata query', () => {
     expect(JSON.stringify(sources)).not.toContain('99');
   });
 
+  it('restricts stage reports to only read weekly reports and semester reports to only read stage summaries', async () => {
+    const stageQuery = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'weekly-only',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-08T00:00:00+08:00'),
+          content: {
+            growthAssessment: {
+              learningReadiness: '周报评价良好',
+            },
+          },
+        },
+      ]),
+    };
+    const termQuery = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'stage-summary-1',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-31T00:00:00+08:00'),
+          content: {
+            growthAssessment: {
+              learningReadiness: '阶段汇总评价良好',
+            },
+          },
+        },
+      ]),
+    };
+
+    let activeQuery = stageQuery;
+    const reports = {
+      createQueryBuilder: jest.fn(() => activeQuery),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const internals = service as unknown as {
+      stageGrowthAssessmentSources(
+        student: Record<string, unknown>,
+        start: Date,
+        end: Date,
+        targetKind?: 'stage' | 'term',
+      ): Promise<Array<Record<string, unknown>>>;
+    };
+
+    // 1. 阶段报告：只读取周报 (targetKind = 'stage')
+    activeQuery = stageQuery;
+    const stageSources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-10-01T00:00:00+08:00'),
+      new Date('2026-11-01T00:00:00+08:00'),
+      'stage',
+    );
+    expect(stageSources).toHaveLength(1);
+    expect(stageSources[0].reportId).toBe('weekly-only');
+    expect(stageQuery.andWhere).toHaveBeenCalledWith(
+      'sourceReport.period_type = :periodType',
+      { periodType: 'week' },
+    );
+    expect(stageQuery.andWhere).toHaveBeenCalledWith(
+      "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
+    );
+
+    // 2. 学期报告：只读取阶段汇总报告 (targetKind = 'term')
+    activeQuery = termQuery;
+    const termSources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-09-01T00:00:00+08:00'),
+      new Date('2027-01-31T00:00:00+08:00'),
+      'term',
+    );
+    expect(termSources).toHaveLength(1);
+    expect(termSources[0].reportId).toBe('stage-summary-1');
+    expect(termQuery.andWhere).toHaveBeenCalledWith(
+      "(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')) = 'stage' OR JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.scheduledTask')) IS NOT NULL)",
+    );
+  });
+
   it('resolves a stage report name and photo from the same selected student profile', async () => {
     const selectedProfile = {
       id: 'profile-1',

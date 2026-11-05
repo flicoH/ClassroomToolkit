@@ -498,12 +498,30 @@ export class SemesterReportsService {
     scheduled?: ScheduledReportOptions,
   ) {
     const teacherId = this.teacher?.teacherId;
+    const rawPeriod = input.period as (typeof periods)[number] | undefined;
+    const isWeeklyReport = rawPeriod === 'week';
+    const isScheduledSemester =
+      Boolean(scheduled) &&
+      (input.periodPreset === 'current-term' ||
+        input.isSemesterReport === true);
     const isStageReport =
-      Boolean(scheduled) ||
+      (Boolean(scheduled) && !isScheduledSemester) ||
       input.period === 'stage' ||
       input.reportKind === 'stage' ||
       input.isStageReport === true;
-    if (isStageReport || input.generationMode === 'ai') {
+    const isSemesterReport =
+      isScheduledSemester ||
+      (!isWeeklyReport &&
+        !isStageReport &&
+        (rawPeriod === 'term' ||
+          input.isSemesterReport === true ||
+          input.periodPreset === 'current-term'));
+    if (
+      !isWeeklyReport &&
+      (isStageReport ||
+        input.generationMode === 'ai' ||
+        (isSemesterReport && input.generationMode === 'ai'))
+    ) {
       await this.assertAiReportPermission(teacherId);
     }
     const { period, start, end, termId, subjectId, studentIds } =
@@ -560,15 +578,21 @@ export class SemesterReportsService {
       );
     let generationMode: 'template' | 'ai';
     const managedAiConfig = await readReportAiConfig(this.reports.manager);
-    try {
-      generationMode = resolveReportGenerationMode(
-        input.generationMode,
-        Boolean(managedAiConfig),
-      );
-    } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : '报告生成方式无效',
-      );
+    if (isWeeklyReport) {
+      // 手动填写的周报不需要调用 AI 生成，强制走模版生成
+      generationMode = 'template';
+    } else {
+      try {
+        generationMode = resolveReportGenerationMode(
+          input.generationMode ??
+            (isStageReport && managedAiConfig ? 'ai' : undefined),
+          Boolean(managedAiConfig),
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : '报告生成方式无效',
+        );
+      }
     }
     const students = await this.findStudents(studentIds);
     const stageCustomName = String(
@@ -654,8 +678,10 @@ export class SemesterReportsService {
         : undefined;
       const scores = await this.scoreSummary(student, start, end);
       const stageGrowthAssessmentSources = isStageReport
-        ? await this.stageGrowthAssessmentSources(student, start, end)
-        : undefined;
+        ? await this.stageGrowthAssessmentSources(student, start, end, 'stage')
+        : isSemesterReport
+          ? await this.stageGrowthAssessmentSources(student, start, end, 'term')
+          : undefined;
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
         ...(isStageReport
@@ -664,7 +690,13 @@ export class SemesterReportsService {
               stageCustomName,
               stageTitle: stageCustomName,
             }
-          : {}),
+          : isSemesterReport
+            ? {
+                reportKind: 'term',
+                stageCustomName: stageCustomName || '',
+                stageTitle: stageCustomName || '',
+              }
+            : {}),
         ...(scheduledTask
           ? {
               scheduledTask: {
@@ -708,7 +740,9 @@ export class SemesterReportsService {
           : learningContents,
         reportDetails,
         teacherInput,
-        ...(isStageReport ? { stageGrowthAssessmentSources } : {}),
+        ...(stageGrowthAssessmentSources
+          ? { stageGrowthAssessmentSources }
+          : {}),
         student: {
           id: student.id,
           name: reportStudentName,
@@ -738,7 +772,7 @@ export class SemesterReportsService {
           ...scores.records.map((record) => `score:${record.id}`),
           ...(observation ? ['teacher-observation'] : []),
           ...(teacherInput ? ['teacher-input'] : []),
-          ...(isStageReport ? ['stage-summary'] : []),
+          ...(isStageReport || isSemesterReport ? ['stage-summary'] : []),
         ],
         courseScope,
         scoreNotice: '综合课堂表现记录，不代表该学科知识掌握程度。',
@@ -810,6 +844,9 @@ export class SemesterReportsService {
     const repeatType = (
       ['none', 'weekly', 'monthly'].includes(rawRepeat) ? rawRepeat : 'none'
     ) as 'none' | 'weekly' | 'monthly';
+    const periodPreset = String(input.periodPreset ?? '');
+    const isSemesterReport =
+      periodPreset === 'current-term' || input.isSemesterReport === true;
     const stageCustomName = String(
       input.stageCustomName ?? input.stageTitle ?? '',
     )
@@ -822,6 +859,8 @@ export class SemesterReportsService {
         period: 'term',
         start: input.startDate,
         end: input.endDate,
+        periodPreset,
+        isSemesterReport,
         generationMode: input.generationMode ?? 'ai',
       },
       undefined,
@@ -1892,10 +1931,10 @@ export class SemesterReportsService {
       termId: old.termId,
       subjectId: old.subjectId,
       reportVersion: old.snapshot?.reportVersion,
+      generationMode: old.snapshot?.generationMode,
       ...(old.snapshot?.reportKind === 'stage'
         ? {
             reportKind: 'stage',
-            generationMode: old.snapshot.generationMode,
             stageCustomName:
               old.snapshot.stageCustomName ?? old.snapshot.stageTitle,
           }
@@ -2537,13 +2576,21 @@ export class SemesterReportsService {
     return result;
   }
 
-  /** Stage dimensions summarize prior four-dimension report text, never scores. */
+  /**
+   * 四维成长评价来源数据提取：
+   * 1. 阶段报告 (targetKind === 'stage')：只读取所选时间段内的周报 (period_type = 'week')，排除阶段汇总报告。
+   * 2. 学期报告 (targetKind === 'term')：只读取所选时间段/学期内的阶段汇总报告 (reportKind = 'stage')。
+   */
   private async stageGrowthAssessmentSources(
     student: PetStudentEntity,
     start: Date,
     end: Date,
+    targetKind: 'stage' | 'term' = 'stage',
   ) {
     const candidateIds = this.getStudentCandidateIds(student);
+    if (typeof this.reports?.createQueryBuilder !== 'function') {
+      return [];
+    }
     const query = this.reports
       .createQueryBuilder('sourceReport')
       .where('sourceReport.teacher_id = :teacherId', {
@@ -2558,12 +2605,23 @@ export class SemesterReportsService {
       )
       .andWhere('sourceReport.status IN (:...statuses)', {
         statuses: ['draft', 'published'],
-      })
-      .andWhere(
-        "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
-      )
-      .orderBy('sourceReport.periodStart', 'ASC')
-      .take(40);
+      });
+
+    if (targetKind === 'term') {
+      query.andWhere(
+        "(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')) = 'stage' OR JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.scheduledTask')) IS NOT NULL)",
+      );
+    } else {
+      query
+        .andWhere('sourceReport.period_type = :periodType', {
+          periodType: 'week',
+        })
+        .andWhere(
+          "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
+        );
+    }
+
+    query.orderBy('sourceReport.periodStart', 'ASC').take(40);
     const rows = await query.getMany();
     const keys = [
       'learningReadiness',

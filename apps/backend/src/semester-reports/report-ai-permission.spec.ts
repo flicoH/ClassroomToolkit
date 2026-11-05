@@ -97,6 +97,25 @@ describe('Semester reports AI report permission checks', () => {
         }),
       ).rejects.toThrow(ForbiddenException);
     });
+
+    it('weekly reports do not block unauthorized teachers and force template mode', async () => {
+      const { service } = createService('t-unauthorized');
+
+      // 周报生成即使未授权 AI，也不会在权限检查阶段被拦截为 403 Forbidden
+      let threw403 = false;
+      try {
+        await service.generate({
+          period: 'week',
+          generationMode: 'ai',
+          // 后续业务校验会因为空字段抛出 BadRequestException，而不是 ForbiddenException
+        });
+      } catch (err) {
+        if (err instanceof ForbiddenException) {
+          threw403 = true;
+        }
+      }
+      expect(threw403).toBe(false);
+    });
   });
 
   describe('SemesterReportWorker stage report permission verification', () => {
@@ -167,6 +186,75 @@ describe('Semester reports AI report permission checks', () => {
             expect.stringContaining('该教师暂无 AI 汇总报告使用权限'),
         }),
       );
+    });
+
+    it('weekly reports strictly run in template mode even if snapshot specified ai', async () => {
+      const weeklyReport = {
+        id: 'weekly-report-1',
+        teacherId: 't-unauthorized',
+        studentName: '学生B',
+        periodType: 'week',
+        periodStart: new Date('2026-10-01T00:00:00+08:00'),
+        periodEnd: new Date('2026-10-08T00:00:00+08:00'),
+        snapshot: {
+          generationMode: 'ai',
+          scoreSummary: { records: [] },
+          allowedReferences: [],
+        },
+      } as unknown as SemesterReportEntity;
+
+      const save = jest.fn().mockImplementation(async (entity) => entity);
+      const update = jest.fn().mockResolvedValue({ affected: 1 });
+      const deleteMock = jest.fn().mockResolvedValue({ affected: 0 });
+      const qb = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ affected: 0 }),
+      };
+
+      const fakeDataSource = {
+        manager: {
+          existsBy: jest.fn().mockResolvedValue(false),
+          update: jest.fn().mockResolvedValue({ affected: 1 }),
+        },
+        transaction: jest.fn().mockImplementation(async (cb) => {
+          await cb({
+            getRepository: () => ({
+              findOne: jest.fn().mockResolvedValue(weeklyReport),
+              save: jest.fn().mockResolvedValue(weeklyReport),
+              create: jest.fn().mockImplementation((val) => val),
+            }),
+          });
+        }),
+        getRepository: (target: unknown) => {
+          if (target === SemesterReportEntity) {
+            return {
+              findOne: jest.fn().mockResolvedValue(weeklyReport),
+              save,
+              update,
+              createQueryBuilder: () => qb,
+              delete: deleteMock,
+            };
+          }
+          return {
+            findOne: jest.fn().mockResolvedValue(null),
+            createQueryBuilder: () => qb,
+            delete: deleteMock,
+            create: jest.fn().mockImplementation((val) => val),
+            save: jest.fn().mockImplementation(async (val) => val),
+          };
+        },
+      } as unknown as DataSource;
+
+      const worker = new SemesterReportWorker(fakeDataSource);
+      const generateSpy = jest
+        .spyOn(worker as never, 'generate')
+        .mockResolvedValue({ summary: '测试周报' } as never);
+
+      await worker.run();
+      expect(generateSpy).toHaveBeenCalledWith(weeklyReport, 'template');
     });
   });
 });

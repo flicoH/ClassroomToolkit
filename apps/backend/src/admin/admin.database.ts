@@ -48,6 +48,17 @@ const loginCounts = [
   ],
 ] as const;
 
+/** 安全将日期字符串（无论是否含 Z 或空格）解析为标准 UTC Date，避免本地时区偏差截断查询范围。 */
+export function parseUtcDate(value: string | Date | null | undefined): Date {
+  if (!value) return new Date();
+  if (value instanceof Date) return value;
+  const str = String(value).trim();
+  if (str.endsWith('Z') || str.includes('+')) {
+    return new Date(str);
+  }
+  return new Date(str.replace(' ', 'T') + 'Z');
+}
+
 /** 持久层只负责 Repository / QueryBuilder 查询；统计口径和参数校验由 Service 维护。 */
 @Injectable()
 export class AdminDatabase {
@@ -590,8 +601,8 @@ export class AdminDatabase {
       );
 
       const studentTerm = (q.student || q.search || '').trim().slice(0, 100);
-      const fromDate = new Date(range.from);
-      const toDate = new Date(range.to);
+      const fromDate = parseUtcDate(range.from);
+      const toDate = parseUtcDate(range.to);
 
       const query = reportRepo
         .createQueryBuilder('r')
@@ -623,20 +634,23 @@ export class AdminDatabase {
           },
         );
 
-        // 若指定了模型或状态，仅保留有对应调用的报告；未指定时同时保留在当前范围内创建的模板生成或无调用的报告
+        // 仅加载使用 AI 生成的报告（具有满足范围的模型调用流水，或落库了历史大模型响应），排除纯模板生成的非 AI 报告
         if (q.model || q.status) {
           query.andWhere('c.id IS NOT NULL');
         } else {
           query.andWhere(
-            '(c.id IS NOT NULL OR (r.createdAt >= :from AND r.createdAt < :to))',
+            '(c.id IS NOT NULL OR (r.aiResponse IS NOT NULL AND r.createdAt >= :from AND r.createdAt < :to))',
             { from: fromDate, to: toDate },
           );
         }
       } else {
-        query.andWhere('r.createdAt >= :from AND r.createdAt < :to', {
-          from: fromDate,
-          to: toDate,
-        });
+        query.andWhere(
+          'r.aiResponse IS NOT NULL AND r.createdAt >= :from AND r.createdAt < :to',
+          {
+            from: fromDate,
+            to: toDate,
+          },
+        );
       }
 
       // 统计满足条件的报告总数
@@ -715,7 +729,12 @@ export class AdminDatabase {
       const idRows = await query
         .groupBy('r.id')
         .select('r.id', 'reportId')
-        .orderBy(hasCallsTable ? 'MAX(c.calledAt)' : 'MAX(r.createdAt)', 'DESC')
+        .orderBy(
+          hasCallsTable
+            ? 'COALESCE(MAX(c.calledAt), MAX(r.createdAt))'
+            : 'MAX(r.createdAt)',
+          'DESC',
+        )
         .addOrderBy('MAX(r.createdAt)', 'DESC')
         .addOrderBy('r.id', 'DESC')
         .limit(page.pageSize)
@@ -1042,8 +1061,8 @@ export class AdminDatabase {
         return null;
       }
 
-      const fromDate = new Date(range.from);
-      const toDate = new Date(range.to);
+      const fromDate = parseUtcDate(range.from);
+      const toDate = parseUtcDate(range.to);
 
       const hasCallsTable = await this.checkHasCallsTable();
       let total = 0;

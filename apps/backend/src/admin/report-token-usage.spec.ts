@@ -3,7 +3,7 @@ import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { AdminAuthGuard } from './auth/admin-auth.guard';
 import { Reflector } from '@nestjs/core';
-import { AdminDatabase } from './admin.database';
+import { AdminDatabase, parseUtcDate } from './admin.database';
 import { SemesterReportWorker } from '../semester-reports/semester-report.worker';
 import {
   SemesterReportEntity,
@@ -993,6 +993,22 @@ describe('Admin Report Token Usage & Tracking', () => {
       expect(capturedRange).not.toBeNull();
       expect(capturedRange!.from).toBe('2026-11-03 16:00:00.000');
       expect(capturedRange!.to).toBe('2026-11-04 16:00:00.000');
+    });
+
+    it('safely parses range.from and range.to as UTC Date without timezone shift truncation', () => {
+      // 模拟北京时间查询范围产生的无时区后缀 UTC SQL 字符串
+      const fromStr = '2026-11-04 16:00:00.000';
+      const toStr = '2026-11-05 16:00:00.000';
+      const parsedFrom = parseUtcDate(fromStr);
+      const parsedTo = parseUtcDate(toStr);
+
+      expect(parsedFrom.toISOString()).toBe('2026-11-04T16:00:00.000Z');
+      expect(parsedTo.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+
+      // 验证在当天晚间（如北京时间 20:00，对应 UTC 12:00:00）调用的时间戳严格在范围内
+      const eveningCallTime = new Date('2026-11-05T12:00:00.000Z');
+      expect(eveningCallTime >= parsedFrom).toBe(true);
+      expect(eveningCallTime < parsedTo).toBe(true);
     });
   });
 
