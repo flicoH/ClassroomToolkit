@@ -379,16 +379,18 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
 - SSE 端点：`GET /semester-reports/scheduled-tasks/stream`。教师端建立长连接后，首先接收 `tasks_sync` 初始完整任务列表快照；随后无论是前端手动创建/执行/删除任务，还是后台 `SemesterReportWorker` 异步推进处理进度、成功生成或发生降级，均以毫秒级时延将最新的状态快照与进度推送至客户端。
 - 链路保活：内置 25 秒心跳机制（`:keep-alive`），兼容各类反向代理中间件与网关长连接超时配置。
 
-### 历史 AI 报告 Token 用量回填脚本
+### 历史 AI 报告 Token 用量自动回填与脚本
 
-在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。可通过独立脚本将历史用量安全回填至调用流水表：
+在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。系统已支持自动迁移与独立脚本双重机制：
 
-- 预览模式（不改写数据）：
-  ```bash
-  pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls:dry-run
-  ```
-- 正式执行回填（幂等插入，自动跳过已追踪报告）：
-  ```bash
-  pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls
-  ```
-- 动态降级：后台查询逻辑已具备动态兼容能力，未执行回填时也能直接解析 `ai_response` 中的 `usage` 并展示在列表及详情中。
+- **上线后自动执行**：在部署执行数据库迁移（`migration:run`，包括 `backend-deploy.sh`、`2c2g-deploy.sh` 及 `deploy.sh`）时，迁移脚本 `20261104020000-add-report-token-calls.ts` 会在建表后自动扫描全部落库的 `ai_response`，安全提取 Token 用量、模型名称与响应标识并幂等写入 `semester_report_token_calls`（使用 `hist-${reportId}` 主键，自动跳过已追踪报告），无需运维人员手动执行回填。
+- **独立回填脚本（手动执行/演练）**：
+  - 预览模式（统计预计影响行数与 Token 增量，不写入数据）：
+    ```bash
+    pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls:dry-run
+    ```
+  - 正式执行回填（幂等插入，安全续跑）：
+    ```bash
+    pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls
+    ```
+- **动态降级**：后台查询逻辑已具备动态兼容能力，未执行回填时也能直接解析 `ai_response` 中的 `usage` 并展示在列表及详情中。
