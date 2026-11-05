@@ -16,50 +16,50 @@ const api = vi.hoisted(() => ({
 
 vi.mock("@/lib/request", () => ({ default: api }));
 
+const mockTerms = [
+  { id: "term-1", name: "2026-2027学年第一学期", startDate: "2026-09-01", endDate: "2027-01-20", isCurrent: true }
+];
+
+const mockSubjects = [
+  {
+    id: "sub-1",
+    name: "英语综合",
+    performanceConfig: [
+      { label: "发音与口语", options: ["发音地道清晰", "表达流利连贯", "积极开口互动", "语调自然准确"] },
+      { label: "词汇掌握", options: ["词汇量大运用熟练", "核心词汇达标", "能根据语境猜词", "拼写准确规范"] }
+    ]
+  },
+  {
+    id: "sub-2",
+    name: "数学思维",
+    performanceConfig: [
+      { label: "逻辑推理", options: ["思路清晰敏捷", "善于多角度思考", "推理严谨规范", "能发现数学规律"] }
+    ]
+  }
+];
+
+const mockStudents = [
+  {
+    id: "stu-1",
+    name: "张小明",
+    classId: "cls-1",
+    className: "三年级二班",
+    score: 120,
+    pet: { name: "闪电狐", level: 3, stage: "成长体" }
+  },
+  {
+    id: "stu-2",
+    name: "李小红",
+    classId: "cls-1",
+    className: "三年级二班",
+    score: 95,
+    pet: { name: "波波鸟", level: 2, stage: "幼年体" }
+  }
+];
+
 describe("SemesterReportsV2View", () => {
   let root: Root;
   let container: HTMLDivElement;
-
-  const mockTerms = [
-    { id: "term-1", name: "2026-2027学年第一学期", startDate: "2026-09-01", endDate: "2027-01-20", isCurrent: true }
-  ];
-
-  const mockSubjects = [
-    {
-      id: "sub-1",
-      name: "英语综合",
-      performanceConfig: [
-        { label: "发音与口语", options: ["发音地道清晰", "表达流利连贯", "积极开口互动", "语调自然准确"] },
-        { label: "词汇掌握", options: ["词汇量大运用熟练", "核心词汇达标", "能根据语境猜词", "拼写准确规范"] }
-      ]
-    },
-    {
-      id: "sub-2",
-      name: "数学思维",
-      performanceConfig: [
-        { label: "逻辑推理", options: ["思路清晰敏捷", "善于多角度思考", "推理严谨规范", "能发现数学规律"] }
-      ]
-    }
-  ];
-
-  const mockStudents = [
-    {
-      id: "stu-1",
-      name: "张小明",
-      classId: "cls-1",
-      className: "三年级二班",
-      score: 120,
-      pet: { name: "闪电狐", level: 3, stage: "成长体" }
-    },
-    {
-      id: "stu-2",
-      name: "李小红",
-      classId: "cls-1",
-      className: "三年级二班",
-      score: 95,
-      pet: { name: "波波鸟", level: 2, stage: "幼年体" }
-    }
-  ];
 
   const mockReports = [
     {

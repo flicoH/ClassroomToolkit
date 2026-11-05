@@ -571,7 +571,12 @@ export class SemesterReportsService {
       );
     }
     const students = await this.findStudents(studentIds);
-    const stageStudentProfiles = scheduled
+    const stageCustomName = String(
+      scheduled?.stageCustomName ?? input.stageCustomName ?? '',
+    )
+      .trim()
+      .slice(0, 50);
+    const stageStudentProfiles = isStageReport
       ? await Promise.all(
           students.map((student, index) =>
             this.stageStudentProfile(studentIds[index]!, student),
@@ -648,26 +653,30 @@ export class SemesterReportsService {
         ? { ...submittedFeedback, studentId: student.id }
         : undefined;
       const scores = await this.scoreSummary(student, start, end);
-      const stageGrowthAssessmentSources = scheduled
+      const stageGrowthAssessmentSources = isStageReport
         ? await this.stageGrowthAssessmentSources(student, start, end)
         : undefined;
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
-        ...(scheduled
+        ...(isStageReport
           ? {
               reportKind: 'stage',
+              stageCustomName,
+              stageTitle: stageCustomName,
+            }
+          : {}),
+        ...(scheduledTask
+          ? {
               scheduledTask: {
-                id: scheduledTask!.taskId,
-                name: scheduledTask!.name,
-                classId: scheduledTask!.classId,
-                executeAt: scheduledTask!.executeAt.toISOString(),
-                repeatType: scheduledTask!.repeatType || 'none',
-                stageCustomName: scheduledTask!.stageCustomName || '',
-                stageTitle: scheduledTask!.stageCustomName || '',
-                selectedStudents: scheduledTask!.selectedStudents,
+                id: scheduledTask.taskId,
+                name: scheduledTask.name,
+                classId: scheduledTask.classId,
+                executeAt: scheduledTask.executeAt.toISOString(),
+                repeatType: scheduledTask.repeatType || 'none',
+                stageCustomName: scheduledTask.stageCustomName || '',
+                stageTitle: scheduledTask.stageCustomName || '',
+                selectedStudents: scheduledTask.selectedStudents,
               },
-              stageCustomName: scheduled.stageCustomName || '',
-              stageTitle: scheduled.stageCustomName || '',
             }
           : {}),
         ...(isV2
@@ -699,7 +708,7 @@ export class SemesterReportsService {
           : learningContents,
         reportDetails,
         teacherInput,
-        ...(scheduled ? { stageGrowthAssessmentSources } : {}),
+        ...(isStageReport ? { stageGrowthAssessmentSources } : {}),
         student: {
           id: student.id,
           name: reportStudentName,
@@ -729,7 +738,7 @@ export class SemesterReportsService {
           ...scores.records.map((record) => `score:${record.id}`),
           ...(observation ? ['teacher-observation'] : []),
           ...(teacherInput ? ['teacher-input'] : []),
-          ...(scheduled ? ['stage-summary'] : []),
+          ...(isStageReport ? ['stage-summary'] : []),
         ],
         courseScope,
         scoreNotice: '综合课堂表现记录，不代表该学科知识掌握程度。',
@@ -1883,6 +1892,14 @@ export class SemesterReportsService {
       termId: old.termId,
       subjectId: old.subjectId,
       reportVersion: old.snapshot?.reportVersion,
+      ...(old.snapshot?.reportKind === 'stage'
+        ? {
+            reportKind: 'stage',
+            generationMode: old.snapshot.generationMode,
+            stageCustomName:
+              old.snapshot.stageCustomName ?? old.snapshot.stageTitle,
+          }
+        : {}),
       courseSelections: old.snapshot?.courseSelections,
       studentIds: [old.studentId],
       reportDetails: old.snapshot?.reportDetails,
@@ -2310,6 +2327,12 @@ export class SemesterReportsService {
     row: SemesterReportEntity,
     manager?: EntityManager,
   ) {
+    // Audited repairs freeze only the presentation evidence, leaving AI citations intact.
+    if (
+      row.snapshot?.reportScoreSummaryRepaired === true &&
+      row.snapshot.reportScoreSummary
+    )
+      return row.snapshot.reportScoreSummary;
     const savedStudent = row.snapshot?.student as { id?: string } | undefined;
     let student:
       | (Pick<PetStudentEntity, 'id'> & Partial<PetStudentEntity>)
@@ -2349,39 +2372,23 @@ export class SemesterReportsService {
     });
   }
 
-  private getStudentCandidateIds(
-    student: Pick<PetStudentEntity, 'id'> &
-      Partial<
-        Pick<PetStudentEntity, 'logicalId' | 'classId' | 'studentNo' | 'name'>
-      >,
-  ): string[] {
-    const teacherId = this.teacher.teacherId;
+  /** Keep full persisted identities. A current school number can be reassigned. */
+  private getStudentCandidateIds(student: {
+    id: string;
+    logicalId?: string | null;
+  }): string[] {
+    const prefix = `${this.teacher.teacherId}:`;
     const candidates = new Set<string>();
-
-    const addVariants = (val?: string | null) => {
-      if (!val) return;
-      candidates.add(val);
-      if (val.startsWith(`${teacherId}:`)) {
-        const raw = val.slice(teacherId.length + 1);
-        candidates.add(raw);
-        for (const p of raw.split(':')) {
-          if (p) candidates.add(p);
-        }
-      } else {
-        candidates.add(`${teacherId}:${val}`.slice(0, 64));
-        for (const p of val.split(':')) {
-          if (p) candidates.add(p);
-        }
+    for (const id of [student.id, student.logicalId]) {
+      if (!id) continue;
+      candidates.add(id);
+      if (id.startsWith(prefix)) {
+        candidates.add(id.slice(prefix.length));
+      } else if (prefix.length + id.length <= 64) {
+        candidates.add(prefix + id);
       }
-    };
-
-    addVariants(student.id);
-    addVariants(student.logicalId);
-    if (student.classId && student.studentNo) {
-      addVariants(`${student.classId}:${student.studentNo}`);
     }
-
-    return Array.from(candidates).filter(Boolean);
+    return [...candidates];
   }
 
   private async scoreSummary(
@@ -2443,44 +2450,20 @@ export class SemesterReportsService {
   private async findStudents(ids: string[]) {
     const teacherId = this.teacher.teacherId;
     const rows = await this.students.find({ where: { teacherId } });
-    const byId = new Map<string, PetStudentEntity>();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const byAlias = new Map<string, PetStudentEntity | null>();
     for (const row of rows) {
-      byId.set(row.id, row);
-      if (row.logicalId) {
-        byId.set(row.logicalId, row);
-        const logParts = row.logicalId.split(':');
-        const lastPart = logParts[logParts.length - 1];
-        if (lastPart) {
-          byId.set(lastPart, row);
-        }
-      }
-      const rawId = row.id.startsWith(`${teacherId}:`)
-        ? row.id.slice(teacherId.length + 1)
-        : row.id;
-      byId.set(rawId, row);
-      const rawParts = rawId.split(':');
-      const lastRawPart = rawParts[rawParts.length - 1];
-      if (lastRawPart) {
-        byId.set(lastRawPart, row);
-      }
-      if (row.classId && row.studentNo) {
-        byId.set(`${row.classId}:${row.studentNo}`, row);
-      }
-      if (row.classId && row.name) {
-        byId.set(`${row.classId}:${row.name}`, row);
+      for (const alias of this.getStudentCandidateIds(row)) {
+        const previous = byAlias.get(alias);
+        byAlias.set(
+          alias,
+          previous === undefined || previous === row ? row : null,
+        );
       }
     }
     const result: PetStudentEntity[] = [];
     for (const id of ids) {
-      let student =
-        byId.get(id) ??
-        byId.get(
-          id.startsWith(`${teacherId}:`) ? id.slice(teacherId.length + 1) : id,
-        );
-      if (!student && id.includes(':')) {
-        const lastPart = id.split(':').pop();
-        if (lastPart) student = byId.get(lastPart);
-      }
+      let student = byId.get(id) ?? byAlias.get(id);
       if (!student) {
         const rawId = id.startsWith(`${teacherId}:`)
           ? id.slice(teacherId.length + 1)
@@ -2494,14 +2477,12 @@ export class SemesterReportsService {
             })
           : null;
         if (profile) {
-          // Check if rows already contains an existing student for this profile to prevent 0-score duplication
+          // A legacy profile match must agree with the current roster identity.
           const existing = rows.find(
             (r) =>
               r.classId === profile.classroomId &&
-              ((profile.studentNo && r.studentNo === profile.studentNo) ||
-                r.name === profile.name ||
-                r.id.endsWith(`:${profile.id}`) ||
-                (r.logicalId && r.logicalId.endsWith(`:${profile.id}`))),
+              r.name === profile.name &&
+              (!profile.studentNo || r.studentNo === profile.studentNo),
           );
           if (existing) {
             if (!existing.logicalId) {

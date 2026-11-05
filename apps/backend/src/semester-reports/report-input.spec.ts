@@ -564,6 +564,51 @@ describe('report generation input', () => {
       positiveItems: [{ label: '参与', count: 1 }],
     });
   });
+  it('does not count class-wide or bare school-number evaluations as student events', async () => {
+    const { internals } = setup();
+    internals.scoreSummary.mockRestore();
+    const rows = [
+      ...Array.from({ length: 39 }, () => ({ studentId: 'class-one' })),
+      { studentId: '16' },
+      ...Array.from({ length: 40 }, () => ({
+        studentId: 'teacher:class-one:16',
+      })),
+      { studentId: 'teacher:class-one:18' },
+      { studentId: 'profile-one' },
+    ];
+    let candidateIds: string[] = [];
+    const query = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn((_sql, parameters: { candidateIds?: string[] }) => {
+        candidateIds = parameters.candidateIds ?? candidateIds;
+        return query;
+      }),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () =>
+        rows
+          .filter((row) => candidateIds.includes(row.studentId))
+          .map((row, id) => ({
+            ...row,
+            id: String(id),
+            label: '早到',
+            delta: 1,
+          })),
+      ),
+    };
+    internals.records.createQueryBuilder = jest.fn().mockReturnValue(query);
+    const result = await internals.scoreSummary(
+      {
+        id: 'teacher:class-one:18',
+        logicalId: 'profile-one',
+        classId: 'class-one',
+        studentNo: '16',
+      },
+      new Date('2026-10-01'),
+      new Date('2026-11-01'),
+    );
+    expect(result.positiveItems).toEqual([{ label: '早到', count: 2 }]);
+  });
+
   it('counts all positive items before retaining only 80 evaluation details', async () => {
     const { internals } = setup();
     internals.scoreSummary.mockRestore();
@@ -1010,6 +1055,57 @@ describe('report generation input', () => {
       reports.save.mock.calls.at(-1)![0].snapshot.courseSelections,
     ).toEqual(input.courseSelections);
   });
+  it('regenerates a stage draft with fresh evidence and keeps it outside the old schedule', async () => {
+    const { service, internals, reports } = setup();
+    internals.findStudents.mockResolvedValue([
+      { id: 'one', name: '学生一', className: '一班' },
+    ]);
+    jest
+      .spyOn(
+        service as unknown as { assertAiReportPermission: () => Promise<void> },
+        'assertAiReportPermission',
+      )
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(
+        service as unknown as {
+          stageGrowthAssessmentSources: () => Promise<unknown[]>;
+        },
+        'stageGrowthAssessmentSources',
+      )
+      .mockResolvedValue([]);
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      reportKind: 'stage',
+      stageCustomName: '十月回顾',
+      studentFeedback: [],
+      studentIds: ['one'],
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '学习内容' },
+      ],
+    });
+    const old = reports.save.mock.calls[0]![0];
+    expect(old.snapshot.reportKind).toBe('stage');
+    old.snapshot.scheduledTask = { id: 'old-task' };
+    jest.spyOn(internals, 'findReport').mockResolvedValue(old);
+    internals.scoreSummary.mockResolvedValue({ records: [], count: 0 });
+    await service.regenerate(old.id);
+    const regenerated = reports.save.mock.calls[1]![0];
+    expect(regenerated.status).toBe('queued');
+    expect(regenerated.snapshot).toMatchObject({
+      reportKind: 'stage',
+      stageCustomName: '十月回顾',
+      scoreSummary: { records: [], count: 0 },
+      petHistoryStatus: 'unavailable',
+    });
+    expect(regenerated.snapshot.scheduledTask).toBeUndefined();
+    expect(internals.petForPeriod).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'one' }),
+      old.periodEnd,
+    );
+  });
+
   it('v2 selects explicitly chosen subjects and snapshots each student pet with both courses', async () => {
     const { service, internals, reports } = setup();
     internals.findUsableDocuments.mockResolvedValue([
@@ -1171,6 +1267,41 @@ describe('report generation input', () => {
       validateGeneratedReportContent(content, report.snapshot),
     ).not.toThrow();
   });
+  it('keeps the requested student and pet-history identity when roster numbers are swapped', async () => {
+    const { service, internals, reports } = setup();
+    internals.findStudents.mockRestore();
+    const selected = {
+      id: 'teacher:class-one:18',
+      logicalId: 'class-one:18',
+      studentNo: '16',
+      classId: 'class-one',
+      name: '学生一',
+    };
+    internals.students.find = jest.fn().mockResolvedValue([
+      selected,
+      {
+        ...selected,
+        id: 'teacher:class-one:16',
+        logicalId: 'class-one:16',
+        studentNo: '18',
+        name: '学生二',
+      },
+    ]);
+    await service.generate({
+      ...request,
+      studentIds: ['class-one:18'],
+      studentFeedback: [],
+    });
+    expect(reports.save.mock.calls[0]![0].studentId).toBe(selected.id);
+    expect(internals.petForPeriod).toHaveBeenCalledWith(
+      selected,
+      expect.any(Date),
+    );
+    await expect(
+      service.generate({ ...request, studentIds: ['different-class:18'] }),
+    ).rejects.toThrow('学生不存在');
+  });
+
   it('matches client student IDs to stored IDs without dropping or mixing classroom feedback', async () => {
     const { service, internals, reports } = setup();
     internals.findStudents.mockRestore();
