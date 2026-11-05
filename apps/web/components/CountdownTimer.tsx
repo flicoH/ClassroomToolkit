@@ -772,16 +772,15 @@ function ChildStage({
 
           // 左分枝上的树叶簇（静止稳定）
           const drawLeafCluster = (leafX: number, leafY: number, scale: number) => {
-            const colors = ["#047857", "#059669", "#10b981", "#34d399"];
             const offsets = [
-              { dx: 0, dy: -6, rx: 12, ry: 15, rot: 0, c: 1 },
-              { dx: -10, dy: -2, rx: 10, ry: 13, rot: -0.5, c: 2 },
-              { dx: 10, dy: -2, rx: 10, ry: 13, rot: 0.5, c: 3 },
-              { dx: 0, dy: 6, rx: 11, ry: 13, rot: 0, c: 0 }
+              { dx: 0, dy: -6, rx: 12, ry: 15, rot: 0, c: "#059669" },
+              { dx: -10, dy: -2, rx: 10, ry: 13, rot: -0.5, c: "#10b981" },
+              { dx: 10, dy: -2, rx: 10, ry: 13, rot: 0.5, c: "#34d399" },
+              { dx: 0, dy: 6, rx: 11, ry: 13, rot: 0, c: "#047857" }
             ];
             offsets.forEach(o => {
               ctx.save();
-              ctx.fillStyle = colors[o.c];
+              ctx.fillStyle = o.c;
               ctx.beginPath();
               ctx.ellipse(
                 leafX + o.dx * scale,
@@ -884,8 +883,7 @@ function ChildStage({
               { dx: 20, dy: 14 }
             ];
 
-            for (let i = 0; i < fruitCount; i++) {
-              const fp = fruitPositions[i];
+            fruitPositions.slice(0, fruitCount).forEach(fp => {
               const fx = trunkTopX + fp.dx * canopyScale;
               const fy = canopyY + fp.dy * canopyScale;
 
@@ -910,7 +908,7 @@ function ChildStage({
               ctx.lineTo(fx + 1.5, fy - 8.5);
               ctx.stroke();
               ctx.restore();
-            }
+            });
           }
         }
         ctx.restore();
