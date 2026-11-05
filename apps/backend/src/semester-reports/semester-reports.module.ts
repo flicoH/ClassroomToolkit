@@ -12,6 +12,7 @@ import {
   ReportSubjectEntity,
   ReportTermEntity,
   SemesterReportEntity,
+  SemesterReportTokenCallEntity,
 } from './semester-report.entity';
 import { SemesterReportsController } from './semester-reports.controller';
 import { SemesterReportsService } from './semester-reports.service';
@@ -28,6 +29,7 @@ import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
       SemesterReportEntity,
       ReportShareEntity,
       ReportEventEntity,
+      SemesterReportTokenCallEntity,
       PetStudentEntity,
       StudentEntity,
       PetEvaluationRecordEntity,

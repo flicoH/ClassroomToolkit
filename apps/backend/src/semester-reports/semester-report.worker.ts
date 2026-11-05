@@ -12,6 +12,7 @@ import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
 import {
   SemesterReportEntity,
   ReportEventEntity,
+  SemesterReportTokenCallEntity,
 } from './semester-report.entity';
 import { ReportDocumentEntity } from './semester-report.entity';
 import { readFile } from 'node:fs/promises';
@@ -738,6 +739,38 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     let response: Response;
     const url = resolveReportAiChatUrl(base);
     const requestStartedAt = Date.now();
+    const callId = randomUUID();
+    const calledAt = new Date();
+    const tokenCallsRepo =
+      typeof this.dataSource?.getRepository === 'function'
+        ? this.dataSource.getRepository(SemesterReportTokenCallEntity)
+        : null;
+
+    if (tokenCallsRepo) {
+      try {
+        await tokenCallsRepo.save({
+          id: callId,
+          reportId: report.id,
+          teacherId: report.teacherId,
+          studentId: report.studentId,
+          provider: isKimi ? 'kimi' : 'moonshot',
+          model: effectiveModel,
+          calledAt,
+          status: 'in_progress',
+          promptTokens: null,
+          completionTokens: null,
+          totalTokens: null,
+          respondedAt: null,
+          responseId: null,
+        });
+      } catch (trackingError) {
+        console.error(
+          `[SemesterReportWorker] 写入调用流水初始记录失败 [callId=${callId}]:`,
+          trackingError,
+        );
+      }
+    }
+
     console.log(`
       [SemesterReportWorker] requestPayload=${requestPayload}
     `);
@@ -759,6 +792,30 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         `[SemesterReportWorker] Kimi 响应已返回: HTTP=${response.status}, DurationMs=${Date.now() - requestStartedAt}, Student=${report.studentName}`,
       );
     } catch (fetchError) {
+      if (tokenCallsRepo) {
+        try {
+          await tokenCallsRepo.save({
+            id: callId,
+            reportId: report.id,
+            teacherId: report.teacherId,
+            studentId: report.studentId,
+            provider: isKimi ? 'kimi' : 'moonshot',
+            model: effectiveModel,
+            calledAt,
+            status: 'failed',
+            promptTokens: null,
+            completionTokens: null,
+            totalTokens: null,
+            respondedAt: new Date(),
+            responseId: null,
+          });
+        } catch (trackingError) {
+          console.error(
+            `[SemesterReportWorker] 更新调用流水失败记录失败 [callId=${callId}]:`,
+            trackingError,
+          );
+        }
+      }
       report.aiResponse = {
         model: effectiveModel,
         error: {
@@ -778,6 +835,30 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!response.ok) {
+      if (tokenCallsRepo) {
+        try {
+          await tokenCallsRepo.save({
+            id: callId,
+            reportId: report.id,
+            teacherId: report.teacherId,
+            studentId: report.studentId,
+            provider: isKimi ? 'kimi' : 'moonshot',
+            model: effectiveModel,
+            calledAt,
+            status: 'failed',
+            promptTokens: null,
+            completionTokens: null,
+            totalTokens: null,
+            respondedAt: new Date(),
+            responseId: null,
+          });
+        } catch (trackingError) {
+          console.error(
+            `[SemesterReportWorker] 更新调用流水 HTTP 异常记录失败 [callId=${callId}]:`,
+            trackingError,
+          );
+        }
+      }
       const errText =
         typeof response.text === 'function' ? await response.text() : '';
       console.error(
@@ -791,9 +872,98 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         `报告服务返回 HTTP ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ''}`,
       );
     }
-    const result = (await response.json()) as {
+
+    let result: {
+      id?: string;
       choices?: Array<{ message?: { content?: string } }>;
+      usage?: {
+        prompt_tokens?: unknown;
+        completion_tokens?: unknown;
+        total_tokens?: unknown;
+      };
     };
+    try {
+      result = (await response.json()) as typeof result;
+    } catch (jsonError) {
+      if (tokenCallsRepo) {
+        try {
+          await tokenCallsRepo.save({
+            id: callId,
+            reportId: report.id,
+            teacherId: report.teacherId,
+            studentId: report.studentId,
+            provider: isKimi ? 'kimi' : 'moonshot',
+            model: effectiveModel,
+            calledAt,
+            status: 'failed',
+            promptTokens: null,
+            completionTokens: null,
+            totalTokens: null,
+            respondedAt: new Date(),
+            responseId: null,
+          });
+        } catch (trackingError) {
+          console.error(
+            `[SemesterReportWorker] 更新调用流水 JSON 异常记录失败 [callId=${callId}]:`,
+            trackingError,
+          );
+        }
+      }
+      report.aiResponse = {
+        model: effectiveModel,
+        error: {
+          type: 'json_parse_error',
+          message:
+            jsonError instanceof Error ? jsonError.message : String(jsonError),
+        },
+      };
+      throw new Error('报告服务返回无效 JSON 格式');
+    }
+
+    // 收到响应且读取到响应体后，立即在校验正文前落库记录 Token 用量
+    const responseId = typeof result?.id === 'string' ? result.id : null;
+    const usage = result?.usage;
+    const promptTokens =
+      typeof usage?.prompt_tokens === 'number' &&
+      Number.isFinite(usage.prompt_tokens)
+        ? Math.max(0, Math.floor(usage.prompt_tokens))
+        : null;
+    const completionTokens =
+      typeof usage?.completion_tokens === 'number' &&
+      Number.isFinite(usage.completion_tokens)
+        ? Math.max(0, Math.floor(usage.completion_tokens))
+        : null;
+    const totalTokens =
+      typeof usage?.total_tokens === 'number' &&
+      Number.isFinite(usage.total_tokens)
+        ? Math.max(0, Math.floor(usage.total_tokens))
+        : null;
+
+    if (tokenCallsRepo) {
+      try {
+        await tokenCallsRepo.save({
+          id: callId,
+          reportId: report.id,
+          teacherId: report.teacherId,
+          studentId: report.studentId,
+          provider: isKimi ? 'kimi' : 'moonshot',
+          model: effectiveModel,
+          calledAt,
+          status: 'responded',
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          respondedAt: new Date(),
+          responseId,
+        });
+      } catch (trackingError) {
+        console.error(
+          `[SemesterReportWorker] 更新调用流水成功记录失败 [callId=${callId}]:`,
+          trackingError,
+        );
+      }
+    }
+
     report.aiResponse = result as Record<string, unknown>;
     if (isKimi) {
       console.log(

@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   allowedDevOrigins: ["127.0.0.1", "localhost", "192.168.1.177", "119.23.147.212"],
+  experimental: {
+    // 按需优化图标与通用组件导入，减少编译图大小与内存开销，提升 Node >= 22 下的构建/开发稳定性
+    optimizePackageImports: ["lucide-react", "@radix-ui/react-avatar", "@radix-ui/react-slot"]
+  },
   async headers() {
     return [
       {

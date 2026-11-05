@@ -138,3 +138,31 @@ export class ReportEventEntity {
   > | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
+
+/** 学期与阶段报告的大模型调用流水记录，记录每次请求的用量与状态。 */
+@Entity('semester_report_token_calls')
+export class SemesterReportTokenCallEntity {
+  @PrimaryColumn({ length: 64 }) id!: string;
+  @Column({ name: 'report_id', length: 64 }) reportId!: string;
+  @Column({ name: 'teacher_id', length: 64 }) teacherId!: string;
+  @Column({ name: 'student_id', length: 64 }) studentId!: string;
+  @Column({ length: 32, default: 'kimi' }) provider!: string;
+  @Column({ length: 64 }) model!: string;
+  @Column({ name: 'called_at', type: 'datetime' }) calledAt!: Date;
+  @Column({ name: 'responded_at', type: 'datetime', nullable: true })
+  respondedAt!: Date | null;
+  @Column({ name: 'prompt_tokens', type: 'int', nullable: true })
+  promptTokens!: number | null;
+  @Column({ name: 'completion_tokens', type: 'int', nullable: true })
+  completionTokens!: number | null;
+  @Column({ name: 'total_tokens', type: 'int', nullable: true })
+  totalTokens!: number | null;
+  @Column({ length: 24, default: 'in_progress' }) status!:
+    | 'in_progress'
+    | 'responded'
+    | 'failed';
+  @Column({ name: 'response_id', type: 'varchar', length: 128, nullable: true })
+  responseId!: string | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
+  @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
+}

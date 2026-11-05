@@ -110,6 +110,17 @@ AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内�
 
 Kimi 原始响应独立保存在 `semester_reports.ai_response`，不会随教师编辑报告正文而丢失。阶段任务等待每位学生的 Kimi 请求结束后才创建草稿；请求失败或超时时终止该学生的 AI 流程，以本地默认数据生成可编辑草稿，并在报告事件中记录 `generation-fallback`。任务查询接口同时返回学生总数、完成数、处理中数、失败数与进度百分比。
 
+### AI 报告 Token 追踪
+
+Worker 在每次向大模型发出请求前生成本地调用 ID，在 `semester_report_token_calls` 表中记录独立调用流水（包含调用时间、响应时间、模型名、提供方、状态、输入/输出/总 Token 及供应商响应 ID）。
+
+- **采集时机**：在收到模型响应后、校验报告正文前落库记录 Token 用量。若大模型有用量但后续正文解析或校验失败，已消耗的 Token 仍累计为已知用量；调用结果与报告生成结果分开表示。
+- **未知用量与容错**：超时、网络中断、HTTP 错误、响应体无法解析或缺失有效 usage 时，用量记为空（前端展示为未知）。流水写入失败时仅告警并继续原生成流程，严禁为补记流水重发模型请求。
+- **管理查询接口**：
+  - `GET /admin/report-token-usage`：按学生、调用时间范围（北京时间）、模型和状态筛选分页报告汇总、已知用量、未知次数及统计范围。
+  - `GET /admin/report-token-usage/:reportId/calls`：在相同筛选条件下分页返回单份报告的逐次调用明细。
+  - 接口受 `@AdminAccess()` 保护，响应排除 API Key、Prompt 消息、报告正文及原生错误响应等敏感字段。
+
 阶段任务以创建时选择的学生档案 ID 锁定身份，报告姓名与头像从同一份学生档案成对冻结；宠物积分学生记录仅用于积分、宠物等附加数据，不能分别决定姓名或头像，避免历史 ID 兼容映射造成错配。
 
 管理员相关配置：
@@ -367,3 +378,17 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
 - 后端事件中枢：通过 `ScheduledTasksEventsService` 建立基于教师 ID 的专属事件广播通道。
 - SSE 端点：`GET /semester-reports/scheduled-tasks/stream`。教师端建立长连接后，首先接收 `tasks_sync` 初始完整任务列表快照；随后无论是前端手动创建/执行/删除任务，还是后台 `SemesterReportWorker` 异步推进处理进度、成功生成或发生降级，均以毫秒级时延将最新的状态快照与进度推送至客户端。
 - 链路保活：内置 25 秒心跳机制（`:keep-alive`），兼容各类反向代理中间件与网关长连接超时配置。
+
+### 历史 AI 报告 Token 用量回填脚本
+
+在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。可通过独立脚本将历史用量安全回填至调用流水表：
+
+- 预览模式（不改写数据）：
+  ```bash
+  pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls:dry-run
+  ```
+- 正式执行回填（幂等插入，自动跳过已追踪报告）：
+  ```bash
+  pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls
+  ```
+- 动态降级：后台查询逻辑已具备动态兼容能力，未执行回填时也能直接解析 `ai_response` 中的 `usage` 并展示在列表及详情中。

@@ -23,6 +23,11 @@ import { teacherSqlTime, teacherUtcOffset } from './analytics/teacher-time';
 import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 import { ReportAiSettingEntity } from './entities/report-ai-setting.entity';
 import { ReportAiTeacherPermissionEntity } from './entities/report-ai-teacher-permission.entity';
+import {
+  SemesterReportEntity,
+  SemesterReportTokenCallEntity,
+} from '../semester-reports/semester-report.entity';
+import { extractCallFromAiResponse } from '../database/scripts/backfill-report-token-calls';
 
 const eventDay =
   "DATE_FORMAT(DATE_ADD(e.createdAt, INTERVAL 8 HOUR), '%Y-%m-%d')";
@@ -171,6 +176,7 @@ export class AdminDatabase {
         'pet_points_rubrics',
         'pet_points_settings',
         'pet_points_students',
+        'semester_report_token_calls',
         'semester_report_events',
         'semester_report_shares',
         'semester_reports',
@@ -553,5 +559,430 @@ export class AdminDatabase {
     )
       .where('t.id = :id', { id })
       .getRawMany<AdminDatabaseRow>();
+  }
+
+  /** 分页查询报告模型 Token 调用汇总及指标统计。 */
+  async findReportTokenUsage(
+    q: AdminQueryDto,
+    range: { from: string; to: string; start: string; end: string },
+    page: AdminPagination,
+  ) {
+    const reportRepo =
+      this.teachers.manager.getRepository(SemesterReportEntity);
+    const callsRepo = this.teachers.manager.getRepository(
+      SemesterReportTokenCallEntity,
+    );
+
+    const studentTerm = (q.student || q.search || '').trim().slice(0, 100);
+    const fromDate = new Date(range.from);
+    const toDate = new Date(range.to);
+
+    const query = reportRepo
+      .createQueryBuilder('r')
+      .leftJoin(TeacherEntity, 't', 't.id = r.teacherId')
+      .where('r.status != :deleted', { deleted: 'deleted' });
+
+    if (studentTerm) {
+      const termCondition =
+        '(r.studentName LIKE :studentTerm OR r.studentId = :studentExact OR r.studentId LIKE :studentTerm OR r.className LIKE :studentTerm OR t.name LIKE :studentTerm OR t.username LIKE :studentTerm)';
+      query.andWhere(termCondition, {
+        studentTerm: `%${studentTerm}%`,
+        studentExact: studentTerm,
+      });
+    }
+
+    // 关联满足筛选范围的调用流水
+    query.leftJoin(
+      SemesterReportTokenCallEntity,
+      'c',
+      'c.reportId = r.id AND c.calledAt >= :from AND c.calledAt < :to' +
+        (q.model ? ' AND c.model = :model' : '') +
+        (q.status ? ' AND c.status = :callStatus' : ''),
+      {
+        from: fromDate,
+        to: toDate,
+        ...(q.model ? { model: q.model.trim() } : {}),
+        ...(q.status ? { callStatus: q.status.trim() } : {}),
+      },
+    );
+
+    // 若指定了模型或状态，仅保留有对应调用的报告；未指定时同时保留在当前范围内创建的模板生成或无调用的报告
+    if (q.model || q.status) {
+      query.andWhere('c.id IS NOT NULL');
+    } else {
+      query.andWhere(
+        '(c.id IS NOT NULL OR (r.createdAt >= :from AND r.createdAt < :to))',
+        { from: fromDate, to: toDate },
+      );
+    }
+
+    // 统计满足条件的报告总数
+    const countQuery = query.clone();
+    const countResult = await countQuery
+      .select('COUNT(DISTINCT r.id)', 'count')
+      .getRawOne<{ count: string | number }>();
+    const total = countResult?.count ? Number(countResult.count) : 0;
+
+    // 汇总当前筛选范围内的总调用次数、各 Token 总数及未知次数
+    const summaryQuery = callsRepo
+      .createQueryBuilder('c')
+      .innerJoin(SemesterReportEntity, 'r', 'r.id = c.reportId')
+      .leftJoin(TeacherEntity, 't', 't.id = r.teacherId')
+      .where('r.status != :deleted', { deleted: 'deleted' })
+      .andWhere('c.calledAt >= :from AND c.calledAt < :to', {
+        from: fromDate,
+        to: toDate,
+      });
+
+    if (studentTerm) {
+      const termCondition =
+        '(r.studentName LIKE :studentTerm OR r.studentId = :studentExact OR r.studentId LIKE :studentTerm OR r.className LIKE :studentTerm OR t.name LIKE :studentTerm OR t.username LIKE :studentTerm)';
+      summaryQuery.andWhere(termCondition, {
+        studentTerm: `%${studentTerm}%`,
+        studentExact: studentTerm,
+      });
+    }
+    if (q.model) {
+      summaryQuery.andWhere('c.model = :model', { model: q.model.trim() });
+    }
+    if (q.status) {
+      summaryQuery.andWhere('c.status = :callStatus', {
+        callStatus: q.status.trim(),
+      });
+    }
+
+    const summaryRaw = await summaryQuery
+      .select('COUNT(c.id)', 'totalCalls')
+      .addSelect('SUM(c.promptTokens)', 'promptTokens')
+      .addSelect('SUM(c.completionTokens)', 'completionTokens')
+      .addSelect('SUM(c.totalTokens)', 'totalTokens')
+      .addSelect(
+        'COUNT(CASE WHEN c.totalTokens IS NULL THEN 1 END)',
+        'unknownCalls',
+      )
+      .getRawOne<{
+        totalCalls: string | number;
+        promptTokens: string | number;
+        completionTokens: string | number;
+        totalTokens: string | number;
+        unknownCalls: string | number;
+      }>();
+
+    const rawRows = await query
+      .groupBy('r.id')
+      .select('r.id', 'reportId')
+      .addSelect('r.teacherId', 'teacherId')
+      .addSelect('MAX(t.name)', 'teacherName')
+      .addSelect('MAX(t.username)', 'teacherUsername')
+      .addSelect('r.studentId', 'studentId')
+      .addSelect('r.studentName', 'studentName')
+      .addSelect('r.className', 'className')
+      .addSelect('r.periodType', 'periodType')
+      .addSelect('r.periodStart', 'periodStart')
+      .addSelect('r.periodEnd', 'periodEnd')
+      .addSelect('r.snapshot', 'snapshot')
+      .addSelect('r.aiResponse', 'aiResponse')
+      .addSelect('r.createdAt', 'createdAt')
+      .addSelect('r.updatedAt', 'updatedAt')
+      .addSelect('MAX(c.calledAt)', 'latestCalledAt')
+      .addSelect('COUNT(c.id)', 'callsCount')
+      .addSelect('SUM(c.promptTokens)', 'promptTokens')
+      .addSelect('SUM(c.completionTokens)', 'completionTokens')
+      .addSelect('SUM(c.totalTokens)', 'totalTokens')
+      .addSelect(
+        'COUNT(CASE WHEN c.id IS NOT NULL AND c.totalTokens IS NULL THEN 1 END)',
+        'unknownCallsCount',
+      )
+      .orderBy('MAX(c.calledAt)', 'DESC')
+      .addOrderBy('r.createdAt', 'DESC')
+      .addOrderBy('r.id', 'DESC')
+      .limit(page.pageSize)
+      .offset(page.offset)
+      .getRawMany<{
+        reportId: string;
+        teacherId: string;
+        teacherName: string | null;
+        teacherUsername: string | null;
+        studentId: string;
+        studentName: string;
+        className: string;
+        periodType: string;
+        periodStart: string | Date;
+        periodEnd: string | Date;
+        snapshot: string | Record<string, unknown> | null;
+        aiResponse: string | Record<string, unknown> | null;
+        createdAt: string | Date;
+        updatedAt: string | Date;
+        latestCalledAt: string | Date | null;
+        callsCount: string | number;
+        promptTokens: string | number | null;
+        completionTokens: string | number | null;
+        totalTokens: string | number | null;
+        unknownCallsCount: string | number;
+      }>();
+
+    const items = rawRows.map((row) => {
+      let snapshotObj: Record<string, unknown> | null = null;
+      if (typeof row.snapshot === 'string') {
+        try {
+          snapshotObj = JSON.parse(row.snapshot) as Record<string, unknown>;
+        } catch {
+          snapshotObj = null;
+        }
+      } else if (row.snapshot && typeof row.snapshot === 'object') {
+        snapshotObj = row.snapshot as Record<string, unknown>;
+      }
+
+      let callsCount = Number(row.callsCount || 0);
+      let unknownCallsCount = Number(row.unknownCallsCount || 0);
+      let promptTokens =
+        row.promptTokens !== null && row.promptTokens !== undefined
+          ? Number(row.promptTokens)
+          : null;
+      let completionTokens =
+        row.completionTokens !== null && row.completionTokens !== undefined
+          ? Number(row.completionTokens)
+          : null;
+      let totalTokens =
+        row.totalTokens !== null && row.totalTokens !== undefined
+          ? Number(row.totalTokens)
+          : null;
+      let latestCalledAt = row.latestCalledAt
+        ? row.latestCalledAt instanceof Date
+          ? row.latestCalledAt.toISOString()
+          : new Date(row.latestCalledAt).toISOString()
+        : null;
+
+      // 如果当前无独立调用流水，但已落库 aiResponse，动态回填历史调用用量与状态
+      if (callsCount === 0 && row.aiResponse) {
+        const histCall = extractCallFromAiResponse(
+          row.aiResponse,
+          row.createdAt instanceof Date
+            ? row.createdAt
+            : new Date(row.createdAt),
+          row.updatedAt instanceof Date
+            ? row.updatedAt
+            : new Date(row.updatedAt),
+        );
+        if (histCall) {
+          callsCount = 1;
+          promptTokens = histCall.promptTokens;
+          completionTokens = histCall.completionTokens;
+          totalTokens = histCall.totalTokens;
+          if (totalTokens === null) {
+            unknownCallsCount = 1;
+          }
+          latestCalledAt = histCall.calledAt.toISOString();
+        }
+      }
+
+      const isTemplate = snapshotObj?.generationMode === 'template';
+      const isStage =
+        snapshotObj?.reportKind === 'stage' ||
+        Boolean(snapshotObj?.scheduledTask);
+
+      let trackingStatus: 'tracked' | 'template_no_model' | 'legacy_untracked';
+      if (callsCount > 0) {
+        trackingStatus = 'tracked';
+      } else if (isTemplate) {
+        trackingStatus = 'template_no_model';
+      } else {
+        trackingStatus = 'legacy_untracked';
+      }
+
+      const snapshotStudentNo = (
+        snapshotObj?.student as { studentNo?: string } | undefined
+      )?.studentNo;
+
+      let studentNo: string | null = null;
+      if (typeof snapshotStudentNo === 'string' && snapshotStudentNo.trim()) {
+        studentNo = snapshotStudentNo.trim();
+      } else if (typeof row.studentId === 'string') {
+        const segments = row.studentId.split(':');
+        const candidate = segments[segments.length - 1];
+        if (
+          candidate &&
+          !candidate.startsWith('teacher-') &&
+          !candidate.startsWith('class-') &&
+          !candidate.startsWith('deleted')
+        ) {
+          studentNo = candidate;
+        }
+      }
+
+      return {
+        reportId: row.reportId,
+        teacherId: row.teacherId || null,
+        teacherName: row.teacherName || null,
+        teacherUsername: row.teacherUsername || null,
+        studentId: row.studentId,
+        studentNo,
+        studentName: row.studentName,
+        className: row.className,
+        reportKind: isStage ? 'stage' : row.periodType,
+        periodType: row.periodType,
+        periodStart:
+          row.periodStart instanceof Date
+            ? row.periodStart.toISOString()
+            : String(row.periodStart),
+        periodEnd:
+          row.periodEnd instanceof Date
+            ? row.periodEnd.toISOString()
+            : String(row.periodEnd),
+        latestCalledAt,
+        callsCount,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        unknownCallsCount,
+        trackingStatus,
+      };
+    });
+
+    return {
+      total,
+      page: page.page,
+      pageSize: page.pageSize,
+      range: {
+        start: range.start,
+        end: range.end,
+      },
+      summary: {
+        totalReports: total,
+        totalCalls: Number(summaryRaw?.totalCalls || 0),
+        promptTokens: Number(summaryRaw?.promptTokens || 0),
+        completionTokens: Number(summaryRaw?.completionTokens || 0),
+        totalTokens: Number(summaryRaw?.totalTokens || 0),
+        unknownCalls: Number(summaryRaw?.unknownCalls || 0),
+      },
+      items,
+    };
+  }
+
+  /** 查询指定报告在筛选条件下的逐次模型调用明细。 */
+  async findReportTokenCalls(
+    reportId: string,
+    q: AdminQueryDto,
+    range: { from: string; to: string; start: string; end: string },
+    page: AdminPagination,
+  ) {
+    const reportRepo =
+      this.teachers.manager.getRepository(SemesterReportEntity);
+    const callsRepo = this.teachers.manager.getRepository(
+      SemesterReportTokenCallEntity,
+    );
+
+    const report = await reportRepo.findOne({
+      where: { id: reportId },
+      select: [
+        'id',
+        'studentName',
+        'status',
+        'aiResponse',
+        'createdAt',
+        'updatedAt',
+      ],
+    });
+
+    if (!report || report.status === 'deleted') {
+      return null;
+    }
+
+    const fromDate = new Date(range.from);
+    const toDate = new Date(range.to);
+
+    const query = callsRepo
+      .createQueryBuilder('c')
+      .where('c.reportId = :reportId', { reportId })
+      .andWhere('c.calledAt >= :from AND c.calledAt < :to', {
+        from: fromDate,
+        to: toDate,
+      });
+
+    if (q.model) {
+      query.andWhere('c.model = :model', { model: q.model.trim() });
+    }
+    if (q.status) {
+      query.andWhere('c.status = :callStatus', {
+        callStatus: q.status.trim(),
+      });
+    }
+
+    const total = await query.getCount();
+    const rows = await query
+      .orderBy('c.calledAt', 'DESC')
+      .addOrderBy('c.id', 'DESC')
+      .limit(page.pageSize)
+      .offset(page.offset)
+      .getMany();
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      calledAt: row.calledAt ? row.calledAt.toISOString() : null,
+      respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
+      durationMs:
+        row.respondedAt && row.calledAt
+          ? Math.max(0, row.respondedAt.getTime() - row.calledAt.getTime())
+          : null,
+      provider: row.provider,
+      model: row.model,
+      status: row.status,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      totalTokens: row.totalTokens,
+      responseId: row.responseId,
+    }));
+
+    if (total === 0 && report.aiResponse) {
+      const extracted = extractCallFromAiResponse(
+        report.aiResponse,
+        report.createdAt,
+        report.updatedAt,
+      );
+      if (extracted) {
+        return {
+          reportId: report.id,
+          studentName: report.studentName,
+          total: 1,
+          page: 1,
+          pageSize: page.pageSize,
+          range: {
+            start: range.start,
+            end: range.end,
+          },
+          items: [
+            {
+              id: `hist-${report.id}`.slice(0, 64),
+              calledAt: extracted.calledAt.toISOString(),
+              respondedAt: extracted.respondedAt.toISOString(),
+              durationMs: Math.max(
+                0,
+                extracted.respondedAt.getTime() - extracted.calledAt.getTime(),
+              ),
+              provider: extracted.provider,
+              model: extracted.model,
+              status: extracted.status,
+              promptTokens: extracted.promptTokens,
+              completionTokens: extracted.completionTokens,
+              totalTokens: extracted.totalTokens,
+              responseId: extracted.responseId,
+            },
+          ],
+        };
+      }
+    }
+
+    return {
+      reportId: report.id,
+      studentName: report.studentName,
+      total,
+      page: page.page,
+      pageSize: page.pageSize,
+      range: {
+        start: range.start,
+        end: range.end,
+      },
+      items,
+    };
   }
 }

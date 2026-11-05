@@ -16,6 +16,7 @@ const links = [
   { path: '/classrooms', label: '班级管理', icon: '班' },
   { path: '/feedback', label: '意见反馈', icon: '言' },
   { path: '/report-ai-settings', label: 'AI 报告配置', icon: 'AI' },
+  { path: '/report-token-usage', label: 'Token 追踪', icon: '量' },
 ]
 async function logout() {
   try {

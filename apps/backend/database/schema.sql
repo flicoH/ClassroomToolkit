@@ -373,6 +373,28 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   INDEX idx_sr_reports_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告及生成任务';
 
+CREATE TABLE IF NOT EXISTS semester_report_token_calls (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  report_id VARCHAR(64) NOT NULL,
+  teacher_id VARCHAR(64) NOT NULL,
+  student_id VARCHAR(64) NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'kimi',
+  model VARCHAR(64) NOT NULL,
+  called_at DATETIME(6) NOT NULL,
+  responded_at DATETIME(6) NULL,
+  prompt_tokens INT NULL,
+  completion_tokens INT NULL,
+  total_tokens INT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'in_progress',
+  response_id VARCHAR(128) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  INDEX idx_srtc_called_at (called_at),
+  INDEX idx_srtc_report_called (report_id, called_at),
+  INDEX idx_srtc_student_called (student_id, called_at),
+  INDEX idx_srtc_teacher (teacher_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告大模型调用流水及Token用量';
+
 CREATE TABLE IF NOT EXISTS admin_report_ai_settings (
   id VARCHAR(32) PRIMARY KEY, base_url VARCHAR(500) NOT NULL, model VARCHAR(100) NOT NULL,
   api_key_ciphertext TEXT NOT NULL,

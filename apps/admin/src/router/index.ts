@@ -59,6 +59,11 @@ const router = createRouter({
       component: () => import('../views/ReportAiSettingsView.vue'),
       meta: { title: 'AI 报告配置' },
     },
+    {
+      path: '/report-token-usage',
+      component: () => import('../views/ReportTokenUsageView.vue'),
+      meta: { title: 'Token 追踪' },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

@@ -5,12 +5,15 @@ export class AdminQueryDto {
   page?: string;
   pageSize?: string;
   search?: string;
+  student?: string;
   teacherId?: string;
   teacherSearch?: string;
   classroomId?: string;
   classroomSearch?: string;
   kind?: string;
   sort?: string;
+  model?: string;
+  status?: string;
 }
 
 /** 管理员为指定教师设置的新密码，由 Service 校验类型和长度。 */

@@ -46,6 +46,19 @@ export class AdminController {
   ) {
     return this.service.updateReportAiPermission(body);
   }
+  /** 查询报告 Token 用量统计与分页列表。 */
+  @Get('report-token-usage')
+  reportTokenUsage(@Query(AdminQueryPipe) q: AdminQueryDto) {
+    return this.service.reportTokenUsage(q);
+  }
+  /** 获取指定报告在筛选时间范围内的逐次模型调用明细。 */
+  @Get('report-token-usage/:reportId/calls')
+  reportTokenCalls(
+    @Param('reportId') reportId: string,
+    @Query(AdminQueryPipe) q: AdminQueryDto,
+  ) {
+    return this.service.reportTokenCalls(reportId, q);
+  }
   /** 获取平台师生班级总数、今日注册及活跃概览。 */
   @Get('dashboard/overview') overview() {
     return this.service.overview();

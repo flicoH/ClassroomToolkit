@@ -13,6 +13,8 @@
     "migration:run": "pnpm run build && typeorm migration:run -d dist/database/data-source.js",
     "migration:revert": "pnpm run build && typeorm migration:revert -d dist/database/data-source.js",
     "db:repair-pet-scores": "pnpm run build && node dist/database/scripts/repair-corrupted-pet-scores.js",
+    "db:backfill-token-calls": "pnpm run build && node dist/database/scripts/backfill-report-token-calls.js",
+    "db:backfill-token-calls:dry-run": "pnpm run build && node dist/database/scripts/backfill-report-token-calls.js --dry-run",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "dev": "nest start --watch --path tsconfig.dev.json --host 0.0.0.0",

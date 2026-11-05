@@ -219,6 +219,30 @@ export class AdminService {
       hasAiReportPermission: body.enabled,
     };
   }
+  /** 按时间范围、学生及模型状态筛选学期报告大模型调用 Token 消耗。 */
+  async reportTokenUsage(q: AdminQueryDto) {
+    const range = dateRange(q);
+    const page = pageQuery(q);
+    return this.database.findReportTokenUsage(q, range, page);
+  }
+  /** 获取指定报告在筛选时间范围内的逐次模型调用明细。 */
+  async reportTokenCalls(reportId: string, q: AdminQueryDto) {
+    if (!reportId || typeof reportId !== 'string') {
+      throw new BadRequestException('无效的报告 ID');
+    }
+    const range = dateRange(q);
+    const page = pageQuery(q);
+    const result = await this.database.findReportTokenCalls(
+      reportId,
+      q,
+      range,
+      page,
+    );
+    if (!result) {
+      throw new NotFoundException('报告不存在');
+    }
+    return result;
+  }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
     const password = body?.password;

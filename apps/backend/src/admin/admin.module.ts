@@ -13,6 +13,10 @@ import { AdminController } from './admin.controller';
 import { FeedbackEntity } from '../feedback/entities/feedback.entity';
 import { ReportAiSettingEntity } from './entities/report-ai-setting.entity';
 import { ReportAiTeacherPermissionEntity } from './entities/report-ai-teacher-permission.entity';
+import {
+  SemesterReportEntity,
+  SemesterReportTokenCallEntity,
+} from '../semester-reports/semester-report.entity';
 /** 管理接口遵循 Controller / Service / Database 分层，认证模块独立注册。 */
 @Module({
   imports: [
@@ -27,6 +31,8 @@ import { ReportAiTeacherPermissionEntity } from './entities/report-ai-teacher-pe
       BlockedIpEntity,
       ReportAiSettingEntity,
       ReportAiTeacherPermissionEntity,
+      SemesterReportEntity,
+      SemesterReportTokenCallEntity,
     ]),
   ],
   controllers: [AdminController],
