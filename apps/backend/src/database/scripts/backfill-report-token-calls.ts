@@ -37,12 +37,12 @@ export async function runBackfillTokenCalls(options: {
     `[backfill-token-calls] 开始${dryRun ? '【预览模式(DRY-RUN)】' : '【执行回填】'}：读取已落库 ai_response 并补充 token 调用记录...`,
   );
 
-  // 1. 查找全部存在 ai_response 且未软删除的报告
+  // 1. 查找全部存在 ai_response 且未软删除的报告（使用主键索引排序，杜绝 sort_buffer 溢出）
   const reports = await reportRepo
     .createQueryBuilder('r')
     .where('r.status != :deleted', { deleted: 'deleted' })
     .andWhere('r.aiResponse IS NOT NULL')
-    .orderBy('r.createdAt', 'ASC')
+    .orderBy('r.id', 'ASC')
     .getMany();
 
   const stats: BackfillStats = {

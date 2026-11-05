@@ -29,7 +29,7 @@ describe('report token calls migration', () => {
     );
   });
 
-  it('automatically backfills historical ai_response reports upon migration execution', async () => {
+  it('automatically backfills historical ai_response reports using cursor pagination without filesort', async () => {
     const historicalReports = [
       {
         id: 'rep-hist-1',
@@ -74,21 +74,32 @@ describe('report token calls migration', () => {
       },
     ];
 
-    const mockQuery = jest.fn().mockImplementation((sql: string) => {
-      if (sql.includes('CREATE TABLE IF NOT EXISTS')) {
-        return Promise.resolve(undefined);
-      }
-      if (sql.includes('SELECT id, teacher_id, student_id, ai_response')) {
-        return Promise.resolve(historicalReports);
-      }
-      if (sql.includes('SELECT DISTINCT report_id')) {
-        return Promise.resolve([{ report_id: 'rep-hist-already-tracked' }]);
-      }
-      if (sql.includes('INSERT IGNORE INTO semester_report_token_calls')) {
-        return Promise.resolve({ affectedRows: 1 });
-      }
-      return Promise.resolve([]);
-    });
+    let batchCount = 0;
+    const mockQuery = jest
+      .fn()
+      .mockImplementation((sql: string, params?: unknown[]) => {
+        if (sql.includes('CREATE TABLE IF NOT EXISTS')) {
+          return Promise.resolve(undefined);
+        }
+        if (sql.includes('SELECT DISTINCT report_id')) {
+          return Promise.resolve([{ report_id: 'rep-hist-already-tracked' }]);
+        }
+        if (sql.includes('SELECT id, teacher_id, student_id, ai_response')) {
+          batchCount++;
+          // 验证查询使用了主键游标和排序，避免对大 JSON 列执行 filesort
+          expect(sql).toContain('ORDER BY id ASC');
+          expect(sql).toContain('id > ?');
+          expect(sql).not.toContain('ORDER BY created_at');
+          if (params && params[0] === '') {
+            return Promise.resolve(historicalReports);
+          }
+          return Promise.resolve([]);
+        }
+        if (sql.includes('INSERT IGNORE INTO semester_report_token_calls')) {
+          return Promise.resolve({ affectedRows: 1 });
+        }
+        return Promise.resolve([]);
+      });
 
     const runner = {
       query: mockQuery,
@@ -98,6 +109,8 @@ describe('report token calls migration', () => {
     } as unknown as QueryRunner;
 
     await new AddReportTokenCalls20261104020000().up(runner);
+
+    expect(batchCount).toBe(2);
 
     // rep-hist-1 应被成功写入
     const insertCalls = mockQuery.mock.calls.filter(
