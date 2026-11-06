@@ -140,6 +140,9 @@ export function DraftEditModal({
   const [showHistory, setShowHistory] = useState(false);
   const [historyKey, setHistoryKey] = useState({});
   const [addSubjectDropdownOpen, setAddSubjectDropdownOpen] = useState(false);
+  const [subjectBusy, setSubjectBusy] = useState(false);
+  const [subjectError, setSubjectError] = useState<string | null>(null);
+  const persistSubjects = isV2 && !report.id.startsWith("gen-");
   const [mobileTab, setMobileTab] = useState<"edit" | "preview">("edit");
   const [photoError, setPhotoError] = useState<string | null>(null);
 
@@ -249,37 +252,73 @@ export function DraftEditModal({
     }));
   }
 
-  // 学科增减操作
-  function handleAddSubject(subject: V2Subject) {
+  async function handleAddSubject(subject: V2Subject) {
+    if (subjectBusy || currentReportSubjects.some(item => item.id === subject.id)) return;
     setAddSubjectDropdownOpen(false);
-    const existing = content.reportSubjects || [];
-    if (existing.some(s => s.subjectId === subject.id)) return;
-
-    const nextSubjects = [...existing, { subjectId: subject.id, name: subject.name }];
-    setContent(prev => ({
-      ...prev,
-      reportSubjects: nextSubjects
-    }));
-    setActiveSubjectId(subject.id);
+    setSubjectError(null);
+    setSubjectBusy(true);
+    try {
+      // 保存评价时后端按快照校验学科，先登记学科，再开放该科的评价。
+      const updated = persistSubjects
+        ? await request.post<unknown, { content: LearningReportContent }>(
+            `${base}/reports/${report.id}/course-subjects`,
+            {
+              courseSelections: [{ subjectId: subject.id, courseScope: "", manualContent: "" }]
+            }
+          )
+        : null;
+      setContent(prev => ({
+        ...prev,
+        reportSubjects: updated
+          ? updated.content.reportSubjects
+          : [...(prev.reportSubjects ?? []), { subjectId: subject.id, name: subject.name }]
+      }));
+      setActiveSubjectId(subject.id);
+      if (updated) setHistoryKey({});
+    } catch (error) {
+      const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
+      setSubjectError(typeof message === "string" ? message : "添加学科失败，请重试。");
+    } finally {
+      setSubjectBusy(false);
+    }
   }
 
-  function handleRemoveSubject(subjectId: string) {
-    const existing = content.reportSubjects || [];
-    if (existing.length <= 1) {
-      // 规则：至少保留一门学科
-      return;
-    }
-    const nextSubjects = existing.filter(s => s.subjectId !== subjectId);
-    // 连带移除该学科下的表现评价
-    const nextPerf = (content.classroomPerformance || []).filter(p => p.subjectId !== subjectId);
-
-    setContent(prev => ({
-      ...prev,
-      reportSubjects: nextSubjects,
-      classroomPerformance: nextPerf
-    }));
-    if (activeSubjectId === subjectId) {
-      setActiveSubjectId(nextSubjects[0]!.subjectId);
+  async function handleRemoveSubject(subjectId: string) {
+    if (subjectBusy || currentReportSubjects.length <= 1) return;
+    setSubjectError(null);
+    setSubjectBusy(true);
+    try {
+      const result = persistSubjects
+        ? await request.delete<unknown, { report: { content: LearningReportContent }; removedReferences: string[] }>(
+            `${base}/reports/${report.id}/course-subjects/${encodeURIComponent(subjectId)}`
+          )
+        : null;
+      const remaining = result
+        ? (result.report.content.reportSubjects ?? [])
+        : (content.reportSubjects ?? []).filter(subject => subject.subjectId !== subjectId);
+      const removed = new Set(result?.removedReferences);
+      const keepEntry = (entry: ReportEntry) => !entry.sourceRefs.some(ref => removed.has(ref));
+      const remainingLearningIds = new Set(result?.report.content.learningContents?.map(item => item.id));
+      setContent(prev => ({
+        ...prev,
+        reportSubjects: remaining,
+        classroomPerformance: prev.classroomPerformance?.filter(
+          item => item.subjectId !== subjectId && keepEntry(item)
+        ),
+        ...(result && {
+          learningContents: prev.learningContents?.filter(item => remainingLearningIds.has(item.id)),
+          strengths: prev.strengths?.filter(keepEntry),
+          areasToImprove: prev.areasToImprove?.filter(keepEntry),
+          homeSuggestions: prev.homeSuggestions?.filter(keepEntry)
+        })
+      }));
+      if (activeSubjectId === subjectId) setActiveSubjectId(remaining[0]?.subjectId ?? "");
+      if (result) setHistoryKey({});
+    } catch (error) {
+      const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
+      setSubjectError(typeof message === "string" ? message : "移除学科失败，请重试。");
+    } finally {
+      setSubjectBusy(false);
     }
   }
 
@@ -671,6 +710,7 @@ export function DraftEditModal({
                       type="button"
                       variant="outline"
                       size="sm"
+                      disabled={busy || subjectBusy}
                       onClick={() => setAddSubjectDropdownOpen(prev => !prev)}
                       className="h-7 text-[11px] text-indigo-600"
                     >
@@ -683,7 +723,7 @@ export function DraftEditModal({
                           <button
                             key={sub.id}
                             type="button"
-                            onClick={() => handleAddSubject(sub)}
+                            onClick={() => void handleAddSubject(sub)}
                             className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-muted"
                           >
                             <span>{sub.name}</span>
@@ -696,6 +736,12 @@ export function DraftEditModal({
                 )}
               </div>
 
+              {persistSubjects && <p className="text-[11px] text-muted-foreground">添加或移除学科会立即保存。</p>}
+              {subjectError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {subjectError}
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
                 {currentReportSubjects.map(sub => {
                   const isActive = sub.id === activeSubjectId;
@@ -715,10 +761,11 @@ export function DraftEditModal({
                       {canDelete && (
                         <button
                           type="button"
+                          disabled={busy || subjectBusy}
                           aria-label={`移除${sub.name}学科`}
                           onClick={e => {
                             e.stopPropagation();
-                            handleRemoveSubject(sub.id);
+                            void handleRemoveSubject(sub.id);
                           }}
                           className={`ml-1 text-xs hover:text-red-500 ${isActive ? "text-indigo-200" : "text-muted-foreground"}`}
                         >
@@ -894,6 +941,12 @@ export function DraftEditModal({
                 onChange={e => handleSummaryChange(e.target.value)}
                 className="text-xs leading-relaxed"
               />
+              {persistSubjects && <p className="text-[11px] text-muted-foreground">添加或移除学科会立即保存。</p>}
+              {subjectError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {subjectError}
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
                 <span className="text-[11px] text-muted-foreground">快捷填入：</span>
                 {quickPhrases.map((phrase, idx) => (
@@ -1021,7 +1074,7 @@ export function DraftEditModal({
               type="button"
               variant="outline"
               size="sm"
-              disabled={busy}
+              disabled={busy || subjectBusy}
               onClick={() => onSave({ ...content, reportVersion: isV2 ? "v2" : undefined })}
               className="h-8 sm:h-9 border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 text-xs sm:text-sm"
             >
@@ -1030,7 +1083,7 @@ export function DraftEditModal({
             <Button
               type="button"
               size="sm"
-              disabled={busy}
+              disabled={busy || subjectBusy}
               onClick={() => onPublish({ ...content, reportVersion: isV2 ? "v2" : undefined })}
               className="h-8 sm:h-9 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-xs sm:text-sm"
             >
