@@ -554,6 +554,106 @@ describe("SemesterReportsV2View", () => {
     expect(container.textContent).not.toContain("张小明 · 报告草稿微调");
   });
 
+  async function clickButton(label: string) {
+    const button = [...container.querySelectorAll("button")].find(
+      b => b.textContent?.trim() === label || b.getAttribute("aria-label") === label
+    );
+    expect(button).toBeDefined();
+    await act(async () => button!.click());
+  }
+
+  it("registers the new draft subject before saving its classroom rating and allows retry after rejection", async () => {
+    const original = mockReports[0]!;
+    const added = {
+      ...original,
+      content: {
+        ...original.content,
+        reportSubjects: [...original.content!.reportSubjects, { subjectId: "sub-2", name: "数学思维" }]
+      }
+    };
+    api.post.mockRejectedValueOnce({ response: { data: { message: "学科不可用" } } }).mockResolvedValueOnce(added);
+    api.patch.mockImplementation(async (_url, body) => {
+      const registered = await api.post.mock.results.at(-1)?.value;
+      if (!registered?.content.reportSubjects.some((subject: { subjectId: string }) => subject.subjectId === "sub-2")) {
+        throw new Error("课堂表现必须对应报告中的学科");
+      }
+      return { ...added, content: body.content };
+    });
+
+    await act(async () => root.render(<SemesterReportsV2View />));
+    await clickButton("预览/微调");
+    await clickButton("+ 课堂发言积极主动...");
+    await clickButton("添加学科");
+    await clickButton("数学思维+ 添加");
+
+    expect(container.textContent).toContain("学科不可用");
+    expect(container.querySelector('[aria-label="移除数学思维学科"]')).toBeNull();
+    expect(api.patch).not.toHaveBeenCalled();
+
+    await clickButton("添加学科");
+    await clickButton("数学思维+ 添加");
+    expect(api.post).toHaveBeenLastCalledWith("/api/semester-reports/reports/rep-1/course-subjects", {
+      courseSelections: [{ subjectId: "sub-2", courseScope: "", manualContent: "" }]
+    });
+    await clickButton("思路清晰敏捷");
+    await clickButton("保存草稿");
+    expect(api.patch).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/rep-1/draft",
+      expect.objectContaining({
+        content: expect.objectContaining({
+          summary: expect.stringContaining("课堂发言积极主动，逻辑清晰，表现优异！"),
+          classroomPerformance: [
+            { subjectId: "sub-2", text: "逻辑推理 · 思路清晰敏捷", sourceRefs: ["teacher-review"] }
+          ]
+        })
+      })
+    );
+    expect(container.querySelector('[aria-label="张小明的学期报告草稿编辑"]')).toBeNull();
+  });
+
+  it("removes an added subject and its unsaved rating before saving the draft", async () => {
+    const original = mockReports[0]!;
+    api.post.mockResolvedValueOnce({
+      ...original,
+      content: {
+        ...original.content,
+        reportSubjects: [...original.content!.reportSubjects, { subjectId: "sub-2", name: "数学思维" }]
+      }
+    });
+    api.delete.mockResolvedValueOnce({ report: original, removedReferences: [] });
+    await act(async () => root.render(<SemesterReportsV2View />));
+    await clickButton("预览/微调");
+    await clickButton("添加学科");
+    await clickButton("数学思维+ 添加");
+    await clickButton("思路清晰敏捷");
+    await clickButton("移除数学思维学科");
+    expect(api.delete).toHaveBeenCalledWith("/api/semester-reports/reports/rep-1/course-subjects/sub-2");
+    await clickButton("保存草稿");
+    expect(api.patch).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/rep-1/draft",
+      expect.objectContaining({
+        content: expect.objectContaining({
+          reportSubjects: original.content!.reportSubjects,
+          classroomPerformance: []
+        })
+      })
+    );
+  });
+
+  it("keeps the draft open and skips publication if saving its edits fails", async () => {
+    api.patch.mockRejectedValueOnce(new Error("课堂表现必须对应报告中的学科"));
+    await act(async () => root.render(<SemesterReportsV2View />));
+    const edit = [...container.querySelectorAll("button")].find(button => button.textContent?.trim() === "预览/微调");
+    await act(async () => edit!.click());
+    const publish = [...container.querySelectorAll("button")].find(
+      button => button.textContent?.trim() === "审核通过并发布"
+    );
+    await act(async () => publish!.click());
+    expect(api.patch).toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("/publish"));
+    expect(container.querySelector('[aria-label="张小明的学期报告草稿编辑"]')).not.toBeNull();
+  });
+
   it("triggers batch publish with ConfirmDialog and performs batch publish", async () => {
     await act(async () => {
       root.render(<SemesterReportsV2View />);

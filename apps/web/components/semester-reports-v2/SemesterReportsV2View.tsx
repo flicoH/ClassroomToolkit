@@ -1234,7 +1234,7 @@ export function SemesterReportsV2View() {
 
       let shareData: ReportShare | null = null;
       if (!editingDraftReport.id.startsWith("gen-")) {
-        await request.patch(`${base}/reports/${editingDraftReport.id}/draft`, { content: payload }).catch(() => null);
+        await request.patch(`${base}/reports/${editingDraftReport.id}/draft`, { content: payload });
         const pubRes = await request
           .post<
             { url: string; shareId: string },

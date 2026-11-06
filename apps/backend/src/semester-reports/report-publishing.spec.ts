@@ -345,6 +345,41 @@ describe('report publishing', () => {
       ]),
     );
   });
+  it('saves a rating for a draft subject added without course material', async () => {
+    const { service, row } = removableDraft();
+    const internals = service as unknown as {
+      requireSubject: jest.Mock;
+      findStudents: jest.Mock;
+      findUsableDocuments: jest.Mock;
+    };
+    jest.spyOn(internals, 'requireSubject').mockResolvedValue({ name: '科学' });
+    jest
+      .spyOn(internals, 'findStudents')
+      .mockResolvedValue([{ id: 'student', classId: 'class' }]);
+    jest.spyOn(internals, 'findUsableDocuments').mockResolvedValue([]);
+    const rating = {
+      subjectId: 'science',
+      text: '课堂参与 · 主动参与',
+      sourceRefs: ['teacher-review'],
+    };
+    await expect(
+      service.editDraft('report', {
+        ...row.content,
+        classroomPerformance: [rating],
+      }),
+    ).rejects.toThrow('课堂表现必须对应报告中的学科');
+    await service.addDraftSubjects('report', [
+      { subjectId: 'science', courseScope: '', manualContent: '' },
+    ]);
+    await service.editDraft('report', {
+      ...row.content,
+      classroomPerformance: [rating],
+    });
+    expect(row.content!.classroomPerformance).toEqual([rating]);
+    expect(row.snapshot.allowedReferences).not.toContain(
+      'teacher-course:science',
+    );
+  });
   it('saves, validates and restores per-student growth dimensions with Chinese history', async () => {
     const { service, row, events } = setup();
     row.snapshot = { reportVersion: 'v2' };
