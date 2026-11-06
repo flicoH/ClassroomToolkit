@@ -189,7 +189,11 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [mobileSection, setMobileSection] = useState<"courses" | "compose" | "reports">("courses");
   function showSection(section: typeof mobileSection) {
     setMobileSection(section);
-    if (scrollRef.current && window.matchMedia?.("(max-width: 767px)").matches) scrollRef.current.scrollTop = 0;
+    if (window.matchMedia?.("(max-width: 767px)").matches) {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    } else if (!isV2) {
+      document.getElementById(`${sectionId}-${section}`)?.scrollIntoView?.({ block: "start" });
+    }
   }
   const [terms, setTerms] = useState<Term[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -1283,7 +1287,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       </header>
       <nav
         aria-label={`${reportTitle}导航`}
-        className="sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md md:hidden"
+        className={`sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md ${isV2 ? "md:hidden" : "md:static"}`}
       >
         {(
           [

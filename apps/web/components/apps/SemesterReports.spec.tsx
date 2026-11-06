@@ -1042,6 +1042,7 @@ describe("SemesterReports mobile workflow", () => {
   it("provides a labelled mobile navigation and preserves form input when switching sections", async () => {
     await render();
     expect(container.querySelector('nav[aria-label="学期报告导航"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="学期报告仪表盘"]')).toBeNull();
     act(() => button("填写报告").click());
     const input = container.querySelector<HTMLInputElement>('input[placeholder="例如：Animals"]')!;
     act(() => {

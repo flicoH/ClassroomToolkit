@@ -49,10 +49,8 @@ const menuItems: MenuItemData[] = [
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
-  // { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
-  // semesterReportsV2
-  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
-  // { name: "学期报告工作台", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
+  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
+  { name: "学期报告工作台", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
   { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
