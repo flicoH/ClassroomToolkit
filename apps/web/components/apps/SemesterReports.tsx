@@ -189,6 +189,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [mobileSection, setMobileSection] = useState<"courses" | "compose" | "reports">("courses");
   function showSection(section: typeof mobileSection) {
     setMobileSection(section);
+    // 手机端切换面板后从顶部开始，桌面旧版保留同页区块导航。
     if (window.matchMedia?.("(max-width: 767px)").matches) {
       if (scrollRef.current) scrollRef.current.scrollTop = 0;
     } else if (!isV2) {

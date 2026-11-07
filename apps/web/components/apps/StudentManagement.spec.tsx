@@ -51,7 +51,9 @@ describe("StudentManagement class deletion constraints", () => {
     expect(deleteClass2.disabled).toBe(false);
 
     // 选中二班作为当前激活班级
-    const class2Tab = [...container.querySelectorAll("aside button")].find(el => el.textContent?.includes("二班"))!;
+    const class2Tab = [...container.querySelectorAll<HTMLButtonElement>("aside button")].find(el =>
+      el.textContent?.includes("二班")
+    )!;
     await act(async () => class2Tab.click());
     expect(container.querySelector("header h2")?.textContent).toBe("二班");
 

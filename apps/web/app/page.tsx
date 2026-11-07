@@ -30,6 +30,7 @@ import { Feedback } from "@/components/apps/Feedback";
 import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
 import { SemesterReports } from "@/components/apps/SemesterReports";
 import { SemesterReportStudio } from "@/components/apps/SemesterReportStudio";
+import { SubjectReportStudio } from "@/components/apps/SubjectReportStudio";
 import {
   CartoonCountdownIcon,
   CartoonGachaIcon,
@@ -49,8 +50,10 @@ const menuItems: MenuItemData[] = [
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
+  // 保留旧版报告入口，工作台通过独立菜单访问。
   { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
   { name: "学期报告工作台", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
+  { name: "学科报告", icon: CartoonSemesterReportIcon, contentKey: "subjectReports" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
   { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
@@ -75,6 +78,8 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <SemesterReports />;
     case "semesterReportStudio":
       return <SemesterReportStudio />;
+    case "subjectReports":
+      return <SubjectReportStudio />;
     case "gachaMachine":
       return <GachaMachine />;
     case "stickyNotesList":

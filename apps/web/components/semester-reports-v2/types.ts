@@ -86,7 +86,9 @@ export type CourseDocument = {
   termId: string;
   subjectId: string;
   fileName: string;
-  status: "uploading" | "ready" | "failed";
+  status: "uploading" | "queued" | "parsing" | "needs_review" | "ready" | "failed";
+  units?: string[];
+  errorMessage?: string | null;
   pageCount?: number;
   extractedKeywords?: string[];
   extractedGrammar?: string[];

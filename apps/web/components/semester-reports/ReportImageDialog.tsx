@@ -30,7 +30,9 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
   const [feedback, setFeedback] = useState("");
   const [copying, setCopying] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -69,12 +71,27 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
     setImage(null);
     setError("");
     setFeedback("");
+    let isSubject = Boolean(reportData?.isSubjectReport);
+    try {
+      const path = new URL(shareUrl, window.location.origin).pathname.replace(/\/+$/, "");
+      if (/^\/r\/subject\/[A-Za-z0-9_-]{40,50}$/.test(path)) isSubject = true;
+    } catch {
+      // ignore
+    }
+    const attachSubject = (rep: LearningReportData): LearningReportData =>
+      isSubject ? { ...rep, isSubjectReport: true } : rep;
+
     void (async () => {
       let token: string | null = null;
+      let publicApi = isSubject ? "/api/public-reports/subject" : "/api/public-reports";
       try {
         const path = new URL(shareUrl, window.location.origin).pathname.replace(/\/+$/, "");
-        const match = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path);
-        token = match?.[1] ?? null;
+        const match = /^\/r\/(subject\/)?([A-Za-z0-9_-]{40,50})$/.exec(path);
+        if (match?.[1]) {
+          publicApi = "/api/public-reports/subject";
+          isSubject = true;
+        }
+        token = match?.[2] ?? null;
       } catch {
         token = null;
       }
@@ -103,13 +120,13 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
 
       if (!token) {
         if (reportData) {
-          if (!cancelled) setReport(reportData);
+          if (!cancelled) setReport(attachSubject(reportData));
           return;
         }
         throw new Error("报告链接无效，请重新复制家长链接后生成图片。");
       }
       // Use our same-origin BFF, not an arbitrary share URL or a cross-origin screenshot service.
-      let response = await fetch(`/api/public-reports/${token}`, { cache: "no-store", signal: controller.signal });
+      let response = await fetch(`${publicApi}/${token}`, { cache: "no-store", signal: controller.signal });
       let data = await response.json();
       if (!response.ok && reportId) {
         try {
@@ -138,16 +155,16 @@ export function ReportImageDialog({ studentName, shareUrl, reportId, reportData,
         }
       }
       if (!response.ok && reportData) {
-        if (!cancelled) setReport(reportData);
+        if (!cancelled) setReport(attachSubject(reportData));
         return;
       }
       if (!response.ok) throw new Error(data.message || "报告链接无效或已失效，请重新发布后生成图片。");
-      if (!cancelled) setReport(data as LearningReportData);
+      if (!cancelled) setReport(attachSubject(data as LearningReportData));
     })()
       .catch((reason: unknown) => {
         if (!cancelled) {
           if (reportData) {
-            setReport(reportData);
+            setReport(attachSubject(reportData));
             return;
           }
           setError(

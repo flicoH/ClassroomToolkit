@@ -307,7 +307,7 @@ describe('Kimi adapter and accepted course formats', () => {
       };
       const [scope, pages, content] = cases[fixture.kind];
       expect(units).toHaveLength(
-        { pinyin: 81, reading: 80, handwriting: 18, health: 21 }[fixture.kind]!,
+        { pinyin: 81, reading: 80, handwriting: 18, health: 21 }[fixture.kind],
       );
       expect(
         selectCoursePages([document], scope, 'week')[0].pages.map(

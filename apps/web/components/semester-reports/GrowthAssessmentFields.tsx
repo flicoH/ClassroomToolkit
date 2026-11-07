@@ -16,23 +16,28 @@ export function emptyGrowthAssessment(): GrowthAssessment {
 export function GrowthAssessmentFields({
   value,
   onChange,
-  studentName = ""
+  studentName = "",
+  compact = false
 }: {
   value?: GrowthAssessment;
   onChange: (value: GrowthAssessment) => void;
   studentName?: string;
+  compact?: boolean;
 }) {
   const current = value ?? emptyGrowthAssessment();
   return (
-    <section className="space-y-3 rounded-xl border bg-sky-50/30 p-3">
-      <h3 className="font-semibold">学习习惯与能力成长总结</h3>
-      <p className="text-xs text-muted-foreground">分别填写这位学生的实际观察，留空可在草稿中补充。</p>
+    <section className={`rounded-xl border bg-sky-50/30 p-3 ${compact ? "grid gap-2.5 sm:grid-cols-2" : "space-y-3"}`}>
+      <h3 className={compact ? "text-xs font-bold sm:col-span-2" : "font-semibold"}>学习习惯与能力成长总结</h3>
+      <p className="text-xs text-muted-foreground sm:col-span-2">分别填写这位学生的实际观察，留空可在草稿中补充。</p>
       {growthDimensions.map(([key, label]) => (
-        <label key={key} className="block space-y-2 text-sm font-semibold">
+        <label
+          key={key}
+          className={compact ? "block space-y-1 text-xs font-semibold" : "block space-y-2 text-sm font-semibold"}
+        >
           {label}
           <textarea
             aria-label={`${studentName ? `${studentName} ` : ""}${label}`}
-            className="min-h-24 w-full rounded-lg border bg-background p-3 font-normal"
+            className={`w-full rounded-lg border bg-background p-3 font-normal ${compact ? "min-h-16" : "min-h-24"}`}
             maxLength={800}
             value={current[key]}
             placeholder={

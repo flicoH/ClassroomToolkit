@@ -6,7 +6,6 @@ import {
   Injectable,
   NotFoundException,
   Optional,
-  ServiceUnavailableException,
   UnauthorizedException,
   type MessageEvent,
 } from '@nestjs/common';
@@ -27,6 +26,7 @@ import { join } from 'node:path';
 import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
+import { readReportShareKey } from './report-share-key';
 import { readReportPublicBaseUrl } from './report-public-url';
 import { readReportAiConfig } from './report-ai-config';
 import {
@@ -277,7 +277,13 @@ export class SemesterReportsService {
   async updateSubjectPerformance(id: string, input: Record<string, unknown>) {
     const subject = await this.requireSubject(id);
     const performanceConfig = parsePerformanceConfig(input.performanceConfig);
-    return this.subjects.save({ ...subject, performanceConfig });
+    // 只更新仍启用的学科，避免并发保存配置时重新启用已删除的学科。
+    const result = await this.subjects.update(
+      { id, teacherId: this.teacher.teacherId, enabled: true },
+      { performanceConfig },
+    );
+    if (!result.affected) throw new NotFoundException('学科不存在');
+    return { ...subject, performanceConfig };
   }
 
   async listDocuments() {
@@ -295,6 +301,7 @@ export class SemesterReportsService {
       | { originalname: string; mimetype: string; buffer: Buffer; size: number }
       | undefined,
     input: Record<string, string>,
+    options: { skipSubjectValidation?: boolean } = {},
   ) {
     if (
       !file ||
@@ -306,7 +313,9 @@ export class SemesterReportsService {
     if (!input.termId || !input.subjectId)
       throw new BadRequestException('请先选择学期和学科');
     await this.requireTerm(input.termId);
-    await this.requireSubject(input.subjectId);
+    if (!options.skipSubjectValidation) {
+      await this.requireSubject(input.subjectId);
+    }
     const teacherId = this.teacher.teacherId;
     const hash = createHash('sha256').update(file.buffer).digest('hex');
     const existing = await this.documents.findOne({
@@ -453,7 +462,13 @@ export class SemesterReportsService {
     };
   }
 
-  async previewCourseScope(input: Record<string, unknown>) {
+  async previewCourseScope(
+    input: Record<string, unknown>,
+    options: {
+      allowDisabledSubject?: boolean;
+      skipSubjectValidation?: boolean;
+    } = {},
+  ) {
     const period = input.period as (typeof periods)[number];
     if (!periods.includes(period))
       throw new BadRequestException('请选择报告周期');
@@ -461,7 +476,8 @@ export class SemesterReportsService {
     const subjectId =
       input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
     await this.requireTerm(termId);
-    if (input.reportVersion !== 'v2') await this.requireSubject(subjectId);
+    if (input.reportVersion !== 'v2' && !options.skipSubjectValidation)
+      await this.requireSubject(subjectId, options.allowDisabledSubject);
     const courses = await this.selectedCourses(
       input,
       termId,
@@ -2351,6 +2367,31 @@ export class SemesterReportsService {
     return { period, start, end, termId, subjectId, studentIds };
   }
 
+  /** 旧学科报告缺少学生信息时补充读取展示，不改写原报告快照。 */
+  async subjectReportStudent(studentId: string, teacherId: string) {
+    const students = await this.students.find({ where: { teacherId } });
+    const student = students.find((item) =>
+      this.getStudentCandidateIds(item, teacherId).includes(studentId),
+    );
+    return student
+      ? {
+          name: student.name,
+          className: student.className,
+          studentPhoto: await this.photoForStudent(student, teacherId),
+        }
+      : null;
+  }
+
+  /** 学科报告复用同一学生身份、头像与周期截止形态口径。 */
+  async subjectReportPresentation(studentId: string, end: Date) {
+    const [student] = await this.findStudents([studentId]);
+    return {
+      student: student!,
+      studentPhoto: await this.photoForStudent(student!),
+      ...(await this.petForPeriod(student!, end)),
+    };
+  }
+
   private petForPeriod(student: PetStudentEntity, end: Date) {
     return petAppearanceAtReportEnd(
       this.students.manager.getRepository(PetStateHistoryEntity),
@@ -2412,11 +2453,14 @@ export class SemesterReportsService {
   }
 
   /** Keep full persisted identities. A current school number can be reassigned. */
-  private getStudentCandidateIds(student: {
-    id: string;
-    logicalId?: string | null;
-  }): string[] {
-    const prefix = `${this.teacher.teacherId}:`;
+  private getStudentCandidateIds(
+    student: {
+      id: string;
+      logicalId?: string | null;
+    },
+    teacherId = this.teacher.teacherId,
+  ): string[] {
+    const prefix = `${teacherId}:`;
     const candidates = new Set<string>();
     for (const id of [student.id, student.logicalId]) {
       if (!id) continue;
@@ -2668,20 +2712,35 @@ export class SemesterReportsService {
   }
 
   /** 宠物积分 ID 兼容教师前缀和旧标识；即使用学号兜底，也必须限定同一教师与班级。 */
-  private async photoForStudent(student: PetStudentEntity) {
+  private async photoForStudent(
+    student: PetStudentEntity,
+    teacherId = this.teacher.teacherId,
+  ) {
     if (!student.classId) return null;
-    const teacherId = this.teacher.teacherId;
-    const id = student.id.startsWith(`${teacherId}:`)
-      ? student.id.slice(teacherId.length + 1)
-      : student.id;
     const scope = { teacherId, classroomId: student.classId };
-    const profile =
-      (await this.studentProfiles.findOne({ where: { ...scope, id } })) ??
-      (student.studentNo
-        ? await this.studentProfiles.findOne({
-            where: { ...scope, studentNo: student.studentNo },
-          })
-        : null);
+    // 旧积分记录的主键可能与学生资料不同，先用逻辑身份匹配，学号仅作为兜底。
+    const candidates = [
+      ...new Set(
+        [
+          student.logicalId,
+          ...this.getStudentCandidateIds(student, teacherId),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    for (const candidate of candidates) {
+      const id = candidate.startsWith(`${teacherId}:`)
+        ? candidate.slice(teacherId.length + 1)
+        : candidate;
+      const profile = await this.studentProfiles.findOne({
+        where: { ...scope, id },
+      });
+      if (profile) return profile.photo ?? null;
+    }
+    const profile = student.studentNo
+      ? await this.studentProfiles.findOne({
+          where: { ...scope, studentNo: student.studentNo },
+        })
+      : null;
     return profile?.photo ?? null;
   }
 
@@ -2902,9 +2961,13 @@ export class SemesterReportsService {
     if (!row) throw new NotFoundException('学期不存在');
     return row;
   }
-  private async requireSubject(id: string) {
+  private async requireSubject(id: string, allowDisabled = false) {
     const row = await this.subjects.findOne({
-      where: { id, teacherId: this.teacher.teacherId, enabled: true },
+      where: {
+        id,
+        teacherId: this.teacher.teacherId,
+        ...(allowDisabled ? {} : { enabled: true }),
+      },
     });
     if (!row) throw new NotFoundException('学科不存在');
     return row;
@@ -3107,12 +3170,7 @@ export class SemesterReportsService {
     return `${readReportPublicBaseUrl()}/r/${token}`;
   }
   private key() {
-    const configured = process.env.REPORT_SHARE_ENCRYPTION_KEY;
-    if (!configured || Buffer.from(configured, 'base64').length !== 32)
-      throw new ServiceUnavailableException(
-        'REPORT_SHARE_ENCRYPTION_KEY 必须配置为 32 字节 base64 密钥',
-      );
-    return Buffer.from(configured, 'base64');
+    return readReportShareKey();
   }
   private encrypt(text: string) {
     const iv = randomBytes(12);

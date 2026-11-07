@@ -232,6 +232,20 @@ describe("SemesterReportsV2View", () => {
     expect(container.textContent).toContain("配置学科课堂表现");
     expect(container.textContent).toContain("2026-2027学年第一学期");
 
+    const config = container.querySelector('section[aria-label="配置学科课堂表现"]')!;
+    const remove = config.querySelector<HTMLButtonElement>('button[aria-label^="删除课堂表现项目 "]')!;
+    await act(async () => remove.click());
+    expect(api.patch).not.toHaveBeenCalled();
+    api.patch.mockResolvedValueOnce({ ...mockSubjects[0], performanceConfig: [] });
+    const save = [...config.querySelectorAll("button")].find(button =>
+      button.textContent?.includes("保存课堂表现配置")
+    )!;
+    await act(async () => save.click());
+    expect(api.patch).toHaveBeenCalledWith(
+      `/api/semester-reports/report-subjects/${mockSubjects[0]!.id}/performance-config`,
+      { performanceConfig: expect.any(Array) }
+    );
+
     // Add subject
     const subjectInput = container.querySelector("input[placeholder*='新增学科名称']") as HTMLInputElement;
     expect(subjectInput).toBeTruthy();

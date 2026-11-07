@@ -1,5 +1,7 @@
 "use client";
 
+import { SubjectPerformanceConfig } from "@/components/semester-reports/SubjectPerformanceConfig";
+import { CoursePdfUpload, ReportWizardSteps } from "./ReportStudioControls";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import request from "@/lib/request";
 import { createUuid } from "@/lib/id";
@@ -575,7 +577,7 @@ export function SemesterReportsV2View() {
   const [termStartInput, setTermStartInput] = useState("2026-09-01");
   const [termEndInput, setTermEndInput] = useState("2027-01-20");
   const [activeConfigSubjectId, setActiveConfigSubjectId] = useState("english");
-  const [subjectConfigs, setSubjectConfigs] = useState<Record<string, Array<{ label: string; options: string[] }>>>({
+  const [subjectConfigs] = useState<Record<string, Array<{ label: string; options: string[] }>>>({
     english: [
       { label: "听力跟读与发音", options: ["发音标准流利", "基本跟读完整", "需要轻度引导"] },
       { label: "课堂互动与表达", options: ["主动大胆表达", "能回答问题", "需要鼓励开口"] },
@@ -588,8 +590,7 @@ export function SemesterReportsV2View() {
       { label: "小组协作分工", options: ["积极组织分工", "配合默契投入", "参与度待提升"] }
     ]
   });
-  const [newFieldLabel, setNewFieldLabel] = useState("");
-  const [newFieldOptions, setNewFieldOptions] = useState("");
+  const configSubject = subjects.find(subject => subject.id === activeConfigSubjectId) ?? subjects[0];
 
   function showToast(msg: string) {
     setToastMessage(msg);
@@ -680,13 +681,6 @@ export function SemesterReportsV2View() {
           setStep4PerfSubject(loadedSubjects[0].id);
           setActiveConfigSubjectId(loadedSubjects[0].id);
         }
-        const configs: Record<string, Array<{ label: string; options: string[] }>> = {};
-        loadedSubjects.forEach(sub => {
-          if (sub.performanceConfig && sub.performanceConfig.length > 0) {
-            configs[sub.id] = sub.performanceConfig;
-          }
-        });
-        setSubjectConfigs(prev => ({ ...prev, ...configs }));
       } else {
         setSubjects([
           { id: "english", name: "英语" },
@@ -1671,7 +1665,7 @@ export function SemesterReportsV2View() {
       return subjects.map(s => ({
         id: s.id,
         name: s.name,
-        performanceConfig: subjectConfigs[s.id] || s.performanceConfig || defaultPerformanceConfig()
+        performanceConfig: s.performanceConfig || subjectConfigs[s.id] || defaultPerformanceConfig()
       }));
     }
     return [
@@ -2166,71 +2160,12 @@ export function SemesterReportsV2View() {
       {/* ========================================================================= */}
       {activeMainTab === "compose" && (
         <main className="space-y-4 animate-in fade-in duration-200">
-          {/* 4 步向导水平导航卡片 */}
-          <div className="grid grid-cols-4 gap-2 rounded-2xl border bg-card p-2 text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => setComposeStep(1)}
-              className={`rounded-xl px-2 py-2.5 text-center transition ${
-                composeStep === 1
-                  ? "bg-indigo-600 font-bold text-white shadow-xs"
-                  : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              1. 周期与基础
-            </button>
-            <button
-              type="button"
-              onClick={() => setComposeStep(2)}
-              className={`rounded-xl px-2 py-2.5 text-center transition ${
-                composeStep === 2
-                  ? "bg-indigo-600 font-bold text-white shadow-xs"
-                  : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              2. 学科与内容来源
-            </button>
-            <button
-              type="button"
-              disabled={composeSelectedSubjects.length === 0}
-              onClick={() => {
-                if (composeSelectedSubjects.length === 0) {
-                  showToast("请先在步骤 2 中选择至少一门学科！");
-                  return;
-                }
-                setComposeStep(3);
-              }}
-              className={`rounded-xl px-2 py-2.5 text-center transition ${
-                composeStep === 3
-                  ? "bg-indigo-600 font-bold text-white shadow-xs"
-                  : "text-muted-foreground hover:bg-muted"
-              } disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              3. 选择学生
-            </button>
-            <button
-              type="button"
-              disabled={composeSelectedSubjects.length === 0 || selectedStudentIds.length === 0}
-              onClick={() => {
-                if (composeSelectedSubjects.length === 0) {
-                  showToast("请先在步骤 2 中选择至少一门学科！");
-                  return;
-                }
-                if (selectedStudentIds.length === 0) {
-                  showToast("请先在步骤 3 中选择学生！");
-                  return;
-                }
-                setComposeStep(4);
-              }}
-              className={`rounded-xl px-2 py-2.5 text-center transition ${
-                composeStep === 4
-                  ? "bg-indigo-600 font-bold text-white shadow-xs"
-                  : "text-muted-foreground hover:bg-muted"
-              } disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              4. 课堂评价与生成
-            </button>
-          </div>
+          <ReportWizardSteps
+            step={composeStep}
+            onChange={setComposeStep}
+            hasSubjects={composeSelectedSubjects.length > 0}
+            hasStudents={selectedStudentIds.length > 0}
+          />
 
           {/* 向导 Step 1 */}
           {composeStep === 1 && (
@@ -3165,19 +3100,7 @@ export function SemesterReportsV2View() {
                 <span className="text-xs text-muted-foreground">最大 30MB</span>
               </div>
 
-              <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/30 p-5 text-center transition hover:bg-indigo-50/60 dark:border-indigo-700 dark:bg-indigo-950/20">
-                <Upload className="h-8 w-8 text-indigo-500" />
-                <span className="mt-1 text-xs font-bold text-indigo-700 dark:text-indigo-300">
-                  选择课程 PDF（最大 30MB）
-                </span>
-                <span className="text-[11px] text-muted-foreground">上传后自动解析，核对章节后用于报告</span>
-                <input
-                  type="file"
-                  accept=".pdf"
-                  className="hidden"
-                  onChange={() => showToast("正在上传 PDF 并等待服务器解析课时要点...")}
-                />
-              </label>
+              <CoursePdfUpload onChange={() => showToast("正在上传 PDF 并等待服务器解析课时要点...")} />
 
               <div className="space-y-2 rounded-xl border bg-muted/20 p-3.5 text-xs">
                 <div className="flex items-center justify-between">
@@ -3209,143 +3132,50 @@ export function SemesterReportsV2View() {
           </div>
 
           {/* 3）配置学科课堂表现 */}
-          <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
+          <section aria-label="配置学科课堂表现" className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
               <div>
                 <h2 className="text-sm font-bold">配置学科课堂表现</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  每门学科配置 1~12 项评价维度，每项预设选项；报告打分时严格单选此处预设好的值，不可输入。
-                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">报告评价使用此处保存的预设选项。</p>
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="font-medium text-muted-foreground">选择学科:</span>
+              <label className="flex items-center gap-2 text-xs">
+                <span className="font-medium text-muted-foreground">选择学科</span>
                 <select
                   aria-label="配置学科切换"
-                  value={activeConfigSubjectId}
-                  onChange={e => setActiveConfigSubjectId(e.target.value)}
+                  value={configSubject?.id ?? ""}
+                  onChange={event => setActiveConfigSubjectId(event.target.value)}
                   className="h-8 rounded-xl border border-indigo-300 bg-card px-3 font-bold text-indigo-600 dark:border-indigo-700"
                 >
-                  {subjects.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
+                  {!subjects.length && <option value="">请先添加学科</option>}
+                  {subjects.map(subject => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.name}
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
             </div>
-
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-muted-foreground">当前学科评价维度列表:</span>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {(subjectConfigs[activeConfigSubjectId] || []).map((field, idx) => (
-                  <div key={idx} className="space-y-1.5 rounded-xl border bg-muted/20 p-3 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold flex items-center gap-1.5">
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-600">
-                          {idx + 1}
-                        </span>
-                        <span>{field.label}</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSubjectConfigs(prev => ({
-                            ...prev,
-                            [activeConfigSubjectId]: prev[activeConfigSubjectId]?.filter((_, i) => i !== idx) || []
-                          }));
-                          showToast("已删除该评价维度");
-                        }}
-                        className="text-[11px] text-red-500 hover:text-red-700"
-                      >
-                        删除
-                      </button>
-                    </div>
-                    <Textarea
-                      rows={2}
-                      value={field.options.join("\n")}
-                      onChange={e => {
-                        const opts = e.target.value.split("\n").filter(Boolean);
-                        setSubjectConfigs(prev => ({
-                          ...prev,
-                          [activeConfigSubjectId]:
-                            prev[activeConfigSubjectId]?.map((f, i) => (i === idx ? { ...f, options: opts } : f)) || []
-                        }));
-                      }}
-                      className="font-mono text-[11px]"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 新增表现项目 */}
-            <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
-              <span className="text-xs font-bold">➕ 新增课堂表现项目</span>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Input
-                  placeholder="项目名称（例如：同伴协作探究）"
-                  value={newFieldLabel}
-                  onChange={e => setNewFieldLabel(e.target.value)}
-                  className="h-9 text-xs"
-                />
-                <Textarea
-                  rows={2}
-                  placeholder="下拉预设值（每行一个）&#10;积极主动&#10;配合投入&#10;需要引导"
-                  value={newFieldOptions}
-                  onChange={e => setNewFieldOptions(e.target.value)}
-                  className="text-xs"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const label = newFieldLabel.trim();
-                    const options = newFieldOptions
-                      .split("\n")
-                      .map(s => s.trim())
-                      .filter(Boolean);
-                    if (!label || !options.length) {
-                      showToast("请输入项目名称与至少一个预设值");
-                      return;
-                    }
-                    setSubjectConfigs(prev => ({
-                      ...prev,
-                      [activeConfigSubjectId]: [...(prev[activeConfigSubjectId] || []), { label, options }]
-                    }));
-                    setNewFieldLabel("");
-                    setNewFieldOptions("");
-                    showToast(`已成功添加「${label}」维度！`);
-                  }}
-                  className="border-indigo-300 font-bold text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300"
-                >
-                  + 添加课堂表现项目
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between border-t pt-2">
-              <span className="text-xs text-muted-foreground">
-                💡 保存后，返回【填写与生成】即可在打分台看到更新后的胶囊预设选项。
-              </span>
-              <Button
-                type="button"
-                onClick={async () => {
-                  await request
-                    .patch(`${base}/report-subjects/${activeConfigSubjectId}/performance-config`, {
-                      performanceConfig: subjectConfigs[activeConfigSubjectId] || []
-                    })
-                    .catch(() => null);
-                  showToast("🎉 课堂表现配置已保存！已同步生效至报告打分工作台。");
+            {configSubject && (
+              <SubjectPerformanceConfig
+                key={configSubject.id}
+                subject={{
+                  ...configSubject,
+                  performanceConfig: configSubject.performanceConfig ?? subjectConfigs[configSubject.id]
                 }}
-                className="bg-indigo-600 font-bold text-white shadow-md hover:bg-indigo-700"
-              >
-                保存课堂表现配置
-              </Button>
-            </div>
-          </div>
+                busy={false}
+                staged
+                onSave={async performanceConfig => {
+                  const updated = await request.patch<Subject, Subject>(
+                    `${base}/report-subjects/${configSubject.id}/performance-config`,
+                    { performanceConfig }
+                  );
+                  setSubjects(current => current.map(subject => (subject.id === updated.id ? updated : subject)));
+                  showToast("课堂表现配置已保存");
+                  return true;
+                }}
+              />
+            )}
+          </section>
         </main>
       )}
 

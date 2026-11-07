@@ -88,6 +88,16 @@ describe("batch report image export", () => {
     expect(revokeUrl).toHaveBeenCalledWith("blob:zip");
     trigger.remove();
   });
+  it("uses subject report share and public endpoints for a subject ZIP export", async () => {
+    const token = "s".repeat(43);
+    api.post.mockResolvedValue({ url: `/r/subject/${token}` });
+    await act(async () =>
+      root.render(<BatchReportImageDialog reports={[{ ...rows[0]!, share: null }]} subjectReport onClose={close} />)
+    );
+    expect(api.post).toHaveBeenCalledWith("/api/subject-reports/reports/report-0/shares");
+    expect(fetchReport).toHaveBeenCalledWith(`/api/public-reports/subject/${token}`, expect.anything());
+    expect(document.body.querySelector("a[download]")?.textContent).toContain("下载 1 份图片 ZIP");
+  });
   it("excludes revoked reports, states partial results and retries only failures", async () => {
     fetchReport.mockResolvedValueOnce({ ok: false, json: async () => ({ message: "报告链接已失效" }) });
     await render();

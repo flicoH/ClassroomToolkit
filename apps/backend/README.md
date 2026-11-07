@@ -13,21 +13,32 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 
 ## 功能模块
 
-| 模块       | 路由前缀            | 说明                                          |
-| ---------- | ------------------- | --------------------------------------------- |
-| 教师认证   | `/auth/teacher`     | 注册、登录、当前教师、退出登录                |
-| 班级与学生 | `/classes`          | 班级、学生、分组与批量导入                    |
-| 任务统计   | `/task-stats`       | 任务及学生完成状态                            |
-| 座位表     | `/seating-charts`   | 座位表、座位分配与随机打乱                    |
-| 随机点名   | `/random-picker`    | 班级数据、抽取与历史记录                      |
-| 倒计时     | `/countdown`        | 教师独立的倒计时状态                          |
-| 便签       | `/sticky-notes`     | 便签新增、编辑、置顶与删除                    |
-| 宠物积分   | `/pet-points`       | 积分调整、宠物、规则、奖励与兑换              |
-| 扭蛋奖励   | `/gacha-machine`    | 奖励 CRUD、抽奖与抽奖记录                     |
-| 学期报告   | `/semester-reports` | 学期/学科、课程资料解析、报告流程、分享与历史 |
-| 意见反馈   | `/feedback`         | 校验并保存当前教师的意见反馈                  |
-| 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                    |
-| 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置        |
+| 模块       | 路由前缀            | 说明                                                   |
+| ---------- | ------------------- | ------------------------------------------------------ |
+| 教师认证   | `/auth/teacher`     | 注册、登录、当前教师、退出登录                         |
+| 班级与学生 | `/classes`          | 班级、学生、分组与批量导入                             |
+| 任务统计   | `/task-stats`       | 任务及学生完成状态                                     |
+| 座位表     | `/seating-charts`   | 座位表、座位分配与随机打乱                             |
+| 随机点名   | `/random-picker`    | 班级数据、抽取与历史记录                               |
+| 倒计时     | `/countdown`        | 教师独立的倒计时状态                                   |
+| 便签       | `/sticky-notes`     | 便签新增、编辑、置顶与删除                             |
+| 宠物积分   | `/pet-points`       | 积分调整、宠物、规则、奖励与兑换                       |
+| 扭蛋奖励   | `/gacha-machine`    | 奖励 CRUD、抽奖与抽奖记录                              |
+| 学期报告   | `/semester-reports` | 学期/学科、课程资料解析、报告流程、分享与历史          |
+| 学科报告   | `/subject-reports`  | 独立学科报告主表、独立分享与事件流水，单学科报告全流程 |
+| 意见反馈   | `/feedback`         | 校验并保存当前教师的意见反馈                           |
+| 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                             |
+| 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置                 |
+
+学科报告生成可在 `studentFeedback[].attendances`（数组）或兼容字段 `studentFeedback[].attendance` 提交各课次出勤状态（`present`、`excused` 或 `late`，默认 `present`）。草稿编辑通过 `content.attendances` 及 `content.attendance` 修改。报告正文的 `attendances` 记录每次课程出勤，`courseContent` 初始来自生成时确认的教学内容，历史报告可从已有快照读取。草稿编辑可提交 `content.courseContent` 更新正文，省略时保留原文，空字符串清空，非字符串返回 400。生成学科报告复用学期报告的学生身份匹配、头像与周期截止宠物快照口径，积分流水使用匹配后的学生 ID 查询，避免旧 ID 导致数据缺失。草稿编辑保留这些服务端展示数据。头像匹配优先使用学生逻辑身份，并限定同一教师和班级。已有学科报告缺少头像时，列表、详情和公开页补充读取当前头像用于展示。此次变更使用既有 JSON 字段，无额外迁移。
+
+学科报告与学期报告工作台的学科设置相互独立：学科报告在 `subject_report_subjects` 表中独立维护学科、停用状态与课堂表现评价配置。教师在学科报告中新增、停用或配置学科，仅作用于学科报告工作台，不影响学期报告工作台；停用后该学科从学科报告新建选项中移除，已有学科报告和已上传 PDF 保留。已有学科报告草稿使用 `POST /subject-reports/reports/:id/course-documents/preview-scope`，由服务端按当前教师名下草稿的原学期和学科读取已确认资料，即使学科已停用。学期基础设置与课程资料继续共用。
+
+学科报告的 `GET /subject-reports/reports/:id/events` 返回当前教师报告的流程记录及中文操作名称。列表复制缺失链接时使用现有创建分享接口。
+
+学科报告分享默认复用学期报告的 `REPORT_SHARE_ENCRYPTION_KEY`（32 字节 base64）。已有 `SEMESTER_REPORT_SHARE_SECRET` 配置时继续优先使用旧学科密钥，以兼容已有链接。缺少有效密钥时发布失败并保留草稿状态。
+
+学科报告部署前应执行常规结构迁移（`pnpm --filter ClassRoomToolkitBackend migration:run`）。该迁移创建五张学科报告表（`subject_reports`、`subject_report_shares`、`subject_report_events`、`subject_report_token_calls`、`subject_report_subjects`），后端亦在模块初始化时具备自动建表与自愈能力，保留已有业务数据。如果开发环境的四个列表接口同时返回 `Cannot GET`，检查 Nest 编译日志并确认监听进程已重载当前分支。未登录访问受保护接口应返回 401。
 
 教师业务接口经过全局教师鉴权，查询和写入按 `teacher_id` 限定当前教师。`/admin/*` 使用独立管理员身份域，可查询全平台数据，但教师令牌不能访问；`/analytics/events` 仍要求教师身份，仅接收功能打开事件。
 

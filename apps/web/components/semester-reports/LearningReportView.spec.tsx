@@ -18,6 +18,60 @@ const report: LearningReportData = {
   }
 };
 it.each([false, true])(
+  "shows subject attendance and course content with a full-width performance section (image: %s)",
+  forImage => {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            attendance: "late",
+            courseContent: "第一课：颜色词汇\n第二课：情景对话",
+            reportSubjects: [{ subjectId: "english", name: "英语" }],
+            classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: [] }]
+          }
+        }}
+      />
+    );
+    expect(rendered.textContent).toContain("课程出勤情况");
+    expect(rendered.textContent).toContain("迟到");
+    expect(rendered.textContent).toContain("第一课：颜色词汇\n第二课：情景对话");
+    const performance = rendered.querySelector('[aria-label="分学科学习表现"]')!;
+    expect(performance.classList.contains("grid-cols-1")).toBe(true);
+    expect(performance.classList.contains("sm:grid-cols-2")).toBe(false);
+  }
+);
+
+it.each([false, true])("shows multiple lesson attendances when provided (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          attendances: ["present", "late"],
+          courseContent: "第 1 节课：字母认读\n第 2 节课：拼读练习",
+          reportSubjects: [{ subjectId: "english", name: "英语" }],
+          classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: [] }]
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("课程出勤情况");
+  expect(rendered.textContent).toContain("第 1 节课：");
+  expect(rendered.textContent).toContain("出勤");
+  expect(rendered.textContent).toContain("第 2 节课：");
+  expect(rendered.textContent).toContain("迟到");
+});
+
+it.each([false, true])(
   "places v2 classroom photos with captions below the header and before performance (image: %s)",
   forImage => {
     const rendered = document.createElement("div");
@@ -834,3 +888,116 @@ it("renders custom stage title even when period is 'term' if isStageReport and s
   expect(rendered.textContent).not.toContain("本阶段学习习惯与能力成长总结");
   expect(rendered.textContent).not.toContain("本阶段最值肯定");
 });
+
+it("groups course contents with their own attendance and omits empty growth assessment", () => {
+  const element = document.createElement("div");
+  element.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          courseContent: "第 1 节课 · 核心词汇：red\n第 2 节课 · 核心词汇：cat",
+          attendances: ["present", "late"],
+          growthAssessment: { learningReadiness: "  " }
+        }
+      }}
+    />
+  );
+  const lessons = element.querySelectorAll('[aria-label^="第 "][aria-label$=" 节课内容与出勤"]');
+  expect(lessons).toHaveLength(2);
+  expect(lessons[0]?.textContent).toContain("red");
+  expect(lessons[0]?.textContent).toContain("出勤");
+  expect(lessons[0]?.textContent).not.toContain("cat");
+  expect(lessons[1]?.textContent).toContain("cat");
+  expect(lessons[1]?.textContent).toContain("迟到");
+  expect(element.textContent).not.toContain("学习习惯与能力成长总结");
+});
+
+it.each([false, true])("shows legacy attendance on every course card (image: %s)", forImage => {
+  const element = document.createElement("div");
+  element.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          courseContent: "第 1 节课 · 核心词汇：red\n第 2 节课 · 核心词汇：cat",
+          attendance: "late",
+          attendances: ["late"]
+        }
+      }}
+    />
+  );
+  const lessons = element.querySelectorAll('[aria-label$="节课内容与出勤"]');
+  expect(lessons).toHaveLength(2);
+  for (const lesson of lessons) expect(lesson.textContent).toContain("课程出勤情况 · 迟到");
+});
+
+it.each([false, true])(
+  "places institution name in title and removes top header label for subject reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          studentName: "车奕扬",
+          period: "week",
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            reportDetails: {
+              institutionName: "WK课堂成长记录",
+              courseTheme: "探索",
+              lessonNumber: null,
+              lessonDate: null
+            }
+          }
+        }}
+      />
+    );
+    // Red box position (the top <p> tag with institution name) is removed
+    expect(element.querySelector("header p.font-semibold")).toBeNull();
+    // Yellow box position in h1 receives the institution name
+    const h1 = element.querySelector("h1");
+    expect(h1?.textContent?.replace(/\s+/g, " ").trim()).toBe("车奕扬 · WK课堂成长记录");
+    expect(element.textContent).not.toContain("每周成长报告");
+  }
+);
+
+it.each([false, true])(
+  "retains top header label and period name in title for normal semester reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          studentName: "车奕扬",
+          period: "week",
+          content: {
+            ...report.content,
+            reportDetails: {
+              institutionName: "WK课堂成长记录",
+              courseTheme: "探索",
+              lessonNumber: null,
+              lessonDate: null
+            }
+          }
+        }}
+      />
+    );
+    // Top header label exists
+    const topLabel = element.querySelector("header p.font-semibold");
+    expect(topLabel?.textContent).toBe("WK课堂成长记录");
+    // h1 title contains period name
+    const h1 = element.querySelector("h1");
+    expect(h1?.textContent?.replace(/\s+/g, " ").trim()).toBe("车奕扬 · 每周成长报告");
+  }
+);

@@ -110,7 +110,7 @@ export function parseReportDetails(
   return {
     institutionName,
     courseTheme,
-    lessonNumber: lessonNumber as number | null,
+    lessonNumber: lessonNumber,
     lessonDate,
   };
 }

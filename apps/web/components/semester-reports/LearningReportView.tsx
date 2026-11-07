@@ -1,3 +1,4 @@
+import { attendanceLabels, type CourseAttendanceStatus } from "./CourseAttendance";
 import { GrowthAssessmentView, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
@@ -24,6 +25,9 @@ export type LearningReportContent = {
   classroomPhotoCaptions?: string[];
   summary: string;
   courseOverview: string;
+  courseContent?: string;
+  attendance?: CourseAttendanceStatus;
+  attendances?: CourseAttendanceStatus[];
   strengths: ReportEntry[];
   areasToImprove: ReportEntry[];
   homeSuggestions: ReportEntry[];
@@ -48,6 +52,7 @@ export type LearningReportData = {
   term: string;
   period: string;
   isStageReport?: boolean;
+  isSubjectReport?: boolean;
   status?: string;
   stageCustomName?: string;
   start?: string;
@@ -127,6 +132,7 @@ export function learningSectionTitle(section: string) {
 export function LearningReportView({ report }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
   const details = content.reportDetails;
+  const isSubjectReport = Boolean(report.isSubjectReport || (report as { subjectReport?: boolean }).subjectReport);
   const classroomPhotos = reportClassroomPhotos(content);
   const photoCount = classroomPhotos.filter(Boolean).length;
   const sections = new Map<string, LearningContent[]>();
@@ -195,18 +201,22 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     <article className="mx-auto w-full min-w-0 max-w-4xl [overflow-wrap:anywhere] overflow-hidden rounded-3xl bg-white text-slate-900 shadow-xl shadow-violet-900/5">
       <header className="flex items-center justify-between gap-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 px-4 py-7 text-white sm:px-10 sm:py-12">
         <div className="min-w-0 flex-1">
-          <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
+          {!isSubjectReport && (
+            <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
+          )}
           <h1 className="text-2xl font-bold leading-snug sm:text-4xl">
             {report.studentName} ·{" "}
-            {details?.lessonNumber
-              ? `第${details.lessonNumber}次课`
-              : isStage && customStageTitle
-                ? customStageTitle.endsWith("报告")
-                  ? customStageTitle
-                  : `${customStageTitle}成长报告`
-                : isStage
-                  ? "阶段成长报告"
-                  : (periodNames[report.period] ?? "成长报告")}
+            {isSubjectReport
+              ? details?.institutionName || "课堂成长记录"
+              : details?.lessonNumber
+                ? `第${details.lessonNumber}次课`
+                : isStage && customStageTitle
+                  ? customStageTitle.endsWith("报告")
+                    ? customStageTitle
+                    : `${customStageTitle}成长报告`
+                  : isStage
+                    ? "阶段成长报告"
+                    : (periodNames[report.period] ?? "成长报告")}
           </h1>
           <p className="mt-3 text-sm text-indigo-100 sm:text-base">
             {details?.lessonDate
@@ -228,6 +238,53 @@ export function LearningReportView({ report }: { report: LearningReportData; for
       </header>
       <div className="space-y-4 p-3 sm:space-y-8 sm:p-9">
         {isV2 && classroomPhotoSection}
+        {/* 课次前缀沿用已有正文格式，无前缀的历史内容归入第一课。 */}
+        {(content.attendance || content.attendances?.length || content.courseContent?.trim()) &&
+          (() => {
+            const groups = new Map<number, string[]>();
+            for (const line of (content.courseContent ?? "").split("\n")) {
+              if (!line.trim()) continue;
+              const match = /^第\s*(\d+)\s*节课\s*[·：:]?\s*/.exec(line);
+              const lesson = match ? Number(match[1]) : 1;
+              const lines = groups.get(lesson) ?? [];
+              lines.push(match ? line.slice(match[0].length) : line);
+              groups.set(lesson, lines);
+            }
+            const count = Math.max(content.attendances?.length ?? 1, ...groups.keys());
+            return (
+              <section className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3 sm:p-6">
+                <h2 className="flex items-center gap-2 text-lg font-bold">
+                  <BookOpenText className="h-5 w-5 text-indigo-600" />
+                  课程内容
+                </h2>
+                {Array.from({ length: count }, (_, index) => {
+                  // 兼容旧报告的单一出勤值，后续课次也显示出勤徽章。
+                  const status = content.attendances?.[index] ?? content.attendance ?? content.attendances?.[0];
+                  return (
+                    <section
+                      key={index}
+                      aria-label={`第 ${index + 1} 节课内容与出勤`}
+                      className="space-y-2 rounded-xl border border-slate-100 bg-white p-3 sm:p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-semibold text-indigo-950">第 {index + 1} 节课：</h3>
+                        {status && (
+                          <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-800">
+                            课程出勤情况 · {attendanceLabels[status] ?? status}
+                          </span>
+                        )}
+                      </div>
+                      {groups.get(index + 1)?.length ? (
+                        <p className="whitespace-pre-wrap break-words leading-7 text-slate-700">
+                          {groups.get(index + 1)!.join("\n")}
+                        </p>
+                      ) : null}
+                    </section>
+                  );
+                })}
+              </section>
+            );
+          })()}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
@@ -268,7 +325,10 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
                 <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>
                 {classroomPerformanceSubjects.length > 0 && (
-                  <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                  <div
+                    aria-label="分学科学习表现"
+                    className={`grid gap-x-6 gap-y-3 ${content.courseContent !== undefined || content.attendance || (content.attendances && content.attendances.length > 0) ? "grid-cols-1" : "sm:grid-cols-2"}`}
+                  >
                     {classroomPerformanceSubjects.map(subject => {
                       const subjectEntries = validPerformanceEntries.filter(
                         item => item.subjectId === subject.subjectId
@@ -313,7 +373,10 @@ export function LearningReportView({ report }: { report: LearningReportData; for
                 )}
               </section>
             )}
-            <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
+            {(content.courseContent === undefined ||
+              Object.values(content.growthAssessment ?? {}).some(value => value?.trim())) && (
+              <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
+            )}
           </>
         )}
         {content.reportVersion !== "v2" && (

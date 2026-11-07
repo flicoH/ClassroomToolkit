@@ -18,16 +18,18 @@ type ExportReport = {
   status: string;
   share?: { url: string } | null;
 };
-type Props = { reports: ExportReport[]; onClose: () => void };
+type Props = { reports: ExportReport[]; onClose: () => void; subjectReport?: boolean };
 
 /** 串行加载公开发布快照并复用长图视图；单份失败继续处理，其余图片保留以便仅重试失败项。 */
-export function BatchReportImageDialog({ reports, onClose }: Props) {
+export function BatchReportImageDialog({ reports, onClose, subjectReport = false }: Props) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
   const files = useRef(new Map<string, ReportImageFile>());
   const [report, setReport] = useState<LearningReportData | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -86,12 +88,16 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
           if (item.status !== "published") throw new Error("请先发布报告。");
           const share =
             item.share ??
-            (await request.post<{ url: string }, { url: string }>(`/api/semester-reports/reports/${item.id}/shares`));
+            (await request.post<{ url: string }, { url: string }>(
+              `/api/${subjectReport ? "subject-reports" : "semester-reports"}/reports/${item.id}/shares`
+            ));
           if (cancelled) return;
           const path = new URL(share.url, window.location.origin).pathname;
-          const token = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path)?.[1];
+          const token = (
+            subjectReport ? /^\/r\/subject\/([A-Za-z0-9_-]{40,50})$/ : /^\/r\/([A-Za-z0-9_-]{40,50})$/
+          ).exec(path)?.[1];
           if (!token) throw new Error("报告链接无效，请重新发布。");
-          const response = await fetch(`/api/public-reports/${token}`, {
+          const response = await fetch(`/api/public-reports/${subjectReport ? "subject/" : ""}${token}`, {
             cache: "no-store",
             signal: controller.signal
           });
@@ -99,7 +105,12 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
           if (!response.ok) throw new Error(data.message || "报告链接无效或已失效。");
           if (cancelled) return;
           // 每次只挂载一份报告，避免整班的照片和 DOM 同时占用内存。
-          flushSync(() => setReport(data as LearningReportData));
+          flushSync(() =>
+            setReport({
+              ...(data as LearningReportData),
+              isSubjectReport: subjectReport || Boolean((data as LearningReportData).isSubjectReport)
+            })
+          );
           const blob = await renderReportImage(reportRef.current!);
           if (cancelled) return;
           const total = [...files.current.values()].reduce((size, file) => size + file.blob.size, 0);
@@ -142,7 +153,7 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
       controller.abort();
       if (archiveUrl) URL.revokeObjectURL(archiveUrl);
     };
-  }, [reports, attempt]);
+  }, [reports, attempt, subjectReport]);
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-3 sm:p-4">

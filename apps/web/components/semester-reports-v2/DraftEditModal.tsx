@@ -6,6 +6,12 @@ import type {
   LearningReportData,
   ReportEntry
 } from "@/components/semester-reports/LearningReportView";
+import {
+  SubjectLessonFields,
+  SubjectLessonPdfFill,
+  subjectLessonCategories
+} from "@/components/subject-reports/SubjectLessonPdfFill";
+import { CourseAttendance, type CourseAttendanceStatus } from "@/components/semester-reports/CourseAttendance";
 import { LearningReportView } from "@/components/semester-reports/LearningReportView";
 import { ReportHistory } from "@/components/semester-reports/ReportHistory";
 import { V2ClassroomPerformance, type V2Subject, type PerformanceRating } from "./V2ClassroomPerformance";
@@ -30,6 +36,7 @@ export type DraftModalReport = {
   endDate?: string;
   reportVersion?: "v1" | "v2";
   isStageReport?: boolean;
+  isSubjectReport?: boolean;
   stageCustomName?: string;
   content: LearningReportContent;
 };
@@ -75,9 +82,121 @@ function replaceStageTerms<T>(data: T, customName?: string): T {
   return data;
 }
 
+type SubjectDraftPdf = { draftId: string; termId: string; subjectId: string; hasDocuments: boolean; units: string[] };
+
+const lessonPrefix = /^第\s*(\d+)\s*节课\s*·\s*/;
+
+function courseLineLesson(line: string) {
+  return Number(lessonPrefix.exec(line)?.[1] ?? 1);
+}
+
+const lessonFieldPrefixes = subjectLessonCategories.map(category => `${category}：`);
+
+function readLessonFields(content: string) {
+  const lines = content.split("\n");
+  return {
+    fields: lessonFieldPrefixes.map(prefix =>
+      lines
+        .filter(line => line.startsWith(prefix))
+        .map(line => line.slice(prefix.length))
+        .join("\n")
+    ),
+    other: lines.filter(line => !lessonFieldPrefixes.some(prefix => line.startsWith(prefix))).join("\n")
+  };
+}
+
+function writeLessonFields(fields: string[], other: string) {
+  return [
+    other,
+    ...fields.flatMap((value, index) => (value ? value.split("\n").map(line => lessonFieldPrefixes[index] + line) : []))
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function SubjectDraftLessonContent({
+  lesson,
+  value,
+  onChange,
+  pdf,
+  period
+}: {
+  lesson: number;
+  value: string;
+  onChange: (update: (current: string) => string) => void;
+  pdf?: SubjectDraftPdf;
+  period: DraftModalReport["period"];
+}) {
+  const [scope, setScope] = useState("");
+  const lastImport = useRef<string[]>([]);
+  const manuallyEdited = useRef(new Set<number>());
+  const { fields, other } = readLessonFields(value);
+  const [showOther] = useState(Boolean(other));
+  const otherId = lesson === 1 ? "subject-draft-course-content" : `subject-draft-legacy-content-${lesson}`;
+  const id = lesson === 1 ? "subject-draft-course-content" : `subject-draft-course-content-${lesson}`;
+  return (
+    <div className="space-y-2">
+      {pdf && (
+        <SubjectLessonPdfFill
+          {...pdf}
+          period={period}
+          scope={scope}
+          onScopeChange={setScope}
+          onFill={groups => {
+            const imported = groups.map(lines => lines.join("\n"));
+            const previousImport = lastImport.current;
+            const edited = new Set(manuallyEdited.current);
+            lastImport.current = imported;
+            onChange(current => {
+              const { fields, other } = readLessonFields(current);
+              // PDF 只更新空字段或上次带入的值，保留教师填写的字段。
+              return writeLessonFields(
+                fields.map((value, index) =>
+                  !edited.has(index) && (!value || value === previousImport[index]) ? (imported[index] ?? "") : value
+                ),
+                other
+              );
+            });
+          }}
+        />
+      )}
+      <SubjectLessonFields
+        id={id}
+        values={fields}
+        onChange={(index, value) => {
+          manuallyEdited.current.add(index);
+          onChange(current => {
+            const { fields, other } = readLessonFields(current);
+            fields[index] = value;
+            return writeLessonFields(fields, other);
+          });
+        }}
+      />
+      {showOther && (
+        <div>
+          <label htmlFor={otherId} className="block text-[11px] font-medium text-muted-foreground">
+            原有课程内容
+          </label>
+          <Textarea
+            id={otherId}
+            value={other}
+            onChange={event => {
+              const text = event.target.value;
+              onChange(current => writeLessonFields(readLessonFields(current).fields, text));
+            }}
+            rows={4}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DraftEditModal({
   report,
   allAvailableSubjects,
+  subjectReport = false,
+  subjectPdf,
   isOpen,
   onClose,
   onSave,
@@ -86,6 +205,8 @@ export function DraftEditModal({
 }: {
   report: DraftModalReport;
   allAvailableSubjects: V2Subject[];
+  subjectReport?: boolean;
+  subjectPdf?: SubjectDraftPdf;
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedContent: LearningReportContent) => Promise<boolean | void>;
@@ -107,8 +228,27 @@ export function DraftEditModal({
       (baseContent as { stageCustomName?: string })?.stageCustomName ||
       (baseContent as { stageTitle?: string })?.stageTitle;
 
+    // 旧报告可能只有一项出勤，课程正文中的后续课次仍须完整展示。
+    let initialAttendances = baseContent.attendances;
+    if (subjectReport) {
+      const lessonNumbers = [...(baseContent.courseContent ?? "").matchAll(/^第\s*(\d+)\s*节课/gm)]
+        .map(match => Number(match[1]))
+        .filter(number => number >= 1 && number <= 30);
+      const count = Math.max(1, initialAttendances?.length ?? 0, ...lessonNumbers);
+      initialAttendances = Array.from(
+        { length: count },
+        (_, index) => baseContent.attendances?.[index] ?? baseContent.attendance ?? "present"
+      );
+    }
+
     let resContent: LearningReportContent = {
       ...baseContent,
+      ...(subjectReport
+        ? {
+            attendance: initialAttendances?.[0] ?? baseContent.attendance ?? "present",
+            attendances: initialAttendances ?? [baseContent.attendance ?? "present"]
+          }
+        : {}),
       reportVersion,
       summary: baseContent.summary || "",
       areasToImprove: normalizedAreas,
@@ -142,7 +282,8 @@ export function DraftEditModal({
   const [addSubjectDropdownOpen, setAddSubjectDropdownOpen] = useState(false);
   const [subjectBusy, setSubjectBusy] = useState(false);
   const [subjectError, setSubjectError] = useState<string | null>(null);
-  const persistSubjects = isV2 && !report.id.startsWith("gen-");
+  // 学科报告的修改由工作台统一保存，避免调用学期报告的学科接口。
+  const persistSubjects = !subjectReport && isV2 && !report.id.startsWith("gen-");
   const [mobileTab, setMobileTab] = useState<"edit" | "preview">("edit");
   const [photoError, setPhotoError] = useState<string | null>(null);
 
@@ -153,20 +294,22 @@ export function DraftEditModal({
     "探究实验细致入微，善于观察并提出启发性问题！"
   ];
 
-  // 每次打开或重选 report 时同步
-  useEffect(() => {
+  const [prevReport, setPrevReport] = useState(report);
+  if (report !== prevReport) {
+    setPrevReport(report);
     setContent(normalizeContent(report.content, report.reportVersion));
     if (report.content.reportSubjects?.[0]?.subjectId) {
       setActiveSubjectId(report.content.reportSubjects[0].subjectId);
     }
     setShowHistory(false);
-    setMobileTab("edit");
+    setMobileTab(report.status === "published" ? "preview" : "edit");
     setPhotoError(null);
-  }, [report]);
+  }
 
   // 草稿积分允许实时从详情刷新，但不能用详情响应覆盖老师正在编辑的寄语、评价或照片说明
   useEffect(() => {
-    if (!isOpen || !report.id || report.id.startsWith("gen-") || !isV2 || report.status !== "draft") return;
+    if (subjectReport || !isOpen || !report.id || report.id.startsWith("gen-") || !isV2 || report.status !== "draft")
+      return;
     let cancelled = false;
     request
       .get<{ content?: LearningReportContent }, { content?: LearningReportContent }>(`${base}/reports/${report.id}`, {
@@ -186,7 +329,7 @@ export function DraftEditModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, report.id, isV2, report.status]);
+  }, [subjectReport, isOpen, report.id, isV2, report.status]);
 
   // 监听 Escape 键关闭
   useEffect(() => {
@@ -463,6 +606,7 @@ export function DraftEditModal({
       className: report.className,
       period: report.isStageReport || report.period === "stage" ? "stage" : report.period,
       isStageReport: report.isStageReport ?? report.period === "stage",
+      isSubjectReport: subjectReport || Boolean(report.isSubjectReport),
       stageCustomName: report.stageCustomName || content.stageCustomName || content.stageTitle,
       term: content.reportDetails?.institutionName || "课堂成长记录",
       subject: (content.reportSubjects || []).map(s => s.name).join("、") || "综合",
@@ -476,7 +620,7 @@ export function DraftEditModal({
         reportVersion: isV2 ? "v2" : undefined
       }
     };
-  }, [report, content, isV2]);
+  }, [report, content, isV2, subjectReport]);
 
   if (!isOpen) return null;
 
@@ -484,7 +628,7 @@ export function DraftEditModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`${report.studentName}的学期报告草稿编辑`}
+      aria-label={`${report.studentName}的${report.status === "published" ? "报告内容与流程" : "学期报告草稿编辑"}`}
       onMouseDown={e => e.stopPropagation()}
       onClick={e => {
         if (e.target === e.currentTarget) onClose();
@@ -497,8 +641,14 @@ export function DraftEditModal({
           <div className="flex items-center gap-2.5">
             <div>
               <h2 className="flex items-center gap-2 text-sm font-bold sm:text-base">
-                <span>{report.studentName} · 报告草稿微调</span>
-                {report.isStageReport || report.period === "stage" ? (
+                <span>
+                  {report.studentName} · {report.status === "published" ? "报告内容与流程" : "报告草稿微调"}
+                </span>
+                {report.status === "published" ? (
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    已发布 (公开)
+                  </span>
+                ) : report.isStageReport || report.period === "stage" ? (
                   <span className="rounded-full border border-purple-200 bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-700 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-300">
                     ✨ AI 阶段汇总草稿
                   </span>
@@ -509,7 +659,9 @@ export function DraftEditModal({
                 )}
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground hidden sm:block">
-                所填内容实时镜像同步至右侧 1:1 家长端长图；支持历史修订对比与一键还原
+                {report.status === "published"
+                  ? "查看已发布报告详情与 1:1 家长端效果；如需修改可先撤回为草稿"
+                  : "所填内容实时镜像同步至右侧 1:1 家长端长图；支持历史修订对比与一键还原"}
               </p>
             </div>
           </div>
@@ -541,17 +693,19 @@ export function DraftEditModal({
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowHistory(prev => !prev)}
-              className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
-            >
-              <History className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{showHistory ? "隐藏历史流水" : "流程记录与版本恢复"}</span>
-              <span className="sm:hidden">历史</span>
-            </Button>
+            {!subjectReport && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowHistory(prev => !prev)}
+                className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+              >
+                <History className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{showHistory ? "隐藏历史流水" : "流程记录与版本恢复"}</span>
+                <span className="sm:hidden">历史</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -609,6 +763,123 @@ export function DraftEditModal({
             {/* 报告基本信息 */}
             <div className="space-y-3 rounded-xl border bg-background p-3.5">
               <span className="text-xs font-bold text-foreground">报告抬头与课程</span>
+              {subjectReport && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground">每次课程出勤情况</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContent(current => {
+                          const currentList =
+                            current.attendances && current.attendances.length > 0
+                              ? [...current.attendances]
+                              : [current.attendance ?? "present"];
+                          const updated = [...currentList, "present" as CourseAttendanceStatus];
+                          return {
+                            ...current,
+                            attendances: updated,
+                            attendance: updated[0] ?? "present"
+                          };
+                        });
+                      }}
+                      className="text-[11px] font-medium text-primary hover:underline"
+                    >
+                      + 添加课程
+                    </button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(content.attendances && content.attendances.length > 0
+                      ? content.attendances
+                      : [content.attendance ?? "present"]
+                    ).map((att, idx, arr) => (
+                      <div key={idx} className="min-w-0 space-y-2 rounded-lg border p-2.5">
+                        <SubjectDraftLessonContent
+                          key={arr.length}
+                          lesson={idx + 1}
+                          period={report.period}
+                          pdf={subjectPdf}
+                          value={(content.courseContent ?? "")
+                            .split("\n")
+                            .filter(line => courseLineLesson(line) === idx + 1)
+                            .map(line => line.replace(lessonPrefix, ""))
+                            .join("\n")}
+                          onChange={update =>
+                            setContent(current => {
+                              // 沿用报告正文的课次前缀，兼容已有预览和保存接口。
+                              const lesson = idx + 1;
+                              const lines = (current.courseContent ?? "").split("\n");
+                              const ownLines = lines.filter(line => courseLineLesson(line) === lesson);
+                              const text = update(ownLines.map(line => line.replace(lessonPrefix, "")).join("\n"));
+                              const prefix =
+                                lesson > 1 || ownLines.some(line => lessonPrefix.test(line))
+                                  ? `第 ${lesson} 节课 · `
+                                  : "";
+                              const rest = lines.filter(line => courseLineLesson(line) !== lesson);
+                              const next = text ? [...rest, ...text.split("\n").map(line => prefix + line)] : rest;
+                              next.sort((a, b) => courseLineLesson(a) - courseLineLesson(b));
+                              return { ...current, courseContent: next.join("\n") };
+                            })
+                          }
+                        />
+                        <div className="flex-1">
+                          <CourseAttendance
+                            label={arr.length > 1 ? `第 ${idx + 1} 节课出勤情况` : "课程出勤情况"}
+                            value={att}
+                            onChange={newAtt => {
+                              setContent(current => {
+                                const currentList =
+                                  current.attendances && current.attendances.length > 0
+                                    ? [...current.attendances]
+                                    : [current.attendance ?? "present"];
+                                currentList[idx] = newAtt;
+                                return {
+                                  ...current,
+                                  attendances: currentList,
+                                  attendance: currentList[0] ?? newAtt
+                                };
+                              });
+                            }}
+                          />
+                        </div>
+                        {arr.length > 1 && (
+                          <button
+                            type="button"
+                            aria-label={`删除第 ${idx + 1} 节课`}
+                            className="mb-1 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => {
+                              setContent(current => {
+                                const currentList = (
+                                  current.attendances && current.attendances.length > 0
+                                    ? current.attendances
+                                    : [current.attendance ?? "present"]
+                                ).filter((_, i) => i !== idx);
+                                return {
+                                  ...current,
+                                  attendances: currentList.length ? currentList : ["present"],
+                                  courseContent: (current.courseContent ?? "")
+                                    .split("\n")
+                                    .filter(line => courseLineLesson(line) !== idx + 1)
+                                    .map(line => {
+                                      const lesson = courseLineLesson(line);
+                                      return lesson > idx + 1
+                                        ? line.replace(lessonPrefix, `第 ${lesson - 1} 节课 · `)
+                                        : line;
+                                    })
+                                    .join("\n"),
+                                  attendance: currentList[0] ?? "present"
+                                };
+                              });
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="grid gap-2.5 sm:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-muted-foreground">报告抬头</label>
@@ -1070,26 +1341,30 @@ export function DraftEditModal({
           </Button>
 
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={busy || subjectBusy}
-              onClick={() => onSave({ ...content, reportVersion: isV2 ? "v2" : undefined })}
-              className="h-8 sm:h-9 border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 text-xs sm:text-sm"
-            >
-              保存草稿
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy || subjectBusy}
-              onClick={() => onPublish({ ...content, reportVersion: isV2 ? "v2" : undefined })}
-              className="h-8 sm:h-9 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-xs sm:text-sm"
-            >
-              <Sparkles className="mr-1 h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span>审核通过并发布</span>
-            </Button>
+            {report.status !== "published" && (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || subjectBusy}
+                  onClick={() => onSave({ ...content, reportVersion: isV2 ? "v2" : undefined })}
+                  className="h-8 sm:h-9 border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 text-xs sm:text-sm"
+                >
+                  保存草稿
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy || subjectBusy}
+                  onClick={() => onPublish({ ...content, reportVersion: isV2 ? "v2" : undefined })}
+                  className="h-8 sm:h-9 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-xs sm:text-sm"
+                >
+                  <Sparkles className="mr-1 h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span>审核通过并发布</span>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>

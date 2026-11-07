@@ -18,6 +18,7 @@ import { TaskStatsModule } from './task-stats/task-stats.module';
 import { AuthModule } from './auth/auth.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { SemesterReportsModule } from './semester-reports/semester-reports.module';
+import { SubjectReportsModule } from './subject-reports/subject-reports.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { SemesterReportsModule } from './semester-reports/semester-reports.modul
     PetPointsModule,
     GachaMachineModule,
     SemesterReportsModule,
+    SubjectReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

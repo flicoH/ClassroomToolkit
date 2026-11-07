@@ -895,7 +895,7 @@ export class AdminDatabase {
             snapshotObj = null;
           }
         } else if (row.snapshot && typeof row.snapshot === 'object') {
-          snapshotObj = row.snapshot as Record<string, unknown>;
+          snapshotObj = row.snapshot;
         }
 
         let callsCount = Number(row.callsCount || 0);

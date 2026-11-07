@@ -227,6 +227,70 @@ describe('report generation input', () => {
     return { service, internals, reports };
   }
 
+  it('reads a public subject report portrait using its verified owner without a login session', async () => {
+    const { service } = setup();
+    const internals = service as unknown as {
+      teacher: { teacherId: string };
+      students: { find: jest.Mock };
+      studentProfiles: { findOne: jest.Mock };
+    };
+    Object.defineProperty(internals.teacher, 'teacherId', {
+      get: () => {
+        throw new Error('未登录');
+      },
+      configurable: true,
+    });
+    internals.students.find = jest.fn().mockResolvedValue([
+      {
+        id: 'teacher:old',
+        logicalId: 'teacher:roster',
+        classId: 'class',
+        studentNo: '',
+      },
+    ]);
+    internals.studentProfiles.findOne.mockImplementation(async ({ where }) =>
+      where.teacherId === 'teacher' &&
+      where.classroomId === 'class' &&
+      where.id === 'roster'
+        ? { photo: 'public-portrait' }
+        : null,
+    );
+    await expect(
+      service.subjectReportStudent('roster', 'teacher'),
+    ).resolves.toMatchObject({ studentPhoto: 'public-portrait' });
+    expect(internals.students.find).toHaveBeenCalledWith({
+      where: { teacherId: 'teacher' },
+    });
+  });
+
+  it('uses the logical roster identity for a subject report portrait without a school number', async () => {
+    const { service, internals } = setup();
+    internals.findStudents.mockResolvedValue([
+      {
+        id: 'teacher:old-pet-id',
+        logicalId: 'teacher:roster-id',
+        name: '学生一',
+        studentNo: '',
+        classId: 'class',
+      },
+    ]);
+    const profiles = (
+      service as unknown as { studentProfiles: { findOne: jest.Mock } }
+    ).studentProfiles;
+    profiles.findOne.mockImplementation(async ({ where }) =>
+      where.id === 'roster-id' &&
+      where.teacherId === 'teacher' &&
+      where.classroomId === 'class'
+        ? { photo: 'data:image/jpeg;base64,portrait' }
+        : null,
+    );
+    const result = await service.subjectReportPresentation(
+      'roster-id',
+      new Date('2026-09-27T16:00:00Z'),
+    );
+    expect(result.studentPhoto).toBe('data:image/jpeg;base64,portrait');
+  });
+
   it('snapshots each owned student portrait and preserves it on regeneration, including absence', async () => {
     const { service, internals, reports } = setup();
     internals.findStudents.mockResolvedValue([
