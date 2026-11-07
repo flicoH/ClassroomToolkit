@@ -88,6 +88,32 @@ describe("batch report image export", () => {
     expect(revokeUrl).toHaveBeenCalledWith("blob:zip");
     trigger.remove();
   });
+  it("keeps the ready ZIP alive when the parent recreates the selected report array", async () => {
+    await render();
+    const link = document.body.querySelector<HTMLAnchorElement>("a[download]")!;
+    await render(rows.map(row => ({ ...row })));
+    expect(revokeUrl).not.toHaveBeenCalled();
+    expect(createUrl).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector("a[download]")).toBe(link);
+    expect(link.getAttribute("href")).toBe("blob:zip");
+    expect(fetchReport).toHaveBeenCalledTimes(2);
+  });
+  it("does not cancel an in-flight export on an unrelated parent render", async () => {
+    let finish!: (blob: Blob) => void;
+    raster.renderReportImage.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    await render();
+    await render([...rows]);
+    expect(fetchReport).toHaveBeenCalledTimes(1);
+    expect(fetchReport.mock.calls[0]![1].signal.aborted).toBe(false);
+    await act(async () => finish(new NodeBlob(["png"]) as Blob));
+    expect(raster.renderReportImage).toHaveBeenCalledTimes(2);
+    expect(document.body.querySelector("a[download]")?.textContent).toContain("下载 2 份图片 ZIP");
+  });
   it("excludes revoked reports, states partial results and retries only failures", async () => {
     fetchReport.mockResolvedValueOnce({ ok: false, json: async () => ({ message: "报告链接已失效" }) });
     await render();

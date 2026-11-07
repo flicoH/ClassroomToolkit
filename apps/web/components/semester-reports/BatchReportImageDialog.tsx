@@ -21,7 +21,9 @@ type ExportReport = {
 type Props = { reports: ExportReport[]; onClose: () => void };
 
 /** 串行加载公开发布快照并复用长图视图；单份失败继续处理，其余图片保留以便仅重试失败项。 */
-export function BatchReportImageDialog({ reports, onClose }: Props) {
+export function BatchReportImageDialog({ reports: selectedReports, onClose }: Props) {
+  // 固定本次导出清单；父页面重绘会重建筛选数组，不能因此取消生成或撤销 ZIP 下载地址。
+  const [reports] = useState(() => [...selectedReports]);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
