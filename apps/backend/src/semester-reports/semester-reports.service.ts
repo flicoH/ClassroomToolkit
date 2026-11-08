@@ -84,13 +84,21 @@ import {
 
 const periods = ['week', 'month', 'term'] as const;
 
+/** 调度器传给报告生成的已解析上下文，执行时间已转换为 Date。 */
 type ScheduledReportOptions = {
+  /** 调度任务稳定标识，用于关联生成记录。 */
   taskId: string;
+  /** 任务展示名称。 */
   name: string;
+  /** 班级范围标识，不替代教师归属校验。 */
   classId: string;
+  /** 计划执行时刻；请求结构兼容 ISO 文本，内部结构使用 Date。 */
   executeAt: Date;
+  /** 调度重复规则，缺省表示单次执行。 */
   repeatType?: 'none' | 'weekly' | 'monthly';
+  /** 教师指定的阶段称谓，用于替换报告中的周期文案。 */
   stageCustomName?: string;
+  /** 固定本次执行的学生身份映射，避免同名学生串联。 */
   selectedStudents?: Array<{
     requestedId: string;
     studentId: string;
@@ -98,15 +106,25 @@ type ScheduledReportOptions = {
   }>;
 };
 
+/** 定时任务持久化输入的兼容结构；可选旧字段须在执行边界再次校验。 */
 interface ScheduledTaskPayload {
+  /** 调度任务稳定标识，用于关联生成记录。 */
   taskId?: string;
+  /** 旧任务记录的兼容 ID，读取时与 taskId 统一。 */
   id?: string;
+  /** 任务展示名称。 */
   name?: string;
+  /** 班级范围标识，不替代教师归属校验。 */
   classId?: string;
+  /** 教师指定的阶段称谓，用于替换报告中的周期文案。 */
   stageCustomName?: string;
+  /** 旧客户端阶段称谓，兼容读取后统一到 stageCustomName。 */
   stageTitle?: string;
+  /** 计划执行时刻；请求结构兼容 ISO 文本，内部结构使用 Date。 */
   executeAt?: string | Date;
+  /** 调度重复规则，缺省表示单次执行。 */
   repeatType?: string;
+  /** 固定本次执行的学生身份映射，避免同名学生串联。 */
   selectedStudents?: unknown[];
 }
 
@@ -226,13 +244,24 @@ export class SemesterReportsService {
 
   async listTerms() {
     return this.terms.find({
-      where: { teacherId: this.teacher.teacherId },
+      where: { teacherId: this.teacher.teacherId, enabled: true },
       order: { startDate: 'DESC' },
     });
   }
-  async listSubjects() {
+  async listSubjects(query?: { termId?: string }) {
+    const termId = typeof query?.termId === 'string' ? query.termId.trim() : '';
+    const where = termId
+      ? [
+          { teacherId: this.teacher.teacherId, enabled: true, termId },
+          {
+            teacherId: this.teacher.teacherId,
+            enabled: true,
+            termId: IsNull(),
+          },
+        ]
+      : { teacherId: this.teacher.teacherId, enabled: true };
     const subjects = await this.subjects.find({
-      where: { teacherId: this.teacher.teacherId, enabled: true },
+      where,
       order: { name: 'ASC' },
     });
     return subjects.map((subject) => ({
@@ -240,6 +269,17 @@ export class SemesterReportsService {
       performanceConfig:
         subject.performanceConfig ?? defaultPerformanceConfig(),
     }));
+  }
+
+  /** 教师归属参与更新条件；重复停用不删除历史学期记录。 */
+  async deleteTerm(id: string) {
+    // 只停用学期，保留报告、分享和课程资料的关联。
+    const result = await this.terms.update(
+      { id, teacherId: this.teacher.teacherId },
+      { enabled: false },
+    );
+    if (!result.affected) throw new NotFoundException('学期不存在');
+    return { deleted: true };
   }
 
   async createTerm(input: Record<string, string>) {
@@ -255,6 +295,7 @@ export class SemesterReportsService {
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
         name: input.name.trim().slice(0, 100),
+        enabled: true,
         startDate: input.startDate,
         endDate: input.endDate,
       }),
@@ -263,15 +304,38 @@ export class SemesterReportsService {
 
   async createSubject(input: Record<string, string>) {
     if (!input.name?.trim()) throw new BadRequestException('请填写学科名称');
+    const termId = typeof input.termId === 'string' ? input.termId.trim() : '';
+    if (!termId && this.terms && typeof this.terms.count === 'function') {
+      const hasTerms = await this.terms.count({
+        where: { teacherId: this.teacher.teacherId, enabled: true },
+      });
+      if (hasTerms > 0) {
+        throw new BadRequestException('请选择所属学期');
+      }
+    } else if (termId) {
+      await this.requireTerm(termId);
+    }
     return this.subjects.save(
       this.subjects.create({
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
+        termId: termId || null,
         name: input.name.trim().slice(0, 100),
         enabled: true,
         performanceConfig: defaultPerformanceConfig(),
       }),
     );
+  }
+
+  /** 使用独立学科仓库，避免停用学科报告工作台中的同名学科。 */
+  async deleteSubject(id: string) {
+    // 仅停用本工作台学科，已有报告和资料继续保留关联。
+    const result = await this.subjects.update(
+      { id, teacherId: this.teacher.teacherId },
+      { enabled: false },
+    );
+    if (!result.affected) throw new NotFoundException('学科不存在');
+    return { deleted: true };
   }
 
   async updateSubjectPerformance(id: string, input: Record<string, unknown>) {
@@ -415,11 +479,15 @@ export class SemesterReportsService {
     return { deleted: true };
   }
 
-  async preview(input: Record<string, unknown>) {
+  async preview(
+    input: Record<string, unknown>,
+    options: { skipSubjectValidation?: boolean } = {},
+  ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
     const term = await this.requireTerm(termId);
-    if (subjectId !== '*') await this.requireSubject(subjectId);
+    if (subjectId !== '*' && !options.skipSubjectValidation)
+      await this.requireSubject(subjectId);
     if (
       start < shanghaiMidnight(term.startDate) ||
       end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
@@ -430,6 +498,8 @@ export class SemesterReportsService {
       termId,
       subjectId,
       period,
+      undefined,
+      options,
     );
     const students = await this.findStudents(studentIds);
     const summaries = await Promise.all(
@@ -466,16 +536,20 @@ export class SemesterReportsService {
     input: Record<string, unknown>,
     options: {
       allowDisabledSubject?: boolean;
+      /** 仅由已校验归属的历史草稿调用方启用，新建流程保持禁用。 */
+      allowDisabledTerm?: boolean;
       skipSubjectValidation?: boolean;
     } = {},
   ) {
     const period = input.period as (typeof periods)[number];
     if (!periods.includes(period))
       throw new BadRequestException('请选择报告周期');
-    const termId = String(input.termId ?? '');
+    const termId = String((input.termId ?? '') as string);
     const subjectId =
-      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
-    await this.requireTerm(termId);
+      input.reportVersion === 'v2'
+        ? '*'
+        : String((input.subjectId ?? '') as string);
+    await this.requireTerm(termId, options.allowDisabledTerm);
     if (input.reportVersion !== 'v2' && !options.skipSubjectValidation)
       await this.requireSubject(subjectId, options.allowDisabledSubject);
     const courses = await this.selectedCourses(
@@ -483,6 +557,8 @@ export class SemesterReportsService {
       termId,
       subjectId,
       period,
+      undefined,
+      options,
     );
     const { selected, learningContents, courseScope: scope } = courses;
     return {
@@ -612,7 +688,7 @@ export class SemesterReportsService {
     }
     const students = await this.findStudents(studentIds);
     const stageCustomName = String(
-      scheduled?.stageCustomName ?? input.stageCustomName ?? '',
+      (scheduled?.stageCustomName ?? input.stageCustomName ?? '') as string,
     )
       .trim()
       .slice(0, 50);
@@ -648,10 +724,10 @@ export class SemesterReportsService {
         error instanceof Error ? error.message : '报告输入无效',
       );
     }
-    const keyword = String(input.keywords ?? '')
+    const keyword = String((input.keywords ?? '') as string)
       .trim()
       .slice(0, 1000);
-    const observation = String(input.teacherObservation ?? '')
+    const observation = String((input.teacherObservation ?? '') as string)
       .trim()
       .slice(0, 3000);
     const isV2 = input.reportVersion === 'v2';
@@ -841,7 +917,7 @@ export class SemesterReportsService {
    */
   async createScheduledTask(input: Record<string, unknown>) {
     await this.assertAiReportPermission();
-    const executeAt = new Date(String(input.executeAt ?? ''));
+    const executeAt = new Date(String((input.executeAt ?? '') as string));
     if (
       Number.isNaN(executeAt.getTime()) ||
       executeAt.getTime() < Date.now() + 5000 ||
@@ -850,21 +926,21 @@ export class SemesterReportsService {
       throw new BadRequestException(
         '云端执行时间必须晚于当前时间且不超过 400 天',
       );
-    const name = String(input.name ?? '')
+    const name = String((input.name ?? '') as string)
       .trim()
       .slice(0, 100);
     if (!name) throw new BadRequestException('请填写定时任务名称');
     const taskId = randomUUID();
-    const classId = String(input.classId ?? 'all').slice(0, 64);
-    const rawRepeat = String(input.repeatType ?? 'none');
+    const classId = String((input.classId ?? 'all') as string).slice(0, 64);
+    const rawRepeat = String((input.repeatType ?? 'none') as string);
     const repeatType = (
       ['none', 'weekly', 'monthly'].includes(rawRepeat) ? rawRepeat : 'none'
     ) as 'none' | 'weekly' | 'monthly';
-    const periodPreset = String(input.periodPreset ?? '');
+    const periodPreset = String((input.periodPreset ?? '') as string);
     const isSemesterReport =
       periodPreset === 'current-term' || input.isSemesterReport === true;
     const stageCustomName = String(
-      input.stageCustomName ?? input.stageTitle ?? '',
+      (input.stageCustomName ?? input.stageTitle ?? '') as string,
     )
       .trim()
       .slice(0, 50);
@@ -1319,16 +1395,19 @@ export class SemesterReportsService {
       })
       .andWhere('report.status != :deleted', { deleted: 'deleted' })
       .andWhere('report.id IN (:...ids)', { ids })
-      .getRawAndEntities();
+      .getRawAndEntities<{
+        summary_snapshot: Record<string, unknown> | string | null;
+      }>();
     const summaries = await Promise.all(
       entities.map(async (r, index) => {
         // MySQL driver versions return JSON projections as either text or objects.
-        const value = raw[index].summary_snapshot;
-        const metadata =
-          (typeof value === 'string' ? JSON.parse(value) : value) ?? {};
+        const value = raw[index]!.summary_snapshot;
+        const metadata = ((typeof value === 'string'
+          ? JSON.parse(value)
+          : value) ?? {}) as Record<string, unknown>;
         const scheduledTask =
           typeof metadata.scheduledTask === 'string'
-            ? JSON.parse(metadata.scheduledTask)
+            ? (JSON.parse(metadata.scheduledTask) as unknown)
             : metadata.scheduledTask;
         const stageCustomName =
           (scheduledTask as { stageCustomName?: string } | undefined)
@@ -1341,9 +1420,9 @@ export class SemesterReportsService {
             ...metadata,
             scheduledTask,
             stageCustomName,
-            courseDocuments: (metadata.courseSubjectIds ?? []).map(
-              (subjectId: string) => ({ subjectId }),
-            ),
+            courseDocuments: (
+              (metadata.courseSubjectIds ?? []) as string[]
+            ).map((subjectId: string) => ({ subjectId })),
           },
           content: null,
         });
@@ -1550,7 +1629,7 @@ export class SemesterReportsService {
         !row.content
       )
         throw new BadRequestException('只有 v2 草稿可以添加学科');
-      await this.requireTerm(row.termId);
+      await this.requireTerm(row.termId, true);
       let additions: CourseSelection[];
       try {
         additions = parseCourseSelections(input, row.periodType);
@@ -1620,7 +1699,7 @@ export class SemesterReportsService {
           ...courses.reportSubjects,
         ],
         subjectName: [
-          String(row.snapshot.subjectName ?? ''),
+          String((row.snapshot.subjectName ?? '') as string),
           courses.subjectName,
         ]
           .filter(Boolean)
@@ -2167,6 +2246,7 @@ export class SemesterReportsService {
         `课堂评价：${record.label}${record.delta > 0 ? ` +${record.delta}` : ` ${record.delta}`}`;
     if (report.teacherObservation)
       sourceLabels['teacher-observation'] = '教师观察';
+    /** 公开正文仅将已确认引用映射为可读标签，未知引用不补造证据。 */
     type ReferencedEntry = { sourceRefs: string[] };
     const content = structuredClone(report.content) as Record<
       string,
@@ -2221,7 +2301,7 @@ export class SemesterReportsService {
       className: report.className,
       subject:
         report.snapshot?.reportVersion === 'v2'
-          ? String(report.snapshot.subjectName ?? '全部课程')
+          ? String((report.snapshot.subjectName ?? '全部课程') as string)
           : (subject?.name ?? ''),
       term: term?.name ?? '',
       period: isStage ? 'stage' : report.periodType,
@@ -2344,9 +2424,11 @@ export class SemesterReportsService {
     if (period === 'month' && duration > 31 * 86400000)
       throw new BadRequestException('月报周期不能超过 31 天');
     // 允许完整周/月/学期的未来结束日期；预览和生成仍校验学期归属及日期边界。
-    const termId = String(input.termId ?? '');
+    const termId = String((input.termId ?? '') as string);
     const subjectId =
-      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
+      input.reportVersion === 'v2'
+        ? '*'
+        : String((input.subjectId ?? '') as string);
     const studentIds = Array.isArray(input.studentIds)
       ? [...new Set(input.studentIds.map(String))]
       : [];
@@ -2774,6 +2856,7 @@ export class SemesterReportsService {
     subjectId: string,
     period: 'week' | 'month' | 'term',
     studentClassId?: string,
+    options: { skipSubjectValidation?: boolean } = {},
   ) {
     let selections: CourseSelection[] | undefined;
     if (input.reportVersion === 'v2' || input.courseSelections !== undefined) {
@@ -2796,15 +2879,34 @@ export class SemesterReportsService {
     }
     const subjects = selections
       ? await Promise.all(
-          selections.map((selection) =>
-            this.requireSubject(selection.subjectId),
-          ),
+          selections.map(async (selection) => {
+            if (options.skipSubjectValidation) {
+              const found =
+                typeof this.subjects?.findOne === 'function'
+                  ? await this.subjects.findOne({
+                      where: {
+                        id: selection.subjectId,
+                        teacherId: this.teacher?.teacherId,
+                      },
+                    })
+                  : null;
+              return (
+                found ?? {
+                  id: selection.subjectId,
+                  name: '学科',
+                  enabled: true,
+                  performanceConfig: null,
+                }
+              );
+            }
+            return this.requireSubject(selection.subjectId);
+          }),
         )
       : [];
     const found = await this.findUsableDocuments(
       termId,
       subjectId,
-      String(input.classId ?? '*'),
+      String((input.classId ?? '*') as string),
     );
     const available =
       // Draft additions target one student; global previews may include all classes.
@@ -2816,7 +2918,7 @@ export class SemesterReportsService {
     const groups: CourseSelection[] = selections ?? [
       {
         subjectId,
-        courseScope: String(input.courseScope ?? '')
+        courseScope: String((input.courseScope ?? '') as string)
           .trim()
           .slice(0, 1000),
       },
@@ -2954,9 +3056,14 @@ export class SemesterReportsService {
     });
   }
 
-  private async requireTerm(id: string) {
+  /** 新建流程只读启用学期；已有草稿可显式读取其停用学期。 */
+  private async requireTerm(id: string, allowDisabled = false) {
     const row = await this.terms.findOne({
-      where: { id, teacherId: this.teacher.teacherId },
+      where: {
+        id,
+        teacherId: this.teacher.teacherId,
+        ...(allowDisabled ? {} : { enabled: true }),
+      },
     });
     if (!row) throw new NotFoundException('学期不存在');
     return row;

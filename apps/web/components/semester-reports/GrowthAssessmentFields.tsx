@@ -51,11 +51,13 @@ export function GrowthAssessmentFields({
   );
 }
 export function GrowthAssessmentView({ value, periodTitle }: { value?: GrowthAssessment; periodTitle: string }) {
+  const filledDimensions = growthDimensions.filter(([key]) => Boolean(value?.[key]?.trim()));
+  if (filledDimensions.length === 0) return null;
   return (
     <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
       <h2 className="mb-5 text-lg font-bold text-sky-900">{periodTitle}学习习惯与能力成长总结</h2>
       <div aria-label="学习习惯与能力成长总结" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-        {growthDimensions.map(([key, label]) => (
+        {filledDimensions.map(([key, label]) => (
           <div
             key={key}
             className={`relative min-w-0 rounded-xl py-3 pl-5 pr-3 ${key === "overallUnderstanding" ? "bg-amber-50/70" : "bg-slate-50/50"}`}
@@ -68,10 +70,8 @@ export function GrowthAssessmentView({ value, periodTitle }: { value?: GrowthAss
               {label}
             </h3>
             <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-700">
-              {key !== "overallUnderstanding" && value?.[key] && (
-                <span className="font-semibold text-sky-700">成长亮点：</span>
-              )}
-              {value?.[key] || "老师暂未填写。"}
+              {key !== "overallUnderstanding" && <span className="font-semibold text-sky-700">成长亮点：</span>}
+              {value?.[key]?.trim()}
             </p>
           </div>
         ))}

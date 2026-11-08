@@ -9,19 +9,30 @@ import { LearningReportView, type LearningReportData } from "./LearningReportVie
 import { renderReportImage } from "./report-image";
 import { reportImageArchive, reportImageFileName, type ReportImageFile } from "./report-image-archive";
 
+/** 导出所需的最小报告摘要；公开快照在生成每张图片时单独获取。 */
 type ExportReport = {
+  /** 用于获取已发布报告的稳定标识。 */
   id: string;
+  /** 图片文件名中的学生姓名。 */
   studentName: string;
+  /** 图片归档时区分同名学生的班级。 */
   className: string;
+  /** 文件命名使用的周期标签。 */
   period: string;
+  /** 可选周期开始时间，兼容旧列表摘要。 */
   start?: string;
+  /** 仅已发布报告可以导出公开快照。 */
   status: string;
+  /** 已有公开地址；缺失时按报告类型创建分享。 */
   share?: { url: string } | null;
 };
+/** reports 在弹窗挂载时冻结；subjectReport 决定使用哪类报告分享接口。 */
 type Props = { reports: ExportReport[]; onClose: () => void; subjectReport?: boolean };
 
 /** 串行加载公开发布快照并复用长图视图；单份失败继续处理，其余图片保留以便仅重试失败项。 */
-export function BatchReportImageDialog({ reports, onClose, subjectReport = false }: Props) {
+export function BatchReportImageDialog({ reports: selectedReports, onClose, subjectReport = false }: Props) {
+  // 固定本次导出清单；父页面重绘会重建筛选数组，不能因此取消生成或撤销 ZIP 下载地址。
+  const [reports] = useState(() => [...selectedReports]);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -72,6 +83,8 @@ export function BatchReportImageDialog({ reports, onClose, subjectReport = false
     let cancelled = false;
     let archiveUrl: string | undefined;
     let controller = new AbortController();
+    // 导出批次启动时先清理上次资源，状态更新属于外部图片生成任务的生命周期。
+
     setArchive(null);
     setBusy(true);
     setError("");

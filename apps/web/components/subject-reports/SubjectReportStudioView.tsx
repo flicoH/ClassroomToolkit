@@ -18,11 +18,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { LearningReportContent } from "@/components/semester-reports/LearningReportView";
 import { CartoonSemesterReportIcon } from "@/components/icons/CartoonAppIcons";
 import { BatchReportImageDialog } from "@/components/semester-reports/BatchReportImageDialog";
-import {
-  SubjectLessonFields,
-  SubjectLessonPdfFill,
-  subjectLessonCategories as categories
-} from "./SubjectLessonPdfFill";
+import { SubjectLessonFields, SubjectLessonPdfFill, subjectLessonCategories } from "./SubjectLessonPdfFill";
 import { SubjectReportLibrary } from "./SubjectReportLibrary";
 import { ReportImageDialog } from "@/components/semester-reports/ReportImageDialog";
 import { DraftEditModal, type DraftModalReport } from "@/components/semester-reports-v2/DraftEditModal";
@@ -55,14 +51,23 @@ const defaultRatings: Record<string, string[]> = {
   课堂任务: ["独立完成", "基本完成", "需要帮助"]
 };
 
+/** 每名学生的填写草稿；出勤按课次保存，完成标记仅用于向导进度。 */
 type StudentFeedback = {
+  /** 兼容旧单次出勤字段。 */
   attendance?: CourseAttendanceStatus;
+  /** 按课次顺序保存出勤，随课程一起提交。 */
   attendances?: CourseAttendanceStatus[];
+  /** 教师面向该学生的寄语。 */
   teacherMessage?: string;
+  /** 兼容旧版单条下一步重点。 */
   nextFocus?: string;
+  /** 当前选中的下一步重点列表。 */
   focusItems?: string[];
+  /** 按课堂评价维度名称保存预设选项。 */
   ratings?: Record<string, string>;
+  /** 教师填写的四维观察文案。 */
   growthAssessment?: GrowthAssessment;
+  /** 仅控制填写向导中的逐人完成状态。 */
   completed?: boolean;
 };
 
@@ -71,6 +76,7 @@ const messageTemplates = [
   { label: "继续加油", text: "老师看到了你的努力，继续保持练习，一步一步积累进步！" }
 ] as const;
 
+/** 单学科报告工作台：维护填写草稿、报告分发与独立学科配置。 */
 export function SubjectReportStudioView() {
   const [activeTab, setActiveTab] = useState<"reports" | "compose" | "library">("reports");
   const [notice, setNotice] = useState<string | null>(null);
@@ -144,7 +150,12 @@ export function SubjectReportStudioView() {
   const currentFeedbackStudentId = selectedStudentIds.includes(feedbackStudentId)
     ? feedbackStudentId
     : selectedStudentIds[0];
-  const selectedSubject = subjects.find(subject => subject.id === selectedSubjectId);
+  const currentTermSubjects = subjects.filter(subject => subject.termId === selectedTermId || !subject.termId);
+  const selectedSubject =
+    currentTermSubjects.find(subject => subject.id === selectedSubjectId) ??
+    subjects.find(subject => subject.id === selectedSubjectId);
+  // null/缺省沿用历史四项，空数组保留教师主动清空的设置。
+  const categories = selectedSubject?.courseContentTitles ?? subjectLessonCategories;
   const performanceFields =
     selectedSubject?.performanceConfig ??
     Object.entries(defaultRatings).map(([label, options]) => ({ label, options }));
@@ -209,10 +220,11 @@ export function SubjectReportStudioView() {
         className: target.className,
         period: target.period,
         termId: target.termId,
-        subjectId: target.subjectId,
+        subjectId: target.subjectId || selectedSubjectId,
         startDate: target.startDate,
         endDate: target.endDate,
         reportVersion: target.reportVersion,
+        courseScope: target.content?.courseScope || target.courseScope || undefined,
         content: target.content,
         isStageReport: false,
         status: target.status
@@ -225,6 +237,7 @@ export function SubjectReportStudioView() {
   const refreshReports = useCallback(() => loadReports(activeSubjectFilter.current), [loadReports]);
   useEffect(() => {
     activeSubjectFilter.current = subjectFilter;
+    // 列表加载同步设置 loading，属于请求生命周期的起点。
     void loadReports(subjectFilter);
   }, [loadReports, subjectFilter]);
 
@@ -290,7 +303,7 @@ export function SubjectReportStudioView() {
       }
     }
     return lines.join("\n");
-  }, [period, lessonCount, lessonValue]);
+  }, [period, lessonCount, lessonValue, categories]);
 
   const previewBody = useMemo(
     () => ({
@@ -389,7 +402,6 @@ export function SubjectReportStudioView() {
               .filter(Boolean)
               .join("\n") ||
             fb.nextFocus ||
-            nextWeekContent ||
             undefined,
           growthAssessment: fb.growthAssessment,
           classroomPerformance: ratingsArray
@@ -408,10 +420,11 @@ export function SubjectReportStudioView() {
           {
             subjectId: selectedSubjectId,
             manualContent: serializedManualContent || undefined,
-            courseScope: courseScope || undefined
+            courseScope: courseScope.trim() || undefined
           }
         ],
-        courseScope: courseScope || serializedManualContent || "教学内容",
+        courseScope: courseScope.trim() || undefined,
+        nextWeekContent: nextWeekContent.trim() || undefined,
         reportDetails: {
           institutionName: heading,
           courseTheme: theme,
@@ -876,7 +889,7 @@ export function SubjectReportStudioView() {
                                     : "排队中"}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-500">
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">
                             {report.period === "week" ? "周报" : report.period === "month" ? "月报" : "学期报告"} ·{" "}
                             {report.startDate || report.start?.slice(0, 10)} ~{" "}
                             {report.endDate || report.end?.slice(0, 10)}
@@ -998,7 +1011,7 @@ export function SubjectReportStudioView() {
             <ReportWizardSteps
               step={step}
               onChange={setStep}
-              hasSubjects={!!selectedTermId && !!selectedSubjectId}
+              hasSubjects={!!selectedTermId && !!selectedSubjectId && !!currentTermSubjects.length}
               hasStudents={selectedStudentIds.length > 0}
             />
 
@@ -1035,22 +1048,22 @@ export function SubjectReportStudioView() {
                       ))}
                     </div>
                   </div>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
-                    <span>周期开始日期</span>
+                  <label className="min-w-0 text-xs font-medium text-muted-foreground">
+                    <span className="mb-1 block">周期开始日期</span>
                     <Input
                       type="date"
                       value={startDate}
                       onChange={e => setReportDates({ startDate: e.target.value, endDate })}
-                      className="h-9 text-xs"
+                      className="h-9 min-w-0 text-left text-xs"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
-                    <span>周期结束日期</span>
+                  <label className="min-w-0 text-xs font-medium text-muted-foreground">
+                    <span className="mb-1 block">周期结束日期</span>
                     <Input
                       type="date"
                       value={endDate}
                       onChange={e => setReportDates({ startDate, endDate: e.target.value })}
-                      className="h-9 text-xs"
+                      className="h-9 min-w-0 text-left text-xs"
                     />
                   </label>
                 </div>
@@ -1088,13 +1101,13 @@ export function SubjectReportStudioView() {
                         className="h-9 text-xs"
                       />
                     </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
-                      <span>授课日期</span>
+                    <label className="min-w-0 text-xs font-medium text-muted-foreground">
+                      <span className="mb-1 block">授课日期</span>
                       <Input
                         type="date"
                         value={lessonDate}
                         onChange={e => setLessonDate(e.target.value)}
-                        className="h-9 text-xs"
+                        className="h-9 min-w-0 text-left text-xs"
                       />
                     </label>
                   </div>
@@ -1125,7 +1138,14 @@ export function SubjectReportStudioView() {
                     <label className="text-xs font-semibold text-slate-700">课程学期</label>
                     <select
                       value={selectedTermId}
-                      onChange={e => setSelectedTermId(e.target.value)}
+                      onChange={e => {
+                        const nextTermId = e.target.value;
+                        setSelectedTermId(nextTermId);
+                        const matching = subjects.filter(s => s.termId === nextTermId || !s.termId);
+                        if (matching.every(s => s.id !== selectedSubjectId)) {
+                          setSelectedSubjectId(matching[0]?.id ?? "");
+                        }
+                      }}
                       className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
                     >
                       {terms.map(t => (
@@ -1145,7 +1165,8 @@ export function SubjectReportStudioView() {
                       onChange={e => setSelectedSubjectId(e.target.value)}
                       className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
                     >
-                      {subjects.map(s => (
+                      {!currentTermSubjects.length && <option value="">该学期暂无学科，请先添加</option>}
+                      {currentTermSubjects.map(s => (
                         <option key={s.id} value={s.id}>
                           {s.name}
                         </option>
@@ -1191,12 +1212,16 @@ export function SubjectReportStudioView() {
                           onFill={groups =>
                             setPdfLessonInputs(current => ({
                               ...current,
-                              [scopeKey]: groups.map(lines => lines.join("\n"))
+                              [scopeKey]: categories.map(title => {
+                                const index = subjectLessonCategories.indexOf(title);
+                                return (groups[index] ?? []).join("\n");
+                              })
                             }))
                           }
                         />
                         <SubjectLessonFields
                           id={`subject-lesson-${lIdx}`}
+                          titles={categories}
                           values={categories.map((_, index) => lessonValue(lIdx, index))}
                           onChange={(index, value) =>
                             setLessonInputs(previous => ({ ...previous, [`${lIdx}-${index}`]: value }))
@@ -1639,6 +1664,10 @@ export function SubjectReportStudioView() {
               setTerms(current => [...current, term]);
               setSelectedTermId(current => current || term.id);
             }}
+            onDeleteTerm={id => {
+              setTerms(current => current.filter(term => term.id !== id));
+              setSelectedTermId(current => (current === id ? (terms.find(term => term.id !== id)?.id ?? "") : current));
+            }}
             onSubject={subject => {
               setSubjects(current =>
                 current.some(item => item.id === subject.id)
@@ -1685,10 +1714,11 @@ export function SubjectReportStudioView() {
                   studentName: viewingReport.studentName,
                   className: viewingReport.className,
                   subject: viewingReport.subjectName ?? "",
-                  term: terms.find(term => term.id === viewingReport.termId)?.name ?? "",
+                  term: viewingReport.termName || terms.find(term => term.id === viewingReport.termId)?.name || "",
                   period: viewingReport.period,
                   start: viewingReport.start,
                   end: viewingReport.end,
+                  courseScope: viewingReport.content?.courseScope || viewingReport.courseScope || undefined,
                   content: viewingReport.content,
                   isSubjectReport: true
                 }
@@ -1704,11 +1734,21 @@ export function SubjectReportStudioView() {
           isOpen={true}
           onClose={() => setEditingDraft(null)}
           report={editingDraft}
-          allAvailableSubjects={subjects.filter(
-            subject =>
-              subject.id === editingDraft.subjectId ||
-              subject.id === editingDraft.content.reportSubjects?.[0]?.subjectId
-          )}
+          allAvailableSubjects={
+            subjects.filter(
+              subject =>
+                subject.id === editingDraft.subjectId ||
+                subject.id === editingDraft.content.reportSubjects?.[0]?.subjectId ||
+                subject.name === editingDraft.content.reportSubjects?.[0]?.name
+            ).length > 0
+              ? subjects.filter(
+                  subject =>
+                    subject.id === editingDraft.subjectId ||
+                    subject.id === editingDraft.content.reportSubjects?.[0]?.subjectId ||
+                    subject.name === editingDraft.content.reportSubjects?.[0]?.name
+                )
+              : subjects
+          }
           subjectReport
           subjectPdf={{
             draftId: editingDraft.id,

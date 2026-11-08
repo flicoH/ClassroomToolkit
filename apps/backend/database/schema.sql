@@ -334,16 +334,19 @@ CREATE TABLE IF NOT EXISTS gacha_machine_draw_records (
 CREATE TABLE IF NOT EXISTS semester_report_terms (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
   name VARCHAR(100) NOT NULL, start_date DATE NOT NULL, end_date DATE NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   INDEX idx_sr_terms_teacher (teacher_id, start_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告学期';
 
 CREATE TABLE IF NOT EXISTS semester_report_subjects (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
+  term_id VARCHAR(64) NULL,
   name VARCHAR(100) NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE,
   performance_config JSON NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  INDEX idx_sr_subjects_teacher (teacher_id, enabled)
+  INDEX idx_sr_subjects_teacher (teacher_id, enabled),
+  INDEX idx_sr_subjects_term (teacher_id, term_id, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告学科';
 
 CREATE TABLE IF NOT EXISTS semester_report_documents (
@@ -505,9 +508,12 @@ CREATE TABLE IF NOT EXISTS subject_report_token_calls (
 CREATE TABLE IF NOT EXISTS subject_report_subjects (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
   teacher_id VARCHAR(64) NOT NULL,
+  term_id VARCHAR(64) NULL,
   name VARCHAR(100) NOT NULL,
   enabled TINYINT(1) NOT NULL DEFAULT 1,
   performance_config JSON NULL,
+  course_content_titles JSON NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  INDEX idx_srs_teacher (teacher_id, enabled, name)
+  INDEX idx_srs_teacher (teacher_id, enabled, name),
+  INDEX idx_srs_term (teacher_id, term_id, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学科报告专用学科配置';

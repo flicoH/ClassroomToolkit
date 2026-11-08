@@ -84,6 +84,7 @@ it.each([false, true])(
             ...report.content,
             reportVersion: "v2",
             studentPhoto: "portrait",
+            growthAssessment: { learningReadiness: "课前准备充分" },
             classroomPhotos: ["first-photo", "second-photo"],
             classroomPhotoCaptions: ["课堂活动", "合作练习"]
           }
@@ -117,6 +118,7 @@ it("shows saved v2 subject and legacy evaluations without classroom photos in pr
               ...photos,
               reportVersion: "v2",
               studentPhoto: "portrait",
+              growthAssessment: { learningReadiness: "课前准备充分" },
               reportSubjects: [{ subjectId: "english", name: "英语" }],
               classroomPerformance: [
                 { subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] },
@@ -229,6 +231,7 @@ it("places the v2 student portrait in the header and classroom performance befor
       reportVersion: "v2" as const,
       classroomPhoto: "data:image/png;base64,classroom",
       studentPhoto: "data:image/jpeg;base64,portrait",
+      growthAssessment: { learningReadiness: "课前准备充分" },
       reportSubjects: [{ subjectId: "english", name: "英语" }],
       classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }]
     };
@@ -521,9 +524,10 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
   expect(growth.className).toBe(classroom.className);
   expect(growth.classList.contains("grid")).toBe(true);
   expect(growth.classList.contains("sm:grid-cols-2")).toBe(true);
-  expect(growth.children).toHaveLength(4);
+  expect(growth.children).toHaveLength(3);
   expect(growth.textContent).toContain(observation);
-  expect(growth.textContent).toContain("老师暂未填写。");
+  expect(growth.textContent).not.toContain("老师暂未填写。");
+  expect(growth.textContent).not.toContain("表达沟通与同伴合作");
   for (const card of growth.children) expect(card.classList.contains("min-w-0")).toBe(true);
 });
 
@@ -900,7 +904,13 @@ it("groups course contents with their own attendance and omits empty growth asse
           reportVersion: "v2",
           courseContent: "第 1 节课 · 核心词汇：red\n第 2 节课 · 核心词汇：cat",
           attendances: ["present", "late"],
-          growthAssessment: { learningReadiness: "  " }
+          // 四维完整但均为空，验证模块隐藏而非依赖缺失字段。
+          growthAssessment: {
+            learningReadiness: "  ",
+            communicationCooperation: "",
+            independenceRules: "",
+            overallUnderstanding: ""
+          }
         }
       }}
     />
@@ -999,5 +1009,126 @@ it.each([false, true])(
     // h1 title contains period name
     const h1 = element.querySelector("h1");
     expect(h1?.textContent?.replace(/\s+/g, " ").trim()).toBe("车奕扬 · 每周成长报告");
+  }
+);
+
+it.each([false, true])(
+  "renders courseScope and nextWeekContent when filled, and omits them when empty (image: %s)",
+  forImage => {
+    const elementWithBoth = document.createElement("div");
+    elementWithBoth.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            courseContent: "第 1 节课：认识颜色",
+            courseScope: "Unit 1 Colours 词汇复习",
+            nextWeekContent: "下周进入 Unit 2 数字表达"
+          }
+        }}
+      />
+    );
+    const scopeEl = elementWithBoth.querySelector('[aria-label="授课范围备注"]');
+    expect(scopeEl).not.toBeNull();
+    expect(scopeEl?.textContent).toContain("Unit 1 Colours 词汇复习");
+
+    const nextEl = elementWithBoth.querySelector('[aria-label="下周教学内容重点"]');
+    expect(nextEl).not.toBeNull();
+    expect(nextEl?.textContent).toContain("下周进入 Unit 2 数字表达");
+
+    const elementEmpty = document.createElement("div");
+    elementEmpty.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            courseContent: "第 1 节课：认识颜色",
+            courseScope: "",
+            nextWeekContent: "   "
+          }
+        }}
+      />
+    );
+    expect(elementEmpty.querySelector('[aria-label="授课范围备注"]')).toBeNull();
+    expect(elementEmpty.querySelector('[aria-label="下周教学内容重点"]')).toBeNull();
+  }
+);
+
+it.each([false, true])(
+  "omits growth assessment in semester report when empty, whitespace-only, or undefined (image: %s)",
+  forImage => {
+    // 1. undefined
+    const renderedUndefined = document.createElement("div");
+    renderedUndefined.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2"
+          }
+        }}
+      />
+    );
+    expect(renderedUndefined.textContent).not.toContain("学习习惯与能力成长总结");
+
+    // 2. all whitespace / empty
+    const renderedEmpty = document.createElement("div");
+    renderedEmpty.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            growthAssessment: {
+              learningReadiness: "   ",
+              communicationCooperation: "",
+              independenceRules: "\n\t",
+              overallUnderstanding: ""
+            }
+          }
+        }}
+      />
+    );
+    expect(renderedEmpty.textContent).not.toContain("学习习惯与能力成长总结");
+
+    // 3. at least one non-whitespace dimension renders the section
+    const renderedFilled = document.createElement("div");
+    renderedFilled.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            growthAssessment: {
+              learningReadiness: "课前准备充分",
+              communicationCooperation: "",
+              independenceRules: "",
+              overallUnderstanding: ""
+            }
+          }
+        }}
+      />
+    );
+    expect(renderedFilled.textContent).toContain("本学期学习习惯与能力成长总结");
+    expect(renderedFilled.textContent).toContain("学习准备与课堂能力");
+    expect(renderedFilled.textContent).toContain("课前准备充分");
+    expect(renderedFilled.textContent).not.toContain("表达沟通与同伴合作");
+    expect(renderedFilled.textContent).not.toContain("生活自理与规则意识");
+    expect(renderedFilled.textContent).not.toContain("综合画像理解");
+    expect(renderedFilled.textContent).not.toContain("老师暂未填写。");
+    const growthCards = renderedFilled.querySelectorAll('[aria-label="学习习惯与能力成长总结"] > div');
+    expect(growthCards).toHaveLength(1);
   }
 );

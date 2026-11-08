@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-11-04 19:00:50
+ * @LastEditTime: 2026-11-08 00:19:57
  */
 "use client";
 
@@ -50,9 +50,9 @@ const menuItems: MenuItemData[] = [
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
-  // 保留旧版报告入口，工作台通过独立菜单访问。
-  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
-  { name: "学期报告工作台", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
+  // 菜单“学期报告”直接进入新工作台；旧版路由映射仍保留兼容。
+  // { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
+  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
   { name: "学科报告", icon: CartoonSemesterReportIcon, contentKey: "subjectReports" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },

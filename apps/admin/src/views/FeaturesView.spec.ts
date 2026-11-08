@@ -56,6 +56,30 @@ describe('semester reports in Admin feature analytics', () => {
     expect(wrapper.text()).toContain('批量生成一次只计一次')
     wrapper.unmount()
   })
+  it('shows subject report usage and trend independently, including the zero-event state', async () => {
+    ranking.items = [{ ...reports, key: 'subject-reports', name: '学科报告' }]
+    const wrapper = shallowMount(FeaturesView)
+    await flushPromises()
+    expect(wrapper.find('tbody tr').text()).toContain('学科报告')
+    expect(wrapper.find('option[value="subject-reports"]').exists()).toBe(true)
+    await wrapper.findAll('select')[1]!.setValue('subject-reports')
+    await flushPromises()
+    expect(api).toHaveBeenCalledWith('analytics/features/subject-reports/trend', expect.anything())
+    expect(wrapper.text()).toContain('学期报告和学科报告按教师成功提交')
+    wrapper.unmount()
+    ranking.items = [{ ...ranking.items[0]!, teachers: 0, uses: 0, openTeachers: 0, usageRate: 0 }]
+    const empty = shallowMount(FeaturesView)
+    await flushPromises()
+    expect(
+      empty
+        .find('tbody tr')
+        .findAll('td')
+        .map((cell) => cell.text())
+        .slice(0, 5),
+    ).toEqual(['学科报告', '0', '0', '0', '0.0%'])
+    empty.unmount()
+  })
+
   it('keeps the report option visible when no report events have been collected', async () => {
     ranking.items = [
       { ...reports, teachers: 0, openTeachers: 0, uses: 0, usageRate: 0, change: '—' },

@@ -1,3 +1,4 @@
+// 覆盖学期报告设置、生成向导和任务接口，避免只验证静态页面。
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -227,7 +228,8 @@ describe("SemesterReportsV2View", () => {
       settingsTabBtn!.click();
     });
 
-    expect(container.textContent).toContain("学期与学科设置");
+    expect(container.textContent).toContain("学期设置");
+    expect(container.textContent).toContain("学科设置");
     expect(container.textContent).toContain("课程资料上传与章节核对");
     expect(container.textContent).toContain("配置学科课堂表现");
     expect(container.textContent).toContain("2026-2027学年第一学期");
@@ -247,6 +249,7 @@ describe("SemesterReportsV2View", () => {
     );
 
     // Add subject
+    api.post.mockResolvedValueOnce({ id: "saved-subject", name: "科学探索" });
     const subjectInput = container.querySelector("input[placeholder*='新增学科名称']") as HTMLInputElement;
     expect(subjectInput).toBeTruthy();
     await act(async () => {
@@ -266,6 +269,66 @@ describe("SemesterReportsV2View", () => {
       expect.stringContaining("/report-subjects"),
       expect.objectContaining({ name: "科学探索" })
     );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="删除学科 科学探索"]')!.click()
+    );
+    const confirm = [...document.querySelectorAll("button")].find(button => button.textContent === "删除学科")!;
+    await act(async () => confirm.click());
+    expect(api.delete).toHaveBeenCalledWith("/api/semester-reports/report-subjects/saved-subject");
+  });
+
+  it.each([
+    { kind: "学期", name: "2026-2027学年第一学期", path: "report-terms/term-1", section: "学期设置" },
+    { kind: "学科", name: "英语综合", path: "report-subjects/sub-1", section: "学科设置" }
+  ])("confirms and deletes $kind independently while keeping reports", async ({ kind, name, path, section }) => {
+    await act(async () => root.render(<SemesterReportsV2View />));
+    const button = (text: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === text)!;
+    await act(async () => button("学期学科设置与课程资料").click());
+    const region = container.querySelector(`section[aria-label="${section}"]`)!;
+    const remove = () => region.querySelector<HTMLButtonElement>(`button[aria-label="删除${kind} ${name}"]`)!;
+    expect(remove()).toBeTruthy();
+    const other = container.querySelector(`section[aria-label="${kind === "学期" ? "学科" : "学期"}设置"]`)!;
+    expect(other.querySelector(`button[aria-label="删除${kind} ${name}"]`)).toBeNull();
+    await act(async () => remove().click());
+    expect(api.delete).not.toHaveBeenCalled();
+    await act(async () => button("取消").click());
+    expect(remove()).toBeTruthy();
+    await act(async () => remove().click());
+    await act(async () => button(`删除${kind}`).click());
+    expect(api.delete).toHaveBeenCalledWith(`/api/semester-reports/${path}`);
+    expect(remove()).toBeNull();
+    await act(async () => button("报告管理与分发").click());
+    expect(container.textContent).toContain("张小明");
+    expect(container.textContent).toContain("李小红");
+  });
+
+  it.each(["学期", "学科"])("keeps %s settings after failed deletion", async kind => {
+    api.delete.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => root.render(<SemesterReportsV2View />));
+    const button = (text: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === text)!;
+    await act(async () => button("学期学科设置与课程资料").click());
+    const remove = container.querySelector<HTMLButtonElement>(`button[aria-label^="删除${kind} "]`)!;
+    await act(async () => remove.click());
+    await act(async () => button(`删除${kind}`).click());
+    expect(container.contains(remove)).toBe(true);
+    expect(container.textContent).toContain("删除失败，请重试。");
+  });
+
+  it("keeps empty term and subject lists empty on reload", async () => {
+    const original = api.get.getMockImplementation()!;
+    api.get.mockImplementation((url: string) => {
+      if (url.endsWith("/report-terms") || url.endsWith("/report-subjects")) return Promise.resolve([]);
+      return original(url);
+    });
+    await act(async () => root.render(<SemesterReportsV2View />));
+    const settings = [...container.querySelectorAll("button")].find(
+      item => item.textContent === "学期学科设置与课程资料"
+    )!;
+    await act(async () => settings.click());
+    expect(container.querySelector('button[aria-label^="删除学科 "]')).toBeNull();
+    expect(container.querySelector('button[aria-label^="删除学期 "]')).toBeNull();
   });
 
   it("automatically fills in start and end dates based on selected period", async () => {
@@ -1557,11 +1620,11 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     api.get.mockImplementation((url: string) => {
-      if (url.includes("/terms"))
+      if (url.includes("/report-terms"))
         return Promise.resolve([
           { id: "t1", name: "2026秋", startDate: "2026-09-01", endDate: "2027-01-20", isCurrent: true }
         ]);
-      if (url.includes("/subjects"))
+      if (url.includes("/report-subjects"))
         return Promise.resolve([
           { id: "sub-1", name: "英语", performanceConfig: [{ label: "发音", options: ["标准"] }] }
         ]);
@@ -1799,7 +1862,7 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
               isCurrent: true
             }
           ];
-        if (url.includes("/report-subjects")) return [];
+        if (url.includes("/report-subjects")) return mockSubjects;
         if (url === "/api/pet-points")
           return {
             students: [
@@ -2325,6 +2388,96 @@ describe("SemesterReportsV2 API Integration Safeguards", () => {
       const cards = container.querySelectorAll("#stageTasksListContainer [role='listitem']");
       expect(cards).toHaveLength(1);
       expect(container.querySelector("#scheduledTasksListCount")?.textContent).toBe("1");
+    });
+  });
+
+  it("filters subjects by term in settings and wizard, and binds new subjects to the selected term", async () => {
+    const terms = [
+      { id: "term-1", name: "2026秋季学期", startDate: "2026-09-01", endDate: "2027-01-20", isCurrent: true },
+      { id: "term-2", name: "2027春季学期", startDate: "2027-02-15", endDate: "2027-07-05", isCurrent: false }
+    ];
+    const subjects = [
+      { id: "sub-1", name: "秋季英语", termId: "term-1", performanceConfig: [] },
+      { id: "sub-2", name: "春季物理", termId: "term-2", performanceConfig: [] },
+      { id: "sub-3", name: "通用体育", termId: null, performanceConfig: [] }
+    ];
+
+    api.get.mockImplementation(async (url: string) => {
+      if (url.includes("/report-terms")) return terms;
+      if (url.includes("/report-subjects")) return subjects;
+      if (url === "/api/pet-points") return { students: mockStudents };
+      if (url.endsWith("/reports")) return [];
+      if (url.includes("/ai-permission")) return { hasPermission: true };
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<SemesterReportsV2View />);
+    });
+
+    // 1. 验证向导步骤 2 按当前学期过滤学科
+    const composeTabBtn = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("填写与生成报告")
+    );
+    await act(async () => {
+      composeTabBtn!.click();
+    });
+
+    const nextBtn1 = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("下一步：配置学科与教学内容")
+    );
+    await act(async () => {
+      nextBtn1!.click();
+    });
+
+    expect(container.textContent).toContain("秋季英语");
+    expect(container.textContent).toContain("通用体育");
+    expect(container.textContent).not.toContain("春季物理");
+
+    // 2. 切换到学科设置，验证学期切换与新增学科绑定
+    const settingsTabBtn = Array.from(container.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("学期学科设置与课程资料")
+    );
+    await act(async () => {
+      settingsTabBtn!.click();
+    });
+
+    const subjectSection = container.querySelector('section[aria-label="学科设置"]')!;
+    expect(subjectSection.textContent).toContain("秋季英语");
+    expect(subjectSection.textContent).toContain("通用体育");
+    expect(subjectSection.textContent).not.toContain("春季物理");
+
+    // 切换设置中的学期为 2027春季学期
+    const termSelect = subjectSection.querySelector<HTMLSelectElement>('select[aria-label="选择学科所属学期"]')!;
+    expect(termSelect).toBeTruthy();
+    await act(async () => {
+      termSelect.value = "term-2";
+      termSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(subjectSection.textContent).toContain("春季物理");
+    expect(subjectSection.textContent).toContain("通用体育");
+    expect(subjectSection.textContent).not.toContain("秋季英语");
+
+    // 在选定 term-2 下添加学科
+    api.post.mockResolvedValueOnce({ id: "sub-4", name: "春季化学", termId: "term-2" });
+    const subjectInput = subjectSection.querySelector<HTMLInputElement>("input[placeholder*='新增学科名称']")!;
+    await act(async () => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      nativeSetter?.call(subjectInput, "春季化学");
+      subjectInput.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const addSubjectBtn = Array.from(subjectSection.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("+ 添加学科")
+    )!;
+    await act(async () => {
+      addSubjectBtn.click();
+    });
+
+    expect(api.post).toHaveBeenCalledWith(expect.stringContaining("/report-subjects"), {
+      name: "春季化学",
+      termId: "term-2"
     });
   });
 });

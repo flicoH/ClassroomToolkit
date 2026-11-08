@@ -50,13 +50,26 @@ import {
 
 const base = "/api/semester-reports";
 
+/** 设置删除确认的最小目标，区分共享学期与本工作台独立学科。 */
+type SettingDeletionTarget = {
+  /** 决定请求的资源路径和删除影响范围。 */
+  kind: "term" | "subject";
+  /** 必须使用服务端返回的标识，不能使用本地临时 ID。 */
+  id: string;
+  /** 仅用于向教师展示删除确认信息。 */
+  name: string;
+};
+
+/** 周期积分与宠物的只读预览，按学生 ID 关联，不等同于学科掌握度。 */
 export type ScorePreview = {
+  /** 周期截止时的宠物快照，资料不足时保留 unavailable。 */
   petPreviews?: Array<{
     studentId: string;
     pet: ReportPet | null;
     petAsOf: string;
     petHistoryStatus: "recorded" | "unavailable";
   }>;
+  /** 按学生汇总的周期积分证据，供核对与展示。 */
   scoreSummaries: Array<ScoreDetails & { studentId: string; studentName: string }>;
 };
 
@@ -572,11 +585,17 @@ export function SemesterReportsV2View() {
   const [step4Observation, setStep4Observation] = useState("");
 
   // Tab 3 (Settings) 状态
+  // kind 决定共享学期或独立学科接口，确认前不改动当前选项。
+  const [settingToDelete, setSettingToDelete] = useState<SettingDeletionTarget | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsTermId, setSettingsTermId] = useState("");
   const [newSubjectInput, setNewSubjectInput] = useState("");
   const [termNameInput, setTermNameInput] = useState("");
   const [termStartInput, setTermStartInput] = useState("2026-09-01");
   const [termEndInput, setTermEndInput] = useState("2027-01-20");
   const [activeConfigSubjectId, setActiveConfigSubjectId] = useState("english");
+  const effectiveSettingsTermId = settingsTermId || terms[0]?.id || "";
+  const currentSettingsSubjects = subjects.filter(s => s.termId === effectiveSettingsTermId || !s.termId);
   const [subjectConfigs] = useState<Record<string, Array<{ label: string; options: string[] }>>>({
     english: [
       { label: "听力跟读与发音", options: ["发音标准流利", "基本跟读完整", "需要轻度引导"] },
@@ -590,7 +609,8 @@ export function SemesterReportsV2View() {
       { label: "小组协作分工", options: ["积极组织分工", "配合默契投入", "参与度待提升"] }
     ]
   });
-  const configSubject = subjects.find(subject => subject.id === activeConfigSubjectId) ?? subjects[0];
+  const configSubject =
+    currentSettingsSubjects.find(subject => subject.id === activeConfigSubjectId) ?? currentSettingsSubjects[0];
 
   function showToast(msg: string) {
     setToastMessage(msg);
@@ -629,6 +649,7 @@ export function SemesterReportsV2View() {
 
   useEffect(() => {
     if (activeMainTab === "compose" || activeMainTab === "stage") {
+      // 导航切换时刷新名单，初始化状态属于请求生命周期。
       void refreshStudents();
     }
   }, [activeMainTab, refreshStudents]);
@@ -650,7 +671,7 @@ export function SemesterReportsV2View() {
         request.get<ReportSummaryItem[], ReportSummaryItem[]>(`${base}/reports`)
       ]);
 
-      if (termsRes.status === "fulfilled" && Array.isArray(termsRes.value) && termsRes.value.length > 0) {
+      if (termsRes.status === "fulfilled" && Array.isArray(termsRes.value)) {
         setTerms(termsRes.value);
         const currentTerm = termsRes.value.find(t => t.isCurrent) || termsRes.value[0];
         if (currentTerm) {
@@ -672,7 +693,7 @@ export function SemesterReportsV2View() {
         setComposeTermId(fallbackTerm.id);
       }
 
-      if (subjectsRes.status === "fulfilled" && Array.isArray(subjectsRes.value) && subjectsRes.value.length > 0) {
+      if (subjectsRes.status === "fulfilled" && Array.isArray(subjectsRes.value)) {
         const loadedSubjects = subjectsRes.value;
         setSubjects(loadedSubjects);
         // 填写报告时学科与内容默认不选学科，由教师在向导步骤2中主动选择
@@ -749,6 +770,7 @@ export function SemesterReportsV2View() {
   }, []);
 
   useEffect(() => {
+    // 初次加载同步设置 loading，沿用请求生命周期。
     void loadInitialData();
   }, [loadInitialData]);
 
@@ -876,6 +898,7 @@ export function SemesterReportsV2View() {
           studentName: stu?.name || "学生"
         };
       });
+      // 无有效预览请求时沿用本地统计展示。
       setScorePreview({
         key: scorePreviewKey,
         data: { scoreSummaries: fallbackSummaries }
@@ -983,6 +1006,7 @@ export function SemesterReportsV2View() {
 
   // 当筛选或搜索变化时，重置展示条数为默认的 20 条
   useEffect(() => {
+    // 筛选条件变化后恢复首屏数量。
     setDisplayCount(20);
   }, [currentFilterStatus, statusFilter, periodFilter, startDateFilter, endDateFilter, debouncedQuery]);
 
@@ -1087,6 +1111,7 @@ export function SemesterReportsV2View() {
   // 打开单份草稿微调 (支持真实草稿或 fallback 结构)
   async function handleOpenDraftModal(reportItem: ReportSummaryItem) {
     try {
+      /** 详情兼容旧版 start/end 时间边界，列表摘要不足时用于补全草稿。 */
       type FullDetailResponse = ReportSummaryItem & {
         start?: string;
         end?: string;
@@ -1660,20 +1685,17 @@ export function SemesterReportsV2View() {
   }
 
   // 转换为 V2Subject 格式
-  const v2SubjectsList: V2Subject[] = useMemo(() => {
-    if (subjects.length > 0) {
-      return subjects.map(s => ({
+  // 空列表表示教师尚未配置或已经删空，不补入示例学科。
+  const v2SubjectsList: V2Subject[] = useMemo(
+    () =>
+      subjects.map(s => ({
         id: s.id,
         name: s.name,
-        performanceConfig: s.performanceConfig || subjectConfigs[s.id] || defaultPerformanceConfig()
-      }));
-    }
-    return [
-      { id: "english", name: "英语", performanceConfig: subjectConfigs.english || defaultPerformanceConfig() },
-      { id: "science", name: "科学", performanceConfig: subjectConfigs.science || defaultPerformanceConfig() },
-      { id: "chinese", name: "语文", performanceConfig: subjectConfigs.chinese || defaultPerformanceConfig() }
-    ];
-  }, [subjects, subjectConfigs]);
+        performanceConfig: s.performanceConfig || subjectConfigs[s.id] || defaultPerformanceConfig(),
+        courseContentTitles: s.courseContentTitles
+      })),
+    [subjects, subjectConfigs]
+  );
 
   // 当前 Step 4 正在评价的学生
   const currentStep4Student = useMemo(() => {
@@ -2197,34 +2219,35 @@ export function SemesterReportsV2View() {
                     ))}
                   </div>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">周期开始日期</label>
                   <Input
                     type="date"
                     value={composeStart}
                     onChange={e => setComposeStart(e.target.value)}
-                    className="h-9 text-xs"
+                    className="h-9 min-w-0 text-left text-xs"
                   />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">周期结束日期</label>
                   <Input
                     type="date"
                     value={composeEnd}
                     onChange={e => setComposeEnd(e.target.value)}
-                    className="h-9 text-xs"
+                    className="h-9 min-w-0 text-left text-xs"
                   />
                 </div>
-                {composePeriod === "term" && terms.length > 0 && (
+                {terms.length > 0 && (
                   <div className="sm:col-span-3">
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">所属学期</label>
                     <select
-                      value={composeTermId || terms[0]?.id}
+                      aria-label="所属学期"
+                      value={composeTermId || activeTerm?.id || terms[0]?.id}
                       onChange={e => {
                         const newId = e.target.value;
                         setComposeTermId(newId);
                         const selectedTerm = terms.find(t => t.id === newId);
-                        if (selectedTerm) {
+                        if (selectedTerm && composePeriod === "term") {
                           const dates = defaultReportDates("term", selectedTerm);
                           setComposeStart(dates.start);
                           setComposeEnd(dates.end);
@@ -2280,13 +2303,13 @@ export function SemesterReportsV2View() {
                       className="h-9 text-xs"
                     />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">授课日期</label>
                     <Input
                       type="date"
                       value={lessonDate}
                       onChange={e => setLessonDate(e.target.value)}
-                      className="h-9 text-xs"
+                      className="h-9 min-w-0 text-left text-xs"
                     />
                   </div>
                 </div>
@@ -2331,32 +2354,39 @@ export function SemesterReportsV2View() {
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-muted-foreground">选择本次报告包含的学科</label>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  {subjects.map(sub => {
-                    const isChecked = composeSelectedSubjects.includes(sub.id);
-                    return (
-                      <label
-                        key={sub.id}
-                        className={`flex cursor-pointer items-center justify-between rounded-xl border p-3 transition ${
-                          isChecked
-                            ? "border-indigo-500 bg-indigo-50/50 font-bold text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"
-                            : "border-border bg-muted/20 text-muted-foreground opacity-70"
-                        }`}
-                      >
-                        <span className="text-xs">{sub.name}</span>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            setComposeSelectedSubjects(prev =>
-                              prev.includes(sub.id) ? prev.filter(x => x !== sub.id) : [...prev, sub.id]
-                            );
-                          }}
-                          className="h-4 w-4 rounded text-indigo-600"
-                        />
-                      </label>
-                    );
-                  })}
+                  {subjects
+                    .filter(sub => sub.termId === (activeTerm?.id || composeTermId) || !sub.termId)
+                    .map(sub => {
+                      const isChecked = composeSelectedSubjects.includes(sub.id);
+                      return (
+                        <label
+                          key={sub.id}
+                          className={`flex cursor-pointer items-center justify-between rounded-xl border p-3 transition ${
+                            isChecked
+                              ? "border-indigo-500 bg-indigo-50/50 font-bold text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"
+                              : "border-border bg-muted/20 text-muted-foreground opacity-70"
+                          }`}
+                        >
+                          <span className="text-xs">{sub.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              setComposeSelectedSubjects(prev =>
+                                prev.includes(sub.id) ? prev.filter(x => x !== sub.id) : [...prev, sub.id]
+                              );
+                            }}
+                            className="h-4 w-4 rounded text-indigo-600"
+                          />
+                        </label>
+                      );
+                    })}
                 </div>
+                {!subjects.some(sub => sub.termId === (activeTerm?.id || composeTermId) || !sub.termId) && (
+                  <p className="py-2 text-xs text-muted-foreground">
+                    所选学期暂无学科，请先在「学期学科设置与课程资料」中添加学科。
+                  </p>
+                )}
               </div>
 
               <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
@@ -2971,122 +3001,189 @@ export function SemesterReportsV2View() {
       {activeMainTab === "settings" && (
         <main className="space-y-4 animate-in fade-in duration-200">
           <div className="grid gap-4 md:grid-cols-2">
-            {/* 1）学期与学科设置 */}
-            <div className="space-y-4 rounded-2xl border bg-card p-5">
-              <div className="flex items-center gap-2.5 border-b pb-2.5">
-                <Calendar className="h-7 w-7 text-indigo-600" />
-                <div>
-                  <h2 className="text-sm font-bold">学期与学科设置</h2>
-                  <p className="text-xs text-muted-foreground">维护当前学校的学期日历以及任教学科列表。</p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-muted-foreground">新建学科</label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="新增学科名称（如 戏剧、陶艺）"
-                    value={newSubjectInput}
-                    onChange={e => setNewSubjectInput(e.target.value)}
-                    className="h-9 text-xs"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={async () => {
-                      if (!newSubjectInput.trim()) return;
-                      await request.post(`${base}/report-subjects`, { name: newSubjectInput.trim() }).catch(() => null);
-                      setSubjects(prev => [...prev, { id: createUuid(), name: newSubjectInput.trim() }]);
-                      showToast(`已成功添加「${newSubjectInput.trim()}」学科`);
-                      setNewSubjectInput("");
-                    }}
-                    className="h-9 bg-indigo-600 text-xs font-medium text-white hover:bg-indigo-700"
-                  >
-                    + 添加学科
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {subjects.map(s => (
-                    <span key={s.id} className="rounded-lg border bg-muted/40 px-2.5 py-1 text-xs font-medium">
-                      {s.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 border-t pt-3">
-                <label className="block text-xs font-bold text-muted-foreground">新建学期</label>
-                <div className="space-y-2">
-                  <Input
-                    placeholder="学期名称（如 2026-2027学年第一学期）"
-                    value={termNameInput}
-                    onChange={e => setTermNameInput(e.target.value)}
-                    className="h-9 text-xs"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      type="date"
-                      value={termStartInput}
-                      onChange={e => setTermStartInput(e.target.value)}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      type="date"
-                      value={termEndInput}
-                      onChange={e => setTermEndInput(e.target.value)}
-                      className="h-8 text-xs"
-                    />
+            <div className="space-y-4">
+              <section aria-label="学科设置" className="space-y-4 rounded-2xl border bg-card p-5">
+                <div className="flex items-center gap-2.5 border-b pb-2.5">
+                  <Calendar className="h-7 w-7 text-indigo-600" />
+                  <div>
+                    <h2 className="text-sm font-bold">学科设置</h2>
+                    <p className="text-xs text-muted-foreground">维护任教学科列表。</p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      if (!termNameInput.trim()) {
-                        showToast("请输入学期名称");
-                        return;
-                      }
-                      await request
-                        .post(`${base}/report-terms`, {
-                          name: termNameInput.trim(),
-                          startDate: termStartInput,
-                          endDate: termEndInput
-                        })
-                        .catch(() => null);
-                      setTerms(prev => [
-                        ...prev,
-                        {
-                          id: createUuid(),
-                          name: termNameInput.trim(),
-                          startDate: termStartInput,
-                          endDate: termEndInput
-                        }
-                      ]);
-                      showToast(`学期「${termNameInput.trim()}」已创建成功！`);
-                      setTermNameInput("");
-                    }}
-                    className="h-8 w-full text-xs font-medium"
-                  >
-                    + 新建学期
-                  </Button>
                 </div>
-                <div className="space-y-1.5 pt-2">
-                  <span className="block text-[11px] font-bold text-muted-foreground">既有学期日历:</span>
-                  {terms.map(t => (
-                    <div
-                      key={t.id}
-                      className="flex items-center justify-between rounded-lg border bg-muted/20 p-2 text-[11px]"
-                    >
-                      <span className="font-semibold">{t.name}</span>
-                      <span className="text-muted-foreground">
-                        {t.startDate} 至 {t.endDate}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
 
+                <div className="space-y-2">
+                  {terms.length > 0 && (
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-muted-foreground">所属学期</label>
+                      <select
+                        aria-label="选择学科所属学期"
+                        value={effectiveSettingsTermId}
+                        onChange={e => {
+                          const nextId = e.target.value;
+                          setSettingsTermId(nextId);
+                          const matching = subjects.filter(s => s.termId === nextId || !s.termId);
+                          setActiveConfigSubjectId(matching[0]?.id ?? "");
+                        }}
+                        className="h-9 w-full rounded-xl border border-input bg-background px-3 text-xs"
+                      >
+                        {terms.map(t => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <label className="block text-xs font-bold text-muted-foreground">新建学科</label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="新增学科名称（如 戏剧、陶艺）"
+                      value={newSubjectInput}
+                      onChange={e => setNewSubjectInput(e.target.value)}
+                      className="h-9 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={async () => {
+                        if (!newSubjectInput.trim()) return;
+                        setSettingsBusy(true);
+                        try {
+                          const created = await request.post<Subject, Subject>(`${base}/report-subjects`, {
+                            name: newSubjectInput.trim(),
+                            termId: effectiveSettingsTermId || undefined
+                          });
+                          setSubjects(prev => [...prev, created]);
+                          showToast(`已成功添加「${created.name}」学科`);
+                          setNewSubjectInput("");
+                        } catch {
+                          showToast("添加学科失败，请重试。");
+                        } finally {
+                          setSettingsBusy(false);
+                        }
+                      }}
+                      className="h-9 bg-indigo-600 text-xs font-medium text-white hover:bg-indigo-700"
+                      disabled={settingsBusy || !newSubjectInput.trim()}
+                    >
+                      + 添加学科
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {currentSettingsSubjects.map(s => (
+                      <div
+                        key={s.id}
+                        className="flex items-center gap-1 rounded-lg border bg-muted/40 pl-2.5 text-xs font-medium"
+                      >
+                        <span>{s.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 text-muted-foreground hover:text-destructive"
+                          aria-label={`删除学科 ${s.name}`}
+                          disabled={settingsBusy}
+                          onClick={() => setSettingToDelete({ kind: "subject", id: s.id, name: s.name })}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                    {!currentSettingsSubjects.length && (
+                      <p className="py-1 text-xs text-muted-foreground">该学期暂未添加学科，请在上方添加。</p>
+                    )}
+                  </div>
+                </div>
+              </section>
+              <section aria-label="学期设置" className="space-y-4 rounded-2xl border bg-card p-5">
+                <div className="flex items-center gap-2.5 border-b pb-2.5">
+                  <Calendar className="h-7 w-7 text-indigo-600" />
+                  <div>
+                    <h2 className="text-sm font-bold">学期设置</h2>
+                    <p className="text-xs text-muted-foreground">维护学期日历，删除学期不会影响已生成报告。</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-muted-foreground">新建学期</label>
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="学期名称（如 2026-2027学年第一学期）"
+                      value={termNameInput}
+                      onChange={e => setTermNameInput(e.target.value)}
+                      className="h-9 text-xs"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="date"
+                        value={termStartInput}
+                        onChange={e => setTermStartInput(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                      <Input
+                        type="date"
+                        value={termEndInput}
+                        onChange={e => setTermEndInput(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        if (!termNameInput.trim()) {
+                          showToast("请输入学期名称");
+                          return;
+                        }
+                        setSettingsBusy(true);
+                        try {
+                          const created = await request.post<Term, Term>(`${base}/report-terms`, {
+                            name: termNameInput.trim(),
+                            startDate: termStartInput,
+                            endDate: termEndInput
+                          });
+                          setTerms(prev => [...prev, created]);
+                          showToast(`学期「${created.name}」已创建成功！`);
+                          setTermNameInput("");
+                        } catch {
+                          showToast("添加学期失败，请核对名称和起止日期。");
+                        } finally {
+                          setSettingsBusy(false);
+                        }
+                      }}
+                      className="h-8 w-full text-xs font-medium"
+                      disabled={settingsBusy}
+                    >
+                      + 新建学期
+                    </Button>
+                  </div>
+                  <div className="space-y-1.5 pt-2">
+                    <span className="block text-[11px] font-bold text-muted-foreground">既有学期日历:</span>
+                    {terms.map(t => (
+                      <div
+                        key={t.id}
+                        className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_2.25rem] items-center gap-2 rounded-lg border bg-muted/20 p-2 text-[11px]"
+                      >
+                        <span className="min-w-0 break-words font-semibold">{t.name}</span>
+                        <span className="min-w-0 text-left tabular-nums text-muted-foreground">
+                          {t.startDate} 至 {t.endDate}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 text-muted-foreground hover:text-destructive"
+                          aria-label={`删除学期 ${t.name}`}
+                          disabled={settingsBusy}
+                          onClick={() => setSettingToDelete({ kind: "term", id: t.id, name: t.name })}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
             {/* 2）课程资料上传与章节核对 */}
             <div className="space-y-4 rounded-2xl border bg-card p-5">
               <div className="flex items-center justify-between border-b pb-2.5">
@@ -3146,8 +3243,8 @@ export function SemesterReportsV2View() {
                   onChange={event => setActiveConfigSubjectId(event.target.value)}
                   className="h-8 rounded-xl border border-indigo-300 bg-card px-3 font-bold text-indigo-600 dark:border-indigo-700"
                 >
-                  {!subjects.length && <option value="">请先添加学科</option>}
-                  {subjects.map(subject => (
+                  {!currentSettingsSubjects.length && <option value="">请先添加学科</option>}
+                  {currentSettingsSubjects.map(subject => (
                     <option key={subject.id} value={subject.id}>
                       {subject.name}
                     </option>
@@ -3266,6 +3363,43 @@ export function SemesterReportsV2View() {
           onClose={() => setBatchExportOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={!!settingToDelete}
+        title={`删除${settingToDelete?.kind === "term" ? "学期" : "学科"}「${settingToDelete?.name ?? ""}」？`}
+        description={
+          settingToDelete?.kind === "term"
+            ? "学期由两个报告工作台共用。删除后不再用于新建报告，已有报告、分享链接、草稿和课程资料保留。"
+            : "删除后该学科不再用于新建学期报告，已有报告、分享链接和课程资料保留，不影响学科报告工作台。"
+        }
+        confirmText={settingToDelete?.kind === "term" ? "删除学期" : "删除学科"}
+        onCancel={() => setSettingToDelete(null)}
+        onConfirm={() => {
+          if (!settingToDelete || settingsBusy) return;
+          const target = settingToDelete;
+          setSettingToDelete(null);
+          setSettingsBusy(true);
+          void request
+            .delete(`${base}/report-${target.kind === "term" ? "terms" : "subjects"}/${encodeURIComponent(target.id)}`)
+            .then(() => {
+              if (target.kind === "term") {
+                setTerms(current => current.filter(term => term.id !== target.id));
+                setComposeTermId(current =>
+                  current === target.id ? (terms.find(term => term.id !== target.id)?.id ?? "") : current
+                );
+              } else {
+                setSubjects(current => current.filter(subject => subject.id !== target.id));
+                setComposeSelectedSubjects(current => current.filter(id => id !== target.id));
+                const nextId = subjects.find(subject => subject.id !== target.id)?.id ?? "";
+                setActiveConfigSubjectId(current => (current === target.id ? nextId : current));
+                setStep4PerfSubject(current => (current === target.id ? nextId : current));
+              }
+              showToast(`${target.kind === "term" ? "学期" : "学科"}已删除，已有报告保留`);
+            })
+            .catch(() => showToast("删除失败，请重试。"))
+            .finally(() => setSettingsBusy(false));
+        }}
+      />
 
       {/* 批量发布确认弹窗 (必须使用项目内 ConfirmDialog，严禁原生 alert/confirm) */}
       <ConfirmDialog

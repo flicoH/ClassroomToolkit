@@ -9,5 +9,7 @@ export const FEATURES: Record<string, string> = {
   'pet-points': '宠物积分',
   'gacha-machine': '扭蛋机',
   'semester-reports': '学期报告',
+  // 独立注册，Admin 才能显示已有学科报告操作事件及其趋势。
+  'subject-reports': '学科报告',
   feedback: '意见反馈',
 };

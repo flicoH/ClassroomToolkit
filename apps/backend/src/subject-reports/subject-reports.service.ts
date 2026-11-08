@@ -43,6 +43,8 @@ import {
   generateTemplateReport,
   positiveScoreItems,
   formatShanghaiDate,
+  classroomPhotosForSnapshot,
+  classroomPhotoCaptionsForSnapshot,
 } from '../semester-reports/report-generation';
 import {
   parseCourseSelections,
@@ -51,14 +53,17 @@ import {
   type StudentFeedback,
 } from '../semester-reports/report-input';
 
+/** 出勤仅接受约定枚举，避免无效值进入报告快照。 */
 type Attendance = 'present' | 'excused' | 'late';
 
+/** 在请求边界拒绝未知出勤状态，不能静默归类为正常出勤。 */
 function parseAttendance(value: unknown): Attendance {
   if (value === 'present' || value === 'excused' || value === 'late')
     return value;
   throw new BadRequestException('课程出勤状态无效');
 }
 
+/** 将教师填写的日期转换为上海时区的统计边界。 */
 function parsePeriodBound(date: string, exclusiveEnd: boolean): Date {
   const midnight = new Date(`${date}T00:00:00+08:00`);
   if (formatShanghaiDate(midnight) !== date || !date) {
@@ -187,11 +192,14 @@ export class SubjectReportsService implements OnModuleInit {
         `CREATE TABLE IF NOT EXISTS subject_report_subjects (
           id VARCHAR(64) NOT NULL PRIMARY KEY,
           teacher_id VARCHAR(64) NOT NULL,
+          term_id VARCHAR(64) NULL,
           name VARCHAR(100) NOT NULL,
           enabled TINYINT(1) NOT NULL DEFAULT 1,
           performance_config JSON NULL,
+          course_content_titles JSON NULL,
           created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-          INDEX idx_srs_teacher (teacher_id, enabled, name)
+          INDEX idx_srs_teacher (teacher_id, enabled, name),
+          INDEX idx_srs_term (teacher_id, term_id, enabled)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
       ];
       for (const statement of statements) {
@@ -217,7 +225,7 @@ export class SubjectReportsService implements OnModuleInit {
 
   private async requireTerm(id: string) {
     const term = await this.terms.findOne({
-      where: { id, teacherId: this.teacher.teacherId },
+      where: { id, teacherId: this.teacher.teacherId, enabled: true },
     });
     if (!term) throw new NotFoundException('学期不存在');
     return term;
@@ -277,13 +285,29 @@ export class SubjectReportsService implements OnModuleInit {
   listTerms() {
     return this.semesterReportsService.listTerms();
   }
+  /** 学期跨工作台共用，复用同一停用及教师隔离逻辑。 */
+  deleteTerm(id: string) {
+    return this.semesterReportsService.deleteTerm(id);
+  }
   createTerm(body: Record<string, string>) {
     return this.semesterReportsService.createTerm(body);
   }
-  async listSubjects() {
+  async listSubjects(filters?: { termId?: string }) {
+    const termId =
+      typeof filters?.termId === 'string' ? filters.termId.trim() : '';
+    const where = termId
+      ? [
+          { teacherId: this.teacher.teacherId, enabled: true, termId },
+          {
+            teacherId: this.teacher.teacherId,
+            enabled: true,
+            termId: IsNull(),
+          },
+        ]
+      : { teacherId: this.teacher.teacherId, enabled: true };
     try {
       const subjects = await this.subjects.find({
-        where: { teacherId: this.teacher.teacherId, enabled: true },
+        where,
         order: { name: 'ASC' },
       });
       return subjects.map((subject) => ({
@@ -297,7 +321,7 @@ export class SubjectReportsService implements OnModuleInit {
           this.ensureTablesPromise = null;
           await this.ensureTables();
           const subjects = await this.subjects.find({
-            where: { teacherId: this.teacher.teacherId, enabled: true },
+            where,
             order: { name: 'ASC' },
           });
           return subjects.map((subject) => ({
@@ -308,7 +332,7 @@ export class SubjectReportsService implements OnModuleInit {
         } catch (retryErr) {
           if (this.semesterSubjects) {
             const fallbackSubjects = await this.semesterSubjects.find({
-              where: { teacherId: this.teacher.teacherId, enabled: true },
+              where,
               order: { name: 'ASC' },
             });
             return fallbackSubjects.map((subject) => ({
@@ -325,29 +349,32 @@ export class SubjectReportsService implements OnModuleInit {
   }
   async createSubject(body: Record<string, string>) {
     if (!body.name?.trim()) throw new BadRequestException('请填写学科名称');
+    const termId = typeof body.termId === 'string' ? body.termId.trim() : '';
+    if (!termId && this.terms && typeof this.terms.count === 'function') {
+      const hasTerms = await this.terms.count({
+        where: { teacherId: this.teacher.teacherId, enabled: true },
+      });
+      if (hasTerms > 0) {
+        throw new BadRequestException('请选择所属学期');
+      }
+    } else if (termId) {
+      await this.requireTerm(termId);
+    }
+    const createPayload = {
+      id: randomUUID(),
+      teacherId: this.teacher.teacherId,
+      termId: termId || null,
+      name: body.name.trim().slice(0, 100),
+      enabled: true,
+      performanceConfig: defaultPerformanceConfig(),
+    };
     try {
-      return await this.subjects.save(
-        this.subjects.create({
-          id: randomUUID(),
-          teacherId: this.teacher.teacherId,
-          name: body.name.trim().slice(0, 100),
-          enabled: true,
-          performanceConfig: defaultPerformanceConfig(),
-        }),
-      );
+      return await this.subjects.save(this.subjects.create(createPayload));
     } catch (err) {
       if (this.isMissingTableError(err)) {
         this.ensureTablesPromise = null;
         await this.ensureTables();
-        return await this.subjects.save(
-          this.subjects.create({
-            id: randomUUID(),
-            teacherId: this.teacher.teacherId,
-            name: body.name.trim().slice(0, 100),
-            enabled: true,
-            performanceConfig: defaultPerformanceConfig(),
-          }),
-        );
+        return await this.subjects.save(this.subjects.create(createPayload));
       }
       throw err;
     }
@@ -374,6 +401,39 @@ export class SubjectReportsService implements OnModuleInit {
       }
       throw err;
     }
+  }
+
+  /** 标题用冒号序列化到正文，因此禁止冒号和换行以保持字段边界。 */
+  async updateCourseContentTitles(id: string, body: Record<string, unknown>) {
+    await this.requireSubject(id);
+    const titles = body.courseContentTitles;
+    if (
+      !Array.isArray(titles) ||
+      titles.length > 12 ||
+      titles.some(
+        (title: unknown) =>
+          typeof title !== 'string' ||
+          !title.trim() ||
+          title.trim().length > 40 ||
+          /[\r\n：:]/.test(title),
+      )
+    )
+      throw new BadRequestException(
+        '课程内容标题最多 12 项，每项 1–40 字，不能包含换行或冒号',
+      );
+    const courseContentTitles = (titles as string[]).map((title) =>
+      title.trim(),
+    );
+    if (new Set(courseContentTitles).size !== courseContentTitles.length)
+      throw new BadRequestException('课程内容标题不能重复');
+    const result = await this.subjects.update(
+      { id, teacherId: this.teacher.teacherId, enabled: true },
+      { courseContentTitles },
+    );
+    if (!result.affected) throw new NotFoundException('学科不存在');
+    return this.subjects.findOne({
+      where: { id, teacherId: this.teacher.teacherId },
+    });
   }
 
   async updateSubjectPerformance(id: string, body: Record<string, unknown>) {
@@ -427,7 +487,11 @@ export class SubjectReportsService implements OnModuleInit {
         reportVersion: 'v1',
         courseScope: body.courseScope,
       },
-      { allowDisabledSubject: true, skipSubjectValidation: true },
+      {
+        allowDisabledSubject: true,
+        allowDisabledTerm: true,
+        skipSubjectValidation: true,
+      },
     );
   }
 
@@ -455,8 +519,32 @@ export class SubjectReportsService implements OnModuleInit {
   deleteDocument(id: string) {
     return this.semesterReportsService.deleteDocument(id);
   }
-  preview(body: Record<string, unknown>) {
-    return this.semesterReportsService.preview(body);
+  async preview(body: Record<string, unknown>) {
+    const subjectId =
+      typeof body.subjectId === 'string' ? body.subjectId.trim() : '';
+    if (subjectId && subjectId !== '*') {
+      await this.requireSubject(subjectId);
+    }
+    if (Array.isArray(body.courseSelections)) {
+      for (const sel of body.courseSelections as Array<{
+        subjectId?: unknown;
+      }>) {
+        if (
+          typeof sel?.subjectId === 'string' &&
+          sel.subjectId &&
+          sel.subjectId !== '*'
+        ) {
+          await this.requireSubject(sel.subjectId);
+        }
+      }
+    }
+    const termId = typeof body.termId === 'string' ? body.termId.trim() : '';
+    if (termId) {
+      await this.requireTerm(termId);
+    }
+    return this.semesterReportsService.preview(body, {
+      skipSubjectValidation: true,
+    });
   }
 
   private key() {
@@ -605,11 +693,40 @@ export class SubjectReportsService implements OnModuleInit {
       content.attendance === 'late'
         ? content.attendance
         : (attendances?.[0] ?? 'present');
+    const courseScope =
+      typeof content.courseScope === 'string' && content.courseScope.trim()
+        ? content.courseScope.trim()
+        : content.courseScope === undefined &&
+            typeof row.courseScope === 'string' &&
+            row.courseScope.trim()
+          ? row.courseScope.trim()
+          : undefined;
+    const nextWeekContent =
+      typeof content.nextWeekContent === 'string' &&
+      content.nextWeekContent.trim()
+        ? content.nextWeekContent.trim()
+        : content.nextWeekContent === undefined &&
+            typeof (row.snapshot as Record<string, unknown> | null)
+              ?.nextWeekContent === 'string' &&
+            (
+              (row.snapshot as Record<string, unknown>)
+                .nextWeekContent as string
+            ).trim()
+          ? (
+              (row.snapshot as Record<string, unknown>)
+                .nextWeekContent as string
+            ).trim()
+          : undefined;
+    const restContent = { ...content };
+    delete restContent.courseScope;
+    delete restContent.nextWeekContent;
     return {
-      ...content,
+      ...restContent,
       courseContent,
       ...(attendances ? { attendances } : {}),
       attendance: singleAttendance,
+      ...(courseScope ? { courseScope } : {}),
+      ...(nextWeekContent ? { nextWeekContent } : {}),
     };
   }
 
@@ -645,6 +762,7 @@ export class SubjectReportsService implements OnModuleInit {
       isStageReport: false,
       isSubjectReport: true,
       termId: row.termId,
+      termName: row.snapshot?.termName ?? '',
       subjectId: row.subjectId,
       subjectName: row.snapshot?.subjectName ?? '',
       studentId: row.studentId,
@@ -674,6 +792,19 @@ export class SubjectReportsService implements OnModuleInit {
   }
 
   async listReports(filters: Record<string, unknown> = {}) {
+    try {
+      return await this.queryReports(filters);
+    } catch (err) {
+      if (this.isMissingTableError(err)) {
+        this.ensureTablesPromise = null;
+        await this.ensureTables().catch(() => {});
+        return await this.queryReports(filters).catch(() => []);
+      }
+      throw err;
+    }
+  }
+
+  private async queryReports(filters: Record<string, unknown> = {}) {
     const q = typeof filters.q === 'string' ? filters.q.trim() : '';
     const status =
       typeof filters.status === 'string' ? filters.status.trim() : '';
@@ -701,15 +832,53 @@ export class SubjectReportsService implements OnModuleInit {
     if (subjectId)
       query.andWhere('report.subjectId = :subjectId', { subjectId });
 
-    const rows = await query
-      .orderBy('report.createdAt', 'DESC')
-      .addOrderBy('report.id', 'DESC')
-      .skip((page - 1) * 200)
-      .take(200)
+    // 先单独物化轻量 ID 与创建时间在外层排序分页，避免整份含大照片的 JSON 正文快照被带入 filesort 导致 sort_buffer_size 溢出 (ER_OUT_OF_SORTMEMORY)
+    const manager = this.reports.manager;
+    let ordered: Array<{ id: string }>;
+    if (manager && typeof manager.createQueryBuilder === 'function') {
+      const matching = query
+        .select('report.id', 'id')
+        .addSelect('report.createdAt', 'created_at')
+        .limit(Number.MAX_SAFE_INTEGER);
+
+      ordered = await manager
+        .createQueryBuilder()
+        .select('matched_reports.id', 'id')
+        .from(`(${matching.getQuery()})`, 'matched_reports')
+        .setParameters(matching.getParameters())
+        .orderBy('matched_reports.created_at', 'DESC')
+        .addOrderBy('matched_reports.id', 'DESC')
+        .offset((page - 1) * 200)
+        .limit(200)
+        .getRawMany<{ id: string }>();
+    } else {
+      ordered = await query
+        .select(['report.id', 'report.createdAt'])
+        .orderBy('report.createdAt', 'DESC')
+        .addOrderBy('report.id', 'DESC')
+        .skip((page - 1) * 200)
+        .take(200)
+        .getMany();
+    }
+
+    if (!ordered.length) return [];
+    const ids = ordered.map((row) => row.id);
+
+    const rows = await this.reports
+      .createQueryBuilder('report')
+      .where('report.teacherId = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere('report.id IN (:...ids)', { ids })
       .getMany();
 
+    const rowMap = new Map(rows.map((r) => [r.id, r]));
+    const sortedRows = ids
+      .map((id) => rowMap.get(id))
+      .filter((r): r is SubjectReportEntity => Boolean(r));
+
     return Promise.all(
-      rows.map(async (row) => ({
+      sortedRows.map(async (row) => ({
         ...this.reportDto(await this.withStudentPresentation(row)),
         share: await this.activeShare(row.id),
       })),
@@ -742,6 +911,8 @@ export class SubjectReportsService implements OnModuleInit {
             'report-unpublished': '撤销发布',
             'share-created': '生成分享',
             'share-revoked': '撤销分享',
+            'classroom-photo-uploaded': '上传课堂照片',
+            'classroom-photo-removed': '移除课堂照片',
             'report-deleted': '删除报告',
           } as Record<string, string>
         )[e.action] ?? e.action,
@@ -768,7 +939,7 @@ export class SubjectReportsService implements OnModuleInit {
     }
 
     const term = await this.terms.findOne({
-      where: { id: termId, teacherId: this.teacher.teacherId },
+      where: { id: termId, teacherId: this.teacher.teacherId, enabled: true },
     });
     if (!term) throw new NotFoundException('所选学期不存在');
 
@@ -795,8 +966,21 @@ export class SubjectReportsService implements OnModuleInit {
 
     const rawCourseScope =
       typeof input.courseScope === 'string' ? input.courseScope.trim() : '';
+    const rawNextWeekContent =
+      typeof input.nextWeekContent === 'string'
+        ? input.nextWeekContent.trim()
+        : '';
     const selections = parseCourseSelections(
-      input.courseSelections ?? [{ subjectId, courseScope: rawCourseScope }],
+      input.courseSelections ?? [
+        {
+          subjectId,
+          courseScope: rawCourseScope || '课程内容',
+          manualContent:
+            typeof input.courseContent === 'string'
+              ? input.courseContent
+              : rawCourseScope || '课程内容',
+        },
+      ],
       period,
     );
 
@@ -967,6 +1151,8 @@ export class SubjectReportsService implements OnModuleInit {
           typeof input.teacherObservation === 'string'
             ? input.teacherObservation.trim()
             : null,
+        courseScope: rawCourseScope || null,
+        nextWeekContent: rawNextWeekContent || null,
       };
 
       const templateContent = generateTemplateReport({
@@ -996,12 +1182,15 @@ export class SubjectReportsService implements OnModuleInit {
             .map((selection) => selection.manualContent)
             .filter(Boolean)
             .join('\n'),
+          ...(rawCourseScope ? { courseScope: rawCourseScope } : {}),
+          ...(rawNextWeekContent
+            ? { nextWeekContent: rawNextWeekContent }
+            : {}),
         },
         status: 'draft',
         keywords: snapshot.keywords as string | null,
         teacherObservation: snapshot.teacherObservation as string | null,
-        courseScope:
-          typeof input.courseScope === 'string' ? input.courseScope : '',
+        courseScope: rawCourseScope || null,
       });
 
       const saved = await this.reports.save(report);
@@ -1023,6 +1212,20 @@ export class SubjectReportsService implements OnModuleInit {
     const { courseContent } = content;
     if (courseContent !== undefined && typeof courseContent !== 'string') {
       throw new BadRequestException('课程内容必须为文本');
+    }
+    if (
+      content.courseScope !== undefined &&
+      content.courseScope !== null &&
+      typeof content.courseScope !== 'string'
+    ) {
+      throw new BadRequestException('授课范围备注必须为文本');
+    }
+    if (
+      content.nextWeekContent !== undefined &&
+      content.nextWeekContent !== null &&
+      typeof content.nextWeekContent !== 'string'
+    ) {
+      throw new BadRequestException('下周教学内容重点必须为文本');
     }
     const previous = this.reportContent(report);
     // 草稿修改支持更新多课次出勤列表，同时双向同步单标量字段以兼容外部调用
@@ -1068,9 +1271,136 @@ export class SubjectReportsService implements OnModuleInit {
         mergedContent[key] = val;
       }
     }
+    for (const key of [
+      'classroomPhoto',
+      'classroomPhotos',
+      'classroomPhotoCaptions',
+    ]) {
+      const val = previousSnapshot?.[key] ?? previousContent?.[key];
+      if (val !== undefined && mergedContent[key] === undefined) {
+        mergedContent[key] = val;
+      }
+    }
+    if (
+      mergedContent.classroomPhotos !== undefined ||
+      mergedContent.classroomPhotoCaptions !== undefined
+    ) {
+      report.snapshot = {
+        ...(report.snapshot ?? {}),
+        ...(mergedContent.classroomPhoto !== undefined
+          ? { classroomPhoto: mergedContent.classroomPhoto }
+          : {}),
+        ...(mergedContent.classroomPhotos !== undefined
+          ? { classroomPhotos: mergedContent.classroomPhotos }
+          : {}),
+        ...(mergedContent.classroomPhotoCaptions !== undefined
+          ? { classroomPhotoCaptions: mergedContent.classroomPhotoCaptions }
+          : {}),
+      };
+    }
+
+    if (content.courseScope !== undefined) {
+      const scopeVal =
+        typeof content.courseScope === 'string'
+          ? content.courseScope.trim()
+          : '';
+      mergedContent.courseScope = scopeVal || null;
+      report.courseScope = scopeVal || null;
+    } else if (previous?.courseScope) {
+      mergedContent.courseScope = previous.courseScope;
+    }
+
+    if (content.nextWeekContent !== undefined) {
+      const nextVal =
+        typeof content.nextWeekContent === 'string'
+          ? content.nextWeekContent.trim()
+          : '';
+      mergedContent.nextWeekContent = nextVal || null;
+    } else if (previous?.nextWeekContent) {
+      mergedContent.nextWeekContent = previous.nextWeekContent;
+    }
+
     report.content = mergedContent;
     const saved = await this.reports.save(report);
     await this.log('draft-edited', { reportId: id });
+    return this.reportDto(saved);
+  }
+
+  async setClassroomPhoto(
+    id: string,
+    file?: { buffer: Buffer; size: number; mimetype: string },
+    slot: unknown = 0,
+  ) {
+    const report = await this.findReport(id);
+    if (report.status !== 'draft') {
+      throw new BadRequestException('只有草稿状态的报告可以修改课堂照片');
+    }
+    if (![0, 1, '0', '1'].includes(slot as string | number)) {
+      throw new BadRequestException('课堂照片位置必须为 0 或 1');
+    }
+    let classroomPhoto: string | null = null;
+    if (file) {
+      const png = file.buffer
+        .subarray(0, 8)
+        .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      const jpeg =
+        file.buffer[0] === 255 &&
+        file.buffer[1] === 216 &&
+        file.buffer[2] === 255;
+      if (
+        file.size < 12 ||
+        file.size > 2 * 1024 * 1024 ||
+        file.size !== file.buffer.length ||
+        !(
+          (png && file.mimetype === 'image/png') ||
+          (jpeg && file.mimetype === 'image/jpeg')
+        )
+      ) {
+        throw new BadRequestException(
+          '请上传 JPG 或 PNG 课堂照片（每张最大 2MB）',
+        );
+      }
+      classroomPhoto = `data:${png ? 'image/png' : 'image/jpeg'};base64,${file.buffer.toString('base64')}`;
+    }
+
+    const currentSnapshot = report.snapshot ?? {};
+    const currentContent = (report.content ?? {}) as Record<string, unknown>;
+
+    const classroomPhotos = classroomPhotosForSnapshot({
+      classroomPhoto:
+        currentContent.classroomPhoto ?? currentSnapshot.classroomPhoto,
+      classroomPhotos:
+        currentContent.classroomPhotos ?? currentSnapshot.classroomPhotos,
+    });
+    classroomPhotos[Number(slot)] = classroomPhoto;
+
+    const classroomPhotoCaptions = classroomPhotoCaptionsForSnapshot({
+      classroomPhotoCaptions:
+        currentContent.classroomPhotoCaptions ??
+        currentSnapshot.classroomPhotoCaptions,
+    });
+    if (!file) {
+      classroomPhotoCaptions[Number(slot)] = '';
+    }
+
+    report.snapshot = {
+      ...currentSnapshot,
+      classroomPhoto: classroomPhotos[0] ?? null,
+      classroomPhotos,
+      classroomPhotoCaptions,
+    };
+    report.content = {
+      ...currentContent,
+      classroomPhoto: classroomPhotos[0] ?? null,
+      classroomPhotos,
+      classroomPhotoCaptions,
+    };
+
+    const saved = await this.reports.save(report);
+    await this.log(
+      file ? 'classroom-photo-uploaded' : 'classroom-photo-removed',
+      { reportId: id, details: { slot: Number(slot) } },
+    );
     return this.reportDto(saved);
   }
 
@@ -1191,6 +1521,7 @@ export class SubjectReportsService implements OnModuleInit {
       term: report.snapshot?.termName ?? '',
       start: report.periodStart,
       end: report.periodEnd,
+      courseScope: report.courseScope || undefined,
       content: this.reportContent(displayed),
       isSubjectReport: true,
     };

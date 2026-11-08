@@ -1,11 +1,23 @@
+// 覆盖学科报告向导、设置、历史报告保留及组件身份回归。
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SubjectReportStudio } from "./SubjectReportStudio";
 
-const apiMock = vi.fn();
+const { apiMock, mockRequest } = vi.hoisted(() => {
+  const apiMock = vi.fn();
+  const mockRequest = Object.assign((...args: unknown[]) => apiMock(...args), {
+    get: (url: string, config?: unknown) => apiMock(url, { method: "GET", ...(config as object) }),
+    post: (url: string, data?: unknown, config?: unknown) =>
+      apiMock(url, { method: "POST", data, ...(config as object) }),
+    patch: (url: string, data?: unknown, config?: unknown) =>
+      apiMock(url, { method: "PATCH", data, ...(config as object) }),
+    delete: (url: string, config?: unknown) => apiMock(url, { method: "DELETE", ...(config as object) })
+  });
+  return { apiMock, mockRequest };
+});
 vi.mock("@/lib/request", () => ({
-  default: (...args: unknown[]) => apiMock(...args)
+  default: mockRequest
 }));
 
 describe("SubjectReportStudio", () => {
@@ -133,7 +145,8 @@ describe("SubjectReportStudio", () => {
       libraryBtn?.click();
     });
 
-    expect(container.textContent).toContain("学期与学科设置");
+    expect(container.textContent).toContain("学期设置");
+    expect(container.textContent).toContain("学科设置");
     expect(container.textContent).toContain("英语教材.pdf");
   });
 
@@ -168,6 +181,33 @@ describe("SubjectReportStudio", () => {
     expect(container.querySelector('section[aria-label="配置学科课堂表现"]')).toBeTruthy();
   });
 
+  it("renders both configurations with unique keys and resets title edits when switching subjects", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await act(async () => root.render(<SubjectReportStudio />));
+      const settings = [...container.querySelectorAll("button")].find(
+        button => button.textContent?.trim() === "学期学科设置与课程资料"
+      )!;
+      await act(async () => settings.click());
+      const titles = () => container.querySelectorAll('section[aria-label="配置学科课程内容标题"]');
+      expect(titles()).toHaveLength(1);
+      const add = [...titles()[0]!.querySelectorAll("button")].find(button => button.textContent === "新增标题")!;
+      await act(async () => add.click());
+      expect(titles()[0]!.querySelectorAll("input")).toHaveLength(5);
+      const subject = container.querySelector<HTMLSelectElement>('select[aria-label="配置学科切换"]')!;
+      await act(async () => {
+        subject.value = "sub-2";
+        subject.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(titles()).toHaveLength(1);
+      expect(titles()[0]!.querySelectorAll("input")).toHaveLength(4);
+      expect(container.querySelectorAll('button[aria-label^="删除课堂表现项目 "]').length).toBeGreaterThan(0);
+      expect(error.mock.calls.filter(args => args.some(value => String(value).includes("same key")))).toEqual([]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("filters reports by subject without displaying storage details", async () => {
     await act(async () => root.render(<SubjectReportStudio />));
     expect(container.textContent).not.toContain("subject_report");
@@ -199,7 +239,7 @@ describe("SubjectReportStudio", () => {
     await act(async () => button("添加学科").click());
     expect(apiMock).toHaveBeenCalledWith("/api/subject-reports/report-subjects", {
       method: "POST",
-      data: { name: "戏剧" }
+      data: { name: "戏剧", termId: "term-1" }
     });
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="配置学科切换"]')?.value).toBe("sub-3");
     const remove = container.querySelector<HTMLButtonElement>('button[aria-label^="删除课堂表现项目 "]')!;
@@ -212,6 +252,63 @@ describe("SubjectReportStudio", () => {
       method: "PATCH",
       data: { performanceConfig: expect.arrayContaining([expect.objectContaining({ label: "听指令反应" })]) }
     });
+  });
+
+  it("places term deletion in the term calendar separately from subject settings", async () => {
+    await act(async () => root.render(<SubjectReportStudio />));
+    const library = [...container.querySelectorAll("button")].find(
+      item => item.textContent?.trim() === "学期学科设置与课程资料"
+    )!;
+    await act(async () => library.click());
+    const terms = container.querySelector('section[aria-label="学期设置"]');
+    const subjects = container.querySelector('section[aria-label="学科设置"]');
+    expect(terms).toBeTruthy();
+    expect(subjects).toBeTruthy();
+    expect(terms?.querySelector('button[aria-label="删除学期 2026秋季学期"]')?.parentElement?.textContent).toContain(
+      "2026-09-01 至 2027-01-20"
+    );
+    expect(subjects?.querySelector('button[aria-label^="删除学期"]')).toBeNull();
+    expect(terms?.querySelector('button[aria-label^="删除学科"]')).toBeNull();
+    expect(container.querySelectorAll('button[aria-label="删除学期 2026秋季学期"]')).toHaveLength(1);
+  });
+
+  it("deletes a term after confirmation and keeps existing reports", async () => {
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("学期学科设置与课程资料").click());
+    const remove = () => container.querySelector<HTMLButtonElement>('button[aria-label="删除学期 2026秋季学期"]')!;
+    await act(async () => remove().click());
+    expect(apiMock).not.toHaveBeenCalledWith("/api/subject-reports/report-terms/term-1", { method: "DELETE" });
+    await act(async () => button("取消").click());
+    expect(remove()).toBeTruthy();
+    await act(async () => remove().click());
+    await act(async () => button("删除学期").click());
+    expect(apiMock).toHaveBeenCalledWith("/api/subject-reports/report-terms/term-1", { method: "DELETE" });
+    expect(remove()).toBeNull();
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="课程学期"]')?.value ?? "").toBe("");
+    await act(async () => button("报告管理与分发").click());
+    expect(container.textContent).toContain("小宇 · 启航班");
+    expect(container.textContent).toContain("待审核");
+  });
+
+  it("keeps the term available when deletion fails", async () => {
+    const original = apiMock.getMockImplementation()!;
+    apiMock.mockImplementation((url: string, options?: { method?: string }) => {
+      if (url.endsWith("/report-terms/term-1") && options?.method === "DELETE")
+        return Promise.reject(new Error("offline"));
+      return original(url, options);
+    });
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("学期学科设置与课程资料").click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="删除学期 2026秋季学期"]')!.click()
+    );
+    await act(async () => button("删除学期").click());
+    expect(container.querySelector('button[aria-label="删除学期 2026秋季学期"]')).toBeTruthy();
+    expect(container.textContent).toContain("删除学期失败");
   });
 
   it("confirms subject deletion and removes it from the settings", async () => {
@@ -446,6 +543,60 @@ describe("SubjectReportStudio", () => {
     });
   });
 
+  it("edits and saves courseScope and nextWeekContent in subject report draft editor", async () => {
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("预览/微调").click());
+
+    const scopeInput = document.querySelector<HTMLInputElement>(
+      'input[placeholder="例如：Unit 1 单词复习与句型对话"]'
+    )!;
+    const nextTextarea = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="例如：继续巩固颜色与数字表达，开展课堂情景剧..."]'
+    )!;
+
+    expect(scopeInput).not.toBeNull();
+    expect(nextTextarea).not.toBeNull();
+    expect(scopeInput.value).toBe("");
+    expect(nextTextarea.value).toBe("");
+
+    // Live preview initially does not have these sections
+    expect(document.querySelector('[aria-label="授课范围备注"]')).toBeNull();
+    expect(document.querySelector('[aria-label="下周教学内容重点"]')).toBeNull();
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        scopeInput,
+        "Unit 1 单词复习与句型对话"
+      );
+      scopeInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        nextTextarea,
+        "下周进入 Unit 2 重点句型"
+      );
+      nextTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Live preview updates immediately
+    expect(document.querySelector('[aria-label="授课范围备注"]')?.textContent).toContain("Unit 1 单词复习与句型对话");
+    expect(document.querySelector('[aria-label="下周教学内容重点"]')?.textContent).toContain(
+      "下周进入 Unit 2 重点句型"
+    );
+
+    await act(async () => button("保存草稿").click());
+    expect(apiMock).toHaveBeenCalledWith("/api/subject-reports/reports/rep-1/draft", {
+      method: "PATCH",
+      data: {
+        content: expect.objectContaining({
+          courseScope: "Unit 1 单词复习与句型对话",
+          nextWeekContent: "下周进入 Unit 2 重点句型"
+        })
+      }
+    });
+  });
+
   it("imports draft course content by chapter or page and keeps existing text", async () => {
     await act(async () => root.render(<SubjectReportStudio />));
     const button = (label: string) =>
@@ -567,6 +718,109 @@ describe("SubjectReportStudio", () => {
         })
       }
     });
+  });
+
+  it("aligns course content structure with add wizard: titles, lesson count, delete button, and word count", async () => {
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("预览/微调").click());
+
+    // Section title and explanation
+    expect(document.body.textContent).toContain("课程内容");
+    expect(document.body.textContent).toContain("逐课次手填内容或从已确认的课程 PDF 带入");
+
+    // Lesson 1 heading
+    expect(document.body.textContent).toContain("第 1 节课教学内容");
+
+    // Lesson count input
+    const lessonCountInput = document.querySelector<HTMLInputElement>('input[aria-label="本周课程次数"]');
+    expect(lessonCountInput).not.toBeNull();
+    expect(lessonCountInput?.value).toBe("1");
+
+    // No delete button when there is only 1 lesson
+    expect(document.querySelector('button[aria-label="删除第 1 节课"]')).toBeNull();
+
+    // Change lesson count to 2 via the number input
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(lessonCountInput, "2");
+      lessonCountInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      lessonCountInput!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // Lesson 2 card heading appears
+    expect(document.body.textContent).toContain("第 2 节课教学内容");
+
+    // Delete buttons now appear for multi-lesson cards
+    const deleteBtn = document.querySelector<HTMLButtonElement>('button[aria-label="删除第 2 节课"]');
+    expect(deleteBtn).not.toBeNull();
+    expect(deleteBtn?.textContent).toContain("删除此课");
+
+    // Delete lesson 2
+    await act(async () => {
+      deleteBtn!.click();
+    });
+
+    expect(document.body.textContent).not.toContain("第 2 节课教学内容");
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="本周课程次数"]')?.value).toBe("1");
+  });
+
+  it("routes classroom photo upload and removal to /api/subject-reports instead of semester-reports", async () => {
+    const original = apiMock.getMockImplementation()!;
+    apiMock.mockImplementation(async (url, options) => {
+      const result = await original(url, options);
+      if (url === "/api/subject-reports/reports" && Array.isArray(result)) {
+        return result.map(report => ({
+          ...report,
+          content: {
+            ...report.content,
+            classroomPhotos: ["data:image/png;base64,aaa", "data:image/png;base64,bbb"]
+          }
+        }));
+      }
+      return result;
+    });
+
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("预览/微调").click());
+
+    // Both photo slots have "删除" buttons
+    const deletePhotoBtns = [...document.querySelectorAll("button")].filter(btn => btn.textContent?.trim() === "删除");
+    expect(deletePhotoBtns.length).toBe(2);
+
+    // Delete slot 1 photo
+    await act(async () => {
+      deletePhotoBtns[1]!.click();
+    });
+
+    // Verify it sent DELETE to /api/subject-reports
+    expect(apiMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/api\/subject-reports\/reports\/rep-1\/classroom-photo\?slot=1/),
+      expect.objectContaining({ method: "DELETE" })
+    );
+
+    // Now upload to slot 0
+    const fileInputs = document.querySelectorAll<HTMLInputElement>('input[type="file"][accept*="image"]');
+    expect(fileInputs.length).toBeGreaterThanOrEqual(2);
+
+    const file = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "photo0.png", {
+      type: "image/png"
+    });
+
+    await act(async () => {
+      Object.defineProperty(fileInputs[0]!, "files", {
+        value: [file]
+      });
+      fileInputs[0]!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // Verify it posted to /api/subject-reports, NOT /api/semester-reports
+    expect(apiMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/api\/subject-reports\/reports\/rep-1\/classroom-photo$/),
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   it("shows published report actions, flow and a separate parent link row", async () => {
@@ -706,5 +960,80 @@ describe("SubjectReportStudio", () => {
     expect(actions).toContain("上一步");
     expect(actions).not.toContain("暂存草稿");
     expect(actions).not.toContain("恢复草稿");
+  });
+
+  it("maps custom course content titles into draft editor fields and preserves them upon saving", async () => {
+    apiMock.mockImplementation(async (url: string) => {
+      if (url.includes("/api/subject-reports/report-terms")) {
+        return [{ id: "term-1", name: "2026秋季学期", startDate: "2026-09-01", endDate: "2027-01-20" }];
+      }
+      if (url.includes("/api/subject-reports/report-subjects")) {
+        return [
+          { id: "sub-1", name: "英语", courseContentTitles: ["主题词汇", "重点句式", "拓展探究"] },
+          { id: "sub-2", name: "语文" }
+        ];
+      }
+      if (url === "/api/pet-points") {
+        return { students: [{ id: "s1", name: "小宇", className: "启航班", score: 10 }] };
+      }
+      if (url.includes("/api/subject-reports/course-documents")) return [];
+      if (url.includes("/api/subject-reports/reports")) {
+        return [
+          {
+            id: "rep-custom-1",
+            studentName: "小宇",
+            className: "启航班",
+            subjectName: "英语",
+            subjectId: "sub-1",
+            termId: "term-1",
+            period: "week",
+            status: "draft",
+            startDate: "2026-10-01",
+            endDate: "2026-10-07",
+            content: {
+              summary: "表现良好",
+              courseContent:
+                "第 1 节课 · 主题词汇：apple, banana\n第 1 节课 · 重点句式：I like apples.\n第 1 节课 · 拓展探究：Fruit facts"
+            }
+          }
+        ];
+      }
+      return [];
+    });
+
+    await act(async () => root.render(<SubjectReportStudio />));
+    const button = (label: string) =>
+      [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === label)!;
+    await act(async () => button("预览/微调").click());
+
+    // Verify custom labels exist
+    expect(document.querySelector('label[for="subject-draft-course-content-0"]')?.textContent).toBe("主题词汇");
+    expect(document.querySelector('label[for="subject-draft-course-content-1"]')?.textContent).toBe("重点句式");
+    expect(document.querySelector('label[for="subject-draft-course-content-2"]')?.textContent).toBe("拓展探究");
+
+    // Verify values are mapped
+    const field0 = document.querySelector<HTMLTextAreaElement>("#subject-draft-course-content-0")!;
+    const field1 = document.querySelector<HTMLTextAreaElement>("#subject-draft-course-content-1")!;
+    const field2 = document.querySelector<HTMLTextAreaElement>("#subject-draft-course-content-2")!;
+    expect(field0.value).toBe("apple, banana");
+    expect(field1.value).toBe("I like apples.");
+    expect(field2.value).toBe("Fruit facts");
+
+    // Edit field 1 and save
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field1, "I like oranges.");
+      field1.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("保存草稿").click());
+
+    expect(apiMock).toHaveBeenCalledWith("/api/subject-reports/reports/rep-custom-1/draft", {
+      method: "PATCH",
+      data: {
+        content: expect.objectContaining({
+          courseContent:
+            "第 1 节课 · 主题词汇：apple, banana\n第 1 节课 · 重点句式：I like oranges.\n第 1 节课 · 拓展探究：Fruit facts"
+        })
+      }
+    });
   });
 });

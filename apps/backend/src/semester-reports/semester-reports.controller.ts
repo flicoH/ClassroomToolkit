@@ -27,11 +27,21 @@ export class SemesterReportsController {
   @Get('report-terms') listTerms() {
     return this.reports.listTerms();
   }
+  /** 停用当前教师的共享学期，不级联删除历史报告与资料。 */
+  @Delete('report-terms/:id')
+  deleteTerm(@Param('id') id: string) {
+    return this.reports.deleteTerm(id);
+  }
   @Post('report-terms') createTerm(@Body() body: Record<string, string>) {
     return this.reports.createTerm(body);
   }
-  @Get('report-subjects') listSubjects() {
-    return this.reports.listSubjects();
+  @Get('report-subjects') listSubjects(@Query('termId') termId?: string) {
+    return this.reports.listSubjects({ termId });
+  }
+  /** 仅停用本工作台所属的学科；另一工作台的独立学科不受影响。 */
+  @Delete('report-subjects/:id')
+  deleteSubject(@Param('id') id: string) {
+    return this.reports.deleteSubject(id);
   }
   @Post('report-subjects') createSubject(@Body() body: Record<string, string>) {
     return this.reports.createSubject(body);

@@ -6,20 +6,28 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 
+/** 未配置标题时保留原四项，同时作为 PDF 分类结果的索引顺序。 */
 export const subjectLessonCategories = ["核心词汇", "核心句型 / 对话", "朗读或表达", "课堂练习与任务"];
 
+/** 共用课程字段视图：按传入标题顺序绑定值，不在展示层改写正文。 */
 export function SubjectLessonFields({
   id,
   values,
+  titles = subjectLessonCategories,
   onChange
 }: {
+  /** 同页多个课次的表单标识前缀，关联 label 与输入框。 */
   id: string;
+  /** 与标题按索引一一对应的教学内容。 */
   values: string[];
+  /** 省略时使用历史四项；空数组表示教师主动移除全部标题。 */
+  titles?: string[];
+  /** 只更新目标字段，原文序列化交给工作台处理。 */
   onChange: (index: number, value: string) => void;
 }) {
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-      {subjectLessonCategories.map((category, index) => (
+      {titles.map((category, index) => (
         <div key={category}>
           <label htmlFor={`${id}-${index}`} className="text-[11px] font-medium text-muted-foreground">
             {category}
@@ -43,8 +51,10 @@ const categories = [
   /朗读|讲述|表达|read aloud|retell/i,
   /练习|任务|活动|practice|exercise|activity/i
 ];
+/** 课程范围预览仅带入教学内容，不表示学生已经掌握。 */
 type ScopePreview = { learningContents: Array<{ text: string; section?: string }> };
 
+/** 新报告按学期学科预览，已有草稿按已鉴权报告归属读取原资料。 */
 export function SubjectLessonPdfFill({
   termId,
   subjectId,
@@ -57,15 +67,25 @@ export function SubjectLessonPdfFill({
   onFill,
   onOpenLibrary
 }: {
+  /** 新报告引用资料的学期归属。 */
   termId: string;
+  /** 新报告引用资料的学科归属。 */
   subjectId: string;
+  /** 传给预览接口的报告周期。 */
   period: string;
+  /** 已有草稿 ID；存在时由服务端按报告读取原归属，允许停用配置。 */
   draftId?: string;
+  /** 教师选择的章节或页码范围。 */
   scope: string;
+  /** 通知父组件保存该课次的资料范围。 */
   onScopeChange: (value: string) => void;
+  /** 服务端已确认的章节列表。 */
   units: string[];
+  /** 当前归属下是否有可用资料，决定能否请求预览。 */
   hasDocuments: boolean;
+  /** 按照四个默认类别回传原文，教师手改保护由父组件负责。 */
   onFill: (groups: string[][]) => void;
+  /** 打开资料设置页的可选入口。 */
   onOpenLibrary?: () => void;
 }) {
   const selectedUnit = units.includes(scope) ? scope : "";
@@ -82,6 +102,7 @@ export function SubjectLessonPdfFill({
     []
   );
 
+  /** 章节与页码共用预览，过期请求不能覆盖教师刚切换的范围。 */
   async function fill(value: string) {
     const courseScope = value.trim();
     if (!courseScope || !hasDocuments) return;

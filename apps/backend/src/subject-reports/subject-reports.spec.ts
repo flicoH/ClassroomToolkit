@@ -1,3 +1,5 @@
+/// <reference types="jest" />
+// 独立学科报告服务回归：校验教师边界、正文保存、分享和历史兼容。
 import { SubjectReportsService } from './subject-reports.service';
 
 describe('SubjectReportsService', () => {
@@ -14,6 +16,112 @@ describe('SubjectReportsService', () => {
   let mockStudentProfilesRepo: Record<string, jest.Mock>;
   let mockTeacher: { teacherId: string };
   let mockSemesterReportsService: Record<string, jest.Mock>;
+
+  it('saves normalized titles within the current teacher and allows removing all titles', async () => {
+    mockSubjectsRepo.update.mockResolvedValue({ affected: 1 });
+    await service.updateCourseContentTitles('sub-eng', {
+      courseContentTitles: [' 阅读 '],
+    });
+    expect(mockSubjectsRepo.update).toHaveBeenCalledWith(
+      { id: 'sub-eng', teacherId: 'test-teacher', enabled: true },
+      { courseContentTitles: ['阅读'] },
+    );
+    await service.updateCourseContentTitles('sub-eng', {
+      courseContentTitles: [],
+    });
+    expect(mockSubjectsRepo.update).toHaveBeenLastCalledWith(
+      expect.anything(),
+      { courseContentTitles: [] },
+    );
+  });
+
+  it.each([
+    null,
+    [''],
+    ['a', ' a '],
+    ['a：b'],
+    ['a\n b'],
+    [2],
+    Array(13).fill('a'),
+    ['a'.repeat(41)],
+  ])('rejects invalid titles %j', async (courseContentTitles) => {
+    await expect(
+      service.updateCourseContentTitles('sub-eng', { courseContentTitles }),
+    ).rejects.toThrow();
+    expect(mockSubjectsRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('cannot configure another teacher or disabled subject', async () => {
+    mockSubjectsRepo.findOne.mockResolvedValue(null);
+    await expect(
+      service.updateCourseContentTitles('other', {
+        courseContentTitles: ['阅读'],
+      }),
+    ).rejects.toThrow();
+    expect(mockSubjectsRepo.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['draft', 'published'])(
+    'preserves %s report editing, publishing or existing sharing after term deletion',
+    async (status) => {
+      const previousKey = process.env.SEMESTER_REPORT_SHARE_SECRET;
+      process.env.SEMESTER_REPORT_SHARE_SECRET =
+        'test-secret-at-least-32-chars-long-123456';
+      try {
+        const row = {
+          id: 'r1',
+          teacherId: 'test-teacher',
+          termId: 'term-1',
+          status,
+          studentName: '小宇',
+          className: '启航班',
+          periodType: 'week',
+          snapshot: { termName: '秋季学期', subjectName: '英语' },
+          content: { summary: '原有报告', courseContent: '颜色词汇' },
+        };
+        mockReportsRepo.findOne.mockResolvedValue(row);
+        mockSharesRepo.findOne.mockResolvedValue({
+          reportId: 'r1',
+          teacherId: 'test-teacher',
+        });
+        const original =
+          status === 'published' ? await service.createShare('r1') : undefined;
+        await service.deleteTerm('term-1');
+        mockTermsRepo.findOne.mockResolvedValue(null);
+        if (status === 'draft') {
+          await service.editDraft('r1', { summary: '编辑后的报告' });
+        }
+        const shared = original ?? (await service.publish('r1'));
+        const parent = await service.publicReport(
+          new URL(shared.url, 'https://school.test').pathname.split('/').pop()!,
+        );
+        expect(parent).toMatchObject({
+          term: '秋季学期',
+          content: {
+            courseContent: '颜色词汇',
+            summary: status === 'draft' ? '编辑后的报告' : '原有报告',
+          },
+        });
+        expect(mockSharesRepo.update).not.toHaveBeenCalled();
+        expect(mockTermsRepo.findOne).not.toHaveBeenCalled();
+      } finally {
+        if (previousKey === undefined)
+          delete process.env.SEMESTER_REPORT_SHARE_SECRET;
+        else process.env.SEMESTER_REPORT_SHARE_SECRET = previousKey;
+      }
+    },
+  );
+
+  it('delegates term deletion without changing subject reports', async () => {
+    await expect(service.deleteTerm('term-1')).resolves.toEqual({
+      deleted: true,
+    });
+    expect(mockSemesterReportsService.deleteTerm).toHaveBeenCalledWith(
+      'term-1',
+    );
+    expect(mockReportsRepo.save).not.toHaveBeenCalled();
+    expect(mockSharesRepo.update).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => {
     mockTeacher = { teacherId: 'test-teacher' };
@@ -96,6 +204,7 @@ describe('SubjectReportsService', () => {
         petAsOf: '2026-10-07T15:59:59.999Z',
       }),
       listTerms: jest.fn().mockResolvedValue([]),
+      deleteTerm: jest.fn().mockResolvedValue({ deleted: true }),
       listSubjects: jest.fn().mockResolvedValue([]),
       createSubject: jest
         .fn()
@@ -141,7 +250,11 @@ describe('SubjectReportsService', () => {
         reportVersion: 'v1',
         courseScope: '第3页',
       },
-      { allowDisabledSubject: true, skipSubjectValidation: true },
+      {
+        allowDisabledSubject: true,
+        allowDisabledTerm: true,
+        skipSubjectValidation: true,
+      },
     );
     mockReportsRepo.findOne.mockResolvedValueOnce(null);
     await expect(
@@ -150,6 +263,40 @@ describe('SubjectReportsService', () => {
     expect(mockSemesterReportsService.previewCourseScope).toHaveBeenCalledTimes(
       1,
     );
+  });
+
+  it('validates subject and term ownership within subject reports and delegates preview with skipSubjectValidation', async () => {
+    mockTermsRepo.findOne.mockResolvedValue({
+      id: 'term-1',
+      teacherId: 'test-teacher',
+      enabled: true,
+    });
+    mockSubjectsRepo.findOne.mockResolvedValue({
+      id: 'sub-1',
+      teacherId: 'test-teacher',
+      enabled: true,
+      name: '英语',
+    });
+
+    const body = {
+      termId: 'term-1',
+      subjectId: 'sub-1',
+      period: 'week',
+      courseSelections: [{ subjectId: 'sub-1', manualContent: '内容' }],
+    };
+    await service.preview(body);
+    expect(mockTermsRepo.findOne).toHaveBeenCalledWith({
+      where: { id: 'term-1', teacherId: 'test-teacher', enabled: true },
+    });
+    expect(mockSubjectsRepo.findOne).toHaveBeenCalledWith({
+      where: { id: 'sub-1', teacherId: 'test-teacher', enabled: true },
+    });
+    expect(mockSemesterReportsService.preview).toHaveBeenCalledWith(body, {
+      skipSubjectValidation: true,
+    });
+
+    mockSubjectsRepo.findOne.mockResolvedValueOnce(null);
+    await expect(service.preview(body)).rejects.toThrow('学科不存在');
   });
 
   it('reads missing lesson attendance from the original snapshot', async () => {
@@ -251,6 +398,34 @@ describe('SubjectReportsService', () => {
     expect(mockSubjectsRepo.save).toHaveBeenCalled();
     expect(created.name).toBe('戏剧');
     expect(mockSemesterReportsService.createSubject).not.toHaveBeenCalled();
+  });
+
+  it('binds subject to a term on creation and filters by termId with legacy fallback', async () => {
+    mockTermsRepo.count = jest.fn().mockResolvedValue(1);
+    await expect(service.createSubject({ name: '数学' })).rejects.toThrow(
+      '请选择所属学期',
+    );
+
+    const created = await service.createSubject({
+      name: '数学',
+      termId: 'term-1',
+    });
+    expect(mockSubjectsRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: '数学',
+        termId: 'term-1',
+      }),
+    );
+    expect(created.termId).toBe('term-1');
+
+    await service.listSubjects({ termId: 'term-1' });
+    expect(mockSubjectsRepo.find).toHaveBeenCalledWith({
+      where: [
+        { teacherId: 'test-teacher', enabled: true, termId: 'term-1' },
+        { teacherId: 'test-teacher', enabled: true, termId: expect.anything() },
+      ],
+      order: { name: 'ASC' },
+    });
   });
 
   it('generates subject reports into subject_reports table and isolates data', async () => {
@@ -454,6 +629,95 @@ describe('SubjectReportsService', () => {
     expect(mockReportsRepo.save).not.toHaveBeenCalled();
   });
 
+  it('saves courseScope and nextWeekContent on generate and draft edit, omitting them when blank', async () => {
+    const inputWithBoth = {
+      termId: 'term-1',
+      subjectId: 'sub-eng',
+      period: 'week',
+      start: '2026-10-01',
+      end: '2026-10-07',
+      studentIds: ['s1'],
+      courseScope: 'Unit 1 Colours',
+      nextWeekContent: 'Unit 2 Numbers',
+    };
+    mockRecordsRepo.find.mockResolvedValue([]);
+    const [report] = await service.generate(inputWithBoth);
+    expect(report?.content).toMatchObject({
+      courseScope: 'Unit 1 Colours',
+      nextWeekContent: 'Unit 2 Numbers',
+    });
+    expect(report?.courseScope).toBe('Unit 1 Colours');
+    expect(mockReportsRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        courseScope: 'Unit 1 Colours',
+        snapshot: expect.objectContaining({
+          courseScope: 'Unit 1 Colours',
+          nextWeekContent: 'Unit 2 Numbers',
+        }),
+      }),
+    );
+
+    // When generating without them (or empty/whitespace)
+    const [emptyReport] = await service.generate({
+      termId: 'term-1',
+      subjectId: 'sub-eng',
+      period: 'week',
+      studentIds: ['s1'],
+      courseScope: '',
+      nextWeekContent: '   ',
+    });
+    expect(emptyReport?.content?.courseScope).toBeUndefined();
+    expect(emptyReport?.content?.nextWeekContent).toBeUndefined();
+    expect(emptyReport?.courseScope).toBeNull();
+
+    // Draft edit validations
+    mockReportsRepo.findOne.mockResolvedValue({
+      id: 'r1',
+      teacherId: 'test-teacher',
+      status: 'draft',
+      courseScope: 'Unit 1 Colours',
+      content: {
+        summary: '旧摘要',
+        courseScope: 'Unit 1 Colours',
+        nextWeekContent: 'Unit 2 Numbers',
+      },
+      snapshot: {
+        reportVersion: 'v2',
+        courseScope: 'Unit 1 Colours',
+        nextWeekContent: 'Unit 2 Numbers',
+      },
+    });
+
+    await expect(
+      service.editDraft('r1', { courseScope: 123 as unknown as string }),
+    ).rejects.toThrow('授课范围备注必须为文本');
+    await expect(
+      service.editDraft('r1', {
+        nextWeekContent: ['invalid'] as unknown as string,
+      }),
+    ).rejects.toThrow('下周教学内容重点必须为文本');
+
+    // Updating them in draft
+    const updated = await service.editDraft('r1', {
+      courseScope: 'Unit 1-3 复习',
+      nextWeekContent: 'Unit 4 新授',
+    });
+    expect(updated.content).toMatchObject({
+      courseScope: 'Unit 1-3 复习',
+      nextWeekContent: 'Unit 4 新授',
+    });
+    expect(updated.courseScope).toBe('Unit 1-3 复习');
+
+    // Clearing them in draft
+    const cleared = await service.editDraft('r1', {
+      courseScope: '',
+      nextWeekContent: '   ',
+    });
+    expect(cleared.content?.courseScope).toBeUndefined();
+    expect(cleared.content?.nextWeekContent).toBeUndefined();
+    expect(cleared.courseScope).toBeNull();
+  });
+
   it('keeps generated visuals and positive statistics when editing a draft', async () => {
     const visuals = {
       studentPhoto: 'saved-avatar',
@@ -488,6 +752,72 @@ describe('SubjectReportsService', () => {
     ).rejects.toThrow('只有草稿状态的报告可以编辑');
   });
 
+  it('updates and removes classroom photos by slot in subject report drafts', async () => {
+    const report = {
+      id: 'r1',
+      teacherId: 'test-teacher',
+      status: 'draft',
+      content: { summary: '草稿' },
+      snapshot: { reportVersion: 'v2' },
+    };
+    mockReportsRepo.findOne.mockResolvedValue(report);
+
+    // Rejects invalid slot
+    await expect(service.setClassroomPhoto('r1', undefined, 2)).rejects.toThrow(
+      '课堂照片位置必须为 0 或 1',
+    );
+
+    // Valid PNG file upload for slot 0
+    const pngBuffer = Buffer.from([
+      137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 0, 0,
+    ]);
+    const updatedSlot0 = await service.setClassroomPhoto(
+      'r1',
+      { buffer: pngBuffer, size: pngBuffer.length, mimetype: 'image/png' },
+      0,
+    );
+    expect(updatedSlot0.content).toMatchObject({
+      classroomPhoto: expect.stringContaining('data:image/png;base64,'),
+      classroomPhotos: [
+        expect.stringContaining('data:image/png;base64,'),
+        null,
+      ],
+    });
+
+    // Valid JPEG file upload for slot 1
+    const jpegBuffer = Buffer.from([
+      255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0,
+    ]);
+    const updatedSlot1 = await service.setClassroomPhoto(
+      'r1',
+      { buffer: jpegBuffer, size: jpegBuffer.length, mimetype: 'image/jpeg' },
+      '1',
+    );
+    expect(updatedSlot1.content).toMatchObject({
+      classroomPhoto: expect.stringContaining('data:image/png;base64,'),
+      classroomPhotos: [
+        expect.stringContaining('data:image/png;base64,'),
+        expect.stringContaining('data:image/jpeg;base64,'),
+      ],
+    });
+
+    // Remove photo from slot 0
+    const removedSlot0 = await service.setClassroomPhoto('r1', undefined, 0);
+    expect(removedSlot0.content).toMatchObject({
+      classroomPhoto: null,
+      classroomPhotos: [
+        null,
+        expect.stringContaining('data:image/jpeg;base64,'),
+      ],
+    });
+
+    // Rejects non-draft
+    report.status = 'published';
+    await expect(service.setClassroomPhoto('r1', undefined, 0)).rejects.toThrow(
+      '只有草稿状态的报告可以修改课堂照片',
+    );
+  });
+
   it('defaults subject report shares to the semester report encryption key', async () => {
     const previousSecret = process.env.SEMESTER_REPORT_SHARE_SECRET;
     const previousKey = process.env.REPORT_SHARE_ENCRYPTION_KEY;
@@ -502,7 +832,7 @@ describe('SubjectReportsService', () => {
         content: {},
       });
       await expect(service.createShare('r1')).resolves.toMatchObject({
-        url: expect.stringContaining('/r/subject/'),
+        url: expect.stringContaining('/r/subject/') as string,
       });
       process.env.REPORT_SHARE_ENCRYPTION_KEY = 'invalid';
       mockSharesRepo.save.mockClear();
@@ -545,9 +875,9 @@ describe('SubjectReportsService', () => {
 
   it('returns published content in the parent view format and rejects revoked links', async () => {
     mockSemesterReportsService.subjectReportStudent.mockImplementation(
-      async (_studentId, teacherId) => {
+      (_studentId, teacherId) => {
         if (teacherId !== 'test-teacher') throw new Error('未登录');
-        return null;
+        return Promise.resolve(null);
       },
     );
     mockSharesRepo.findOne.mockResolvedValueOnce({
@@ -560,17 +890,28 @@ describe('SubjectReportsService', () => {
       studentName: '小宇',
       className: '启航班',
       periodType: 'week',
+      courseScope: 'Unit 1 Colours',
       snapshot: {
         subjectName: '英语',
         courseSelections: [{ manualContent: '第 1 节课：颜色词汇' }],
       },
-      content: { summary: '表现良好' },
+      content: {
+        summary: '表现良好',
+        courseScope: 'Unit 1 Colours',
+        nextWeekContent: 'Unit 2 Numbers',
+      },
     });
 
     await expect(service.publicReport('a'.repeat(43))).resolves.toMatchObject({
       studentName: '小宇',
       subject: '英语',
-      content: { summary: '表现良好', courseContent: '第 1 节课：颜色词汇' },
+      courseScope: 'Unit 1 Colours',
+      content: {
+        summary: '表现良好',
+        courseContent: '第 1 节课：颜色词汇',
+        courseScope: 'Unit 1 Colours',
+        nextWeekContent: 'Unit 2 Numbers',
+      },
       isSubjectReport: true,
     });
     await expect(service.publicReport('a'.repeat(43))).rejects.toThrow(
@@ -628,5 +969,113 @@ describe('SubjectReportsService', () => {
     );
     expect(subjects).toHaveLength(1);
     expect(subjects[0].name).toBe('数学');
+  });
+
+  describe('listReports sort memory optimization', () => {
+    it('sorts lightweight IDs via derived table and preserves report order', async () => {
+      const mockRawIds = [{ id: 'rep-2' }, { id: 'rep-1' }];
+      const mockDerivedQb = {
+        select: jest.fn().mockReturnThis(),
+        from: jest.fn().mockReturnThis(),
+        setParameters: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue(mockRawIds),
+      };
+
+      const mockQuery = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        getQuery: jest
+          .fn()
+          .mockReturnValue(
+            'SELECT report.id, report.created_at FROM subject_reports',
+          ),
+        getParameters: jest.fn().mockReturnValue({ teacherId: 'test-teacher' }),
+      };
+
+      const mockLoadQuery = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'rep-1',
+            studentName: '学生A',
+            className: '一班',
+            periodType: 'week',
+            periodStart: new Date('2026-11-01'),
+            periodEnd: new Date('2026-11-06'),
+            createdAt: new Date('2026-11-01'),
+            content: { classroomPhoto: 'photo-1' },
+          },
+          {
+            id: 'rep-2',
+            studentName: '学生B',
+            className: '二班',
+            periodType: 'week',
+            periodStart: new Date('2026-11-01'),
+            periodEnd: new Date('2026-11-06'),
+            createdAt: new Date('2026-11-02'),
+            content: { classroomPhoto: 'photo-2' },
+          },
+        ]),
+      };
+
+      mockReportsRepo.manager = {
+        createQueryBuilder: jest.fn().mockReturnValue(mockDerivedQb),
+      };
+      mockReportsRepo.createQueryBuilder
+        .mockReturnValueOnce(mockQuery)
+        .mockReturnValueOnce(mockLoadQuery);
+
+      mockSharesRepo.findOne.mockResolvedValue(null);
+
+      const reports = await service.listReports({ status: 'draft' });
+
+      expect(mockDerivedQb.getRawMany).toHaveBeenCalled();
+      expect(mockLoadQuery.andWhere).toHaveBeenCalledWith(
+        'report.id IN (:...ids)',
+        { ids: ['rep-2', 'rep-1'] },
+      );
+      expect(reports).toHaveLength(2);
+      expect(reports[0].id).toBe('rep-2');
+      expect(reports[1].id).toBe('rep-1');
+    });
+
+    it('returns empty array directly when no reports match', async () => {
+      const mockDerivedQb = {
+        select: jest.fn().mockReturnThis(),
+        from: jest.fn().mockReturnThis(),
+        setParameters: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([]),
+      };
+
+      const mockQuery = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        getQuery: jest.fn().mockReturnValue(''),
+        getParameters: jest.fn().mockReturnValue({}),
+      };
+
+      mockReportsRepo.manager = {
+        createQueryBuilder: jest.fn().mockReturnValue(mockDerivedQb),
+      };
+      mockReportsRepo.createQueryBuilder.mockReturnValue(mockQuery);
+
+      const reports = await service.listReports();
+      expect(reports).toEqual([]);
+    });
   });
 });

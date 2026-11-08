@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** 跨工作台共享的学期元数据，停用不解除历史关联。 */
 @Entity('semester_report_terms')
 export class ReportTermEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -14,13 +15,18 @@ export class ReportTermEntity {
   @Column({ length: 100 }) name!: string;
   @Column({ name: 'start_date', type: 'date' }) startDate!: string;
   @Column({ name: 'end_date', type: 'date' }) endDate!: string;
+  /** 停用后仍保留历史报告和资料中的学期关联标识。 */
+  @Column({ default: true }) enabled!: boolean;
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
+/** 学期报告专用学科设置，与学科报告配置独立；支持按学期绑定。 */
 @Entity('semester_report_subjects')
 export class ReportSubjectEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
   @Column({ name: 'teacher_id', length: 64 }) teacherId!: string;
+  @Column({ name: 'term_id', type: 'varchar', length: 64, nullable: true })
+  termId!: string | null;
   @Column({ length: 100 }) name!: string;
   @Column({ default: true }) enabled!: boolean;
   @Column({ name: 'performance_config', type: 'json', nullable: true })
@@ -28,6 +34,7 @@ export class ReportSubjectEntity {
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
+/** 课程资料元数据和解析状态，按教师及学期学科限定归属。 */
 @Entity('semester_report_documents')
 export class ReportDocumentEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -62,6 +69,7 @@ export class ReportDocumentEntity {
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }
 
+/** 学期报告任务及正文快照，展示内容不依赖当前设置重算。 */
 @Entity('semester_reports')
 export class SemesterReportEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -109,6 +117,7 @@ export class SemesterReportEntity {
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }
 
+/** 学期报告公开分享凭据，撤回通过失效标记控制。 */
 @Entity('semester_report_shares')
 export class ReportShareEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -123,6 +132,7 @@ export class ReportShareEntity {
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
+/** 报告操作流水，用于流程展示和版本追溯。 */
 @Entity('semester_report_events')
 export class ReportEventEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -139,7 +149,7 @@ export class ReportEventEntity {
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
-/** 学期与阶段报告的大模型调用流水记录，记录每次请求的用量与状态。 */
+/** 学期与阶段报告的大模型调用流水，按教师与生成任务审计请求用量及状态。 */
 @Entity('semester_report_token_calls')
 export class SemesterReportTokenCallEntity {
   @PrimaryColumn({ length: 64 }) id!: string;

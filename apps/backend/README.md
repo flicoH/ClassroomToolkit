@@ -422,3 +422,25 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
 后端 Actions 部署任务预算为 30 分钟；SSH 建连最多等待 15 秒，断连检测使用 15 秒间隔、连续 3 次无响应退出。MySQL 和应用健康等待上限分别为 180 秒、300 秒。前端等待完整后端工作流的预算为 90 分钟。镜像拉取、数据库迁移仍可能耗时，需结合最后一条部署日志排查；超时不会自动回滚，失败不更新发布标记。详见 [部署说明](../../docs/single-server-docker-deployment.md)。
 
 后端 Docker 运行镜像通过 `pnpm --config.inject-workspace-packages=true deploy --prod` 仅打包后端生产依赖，避免携带前端框架和开发工具。容器工作目录和启动/迁移命令保持兼容；发布任务加载实际 Linux 镜像，检查生产依赖、Sharp 原生模块及迁移 CLI 可用，并拒绝混入 Next.js、Vue、ESLint、TypeScript 或 Jest。此次失败日志显示 183 MB 镜像层在约 15 分钟内仅下载 5.94 MB，尚未进入迁移；精简镜像减少下载量，但服务器到 GHCR 的网络瓶颈仍需实际部署确认。
+
+学科报告设置支持按学科新增、编辑、删除课程内容标题，点击「保存课程内容标题」后用于新建报告。最多 12 项，每项 1–40 字，不得重复或包含冒号、换行；可删除全部标题，历史报告正文保留。接口 `PATCH /subject-reports/report-subjects/:id/course-content-titles` 接收 `courseContentTitles: string[]`，仅操作当前教师的启用学科。部署先运行常规结构迁移以新增可空 JSON 列，不回填或改写已有业务数据。
+
+学科报告「学期学科设置与课程资料」提供学期删除按钮，确认后仅停用共享学期，两个报告工作台的新建学期选项同步移除；已有报告、公开分享、草稿编辑与发布、课程资料均保留。删除失败时保留选项供重试。`DELETE /subject-reports/report-terms/:id`（及学期报告同名接口）仅允许操作当前教师的学期，无权访问或不存在返回 404，重复删除成功。部署前运行常规结构迁移，新增 `semester_report_terms.enabled`，默认启用；不执行数据回填，回滚代码保留停用状态列。
+
+学期报告工作台的学科设置、学期设置分卡显示，各项旁均可删除并通过项目弹窗确认。学科删除仅作用于学期报告工作台，`DELETE /semester-reports/report-subjects/:id` 按当前教师停用学科（不存在或无权访问返回 404）；学期删除共用既有停用接口。删除保留报告、分享与课程资料，失败保留选项；新增设置使用服务端返回的真实 ID，成功返回空列表时不再自动补示例项。无额外结构迁移或业务数据回填。
+
+功能使用统计已独立注册「学科报告」（`subject-reports`）。教师打开学科报告工作台记录打开事件；新版学期报告入口 `semesterReportStudio` 与旧版入口统一计入「学期报告」。Admin「功能使用」按功能分别显示打开教师数、使用教师数、成功操作次数及每日趋势，零事件时仍显示功能。使用次数仅由成功的服务端已标记业务操作产生（如生成、保存、发布和分享），客户端不能伪造 use 事件；后台刷新及家长查看不计入。仅补齐统计映射，无数据库迁移或历史事件回填；已有合法操作事件会自然进入查询范围，漏记的历史打开事件无法补算。
+
+学期报告与学科报告工作台支持学科与学期绑定：
+
+- **数据结构与迁移**：`semester_report_subjects` 与 `subject_report_subjects` 表新增可空外键关联字段 `term_id VARCHAR(64) NULL` 与联合索引 `(teacher_id, term_id, enabled)`。部署前执行常规结构迁移 `20261108000000-add-subject-term-binding.ts`（`pnpm --filter ClassRoomToolkitBackend migration:run`）。迁移具备幂等性，不修改、不删除存量业务数据；历史无 `term_id` 的学科保持为 `NULL`，作为全局兼容学科在所有学期中可见。
+- **接口变更**：
+  - `GET /semester-reports/report-subjects` 与 `GET /subject-reports/report-subjects` 支持 `?termId=...` 查询参数；若指定 `termId`，则返回当前教师名下绑定该学期的学科以及存量无学期绑定的学科（`termId IS NULL`）。
+  - `POST /semester-reports/report-subjects` 与 `POST /subject-reports/report-subjects` 支持接收 `termId`；当前教师名下存在启用学期时，新增学科必须传入有效的 `termId`，不存在学期时允许为空以维持向下兼容。
+
+学科报告草稿支持上传与删除课堂照片（每份报告最多 2 张，支持 slot 0 和 slot 1）：
+
+- **接口定义**：
+  - `POST /subject-reports/reports/:id/classroom-photo?slot=0|1`：使用 `multipart/form-data` 接收图片文件（`file` 字段），文件大小限制为 2MB。上传成功后将照片转为 Base64 Data URL 存入草稿快照与内容中，并记录审计日志。
+  - `DELETE /subject-reports/reports/:id/classroom-photo?slot=0|1`：清空草稿指定槽位的课堂照片。
+- **校验与权限**：接口仅允许操作属于当前教师且状态为 `draft` 的学科报告；非草稿状态抛出 400，报告不存在或跨教师访问抛出 404，非法槽位抛出 400。

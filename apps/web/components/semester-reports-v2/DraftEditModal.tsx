@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import type {
   LearningReportContent,
   LearningReportData,
@@ -32,12 +32,14 @@ export type DraftModalReport = {
   className: string;
   period: "week" | "month" | "term" | "stage";
   status: string;
+  subjectId?: string;
   startDate?: string;
   endDate?: string;
   reportVersion?: "v1" | "v2";
   isStageReport?: boolean;
   isSubjectReport?: boolean;
   stageCustomName?: string;
+  courseScope?: string | null;
   content: LearningReportContent;
 };
 
@@ -84,31 +86,37 @@ function replaceStageTerms<T>(data: T, customName?: string): T {
 
 type SubjectDraftPdf = { draftId: string; termId: string; subjectId: string; hasDocuments: boolean; units: string[] };
 
-const lessonPrefix = /^第\s*(\d+)\s*节课\s*·\s*/;
+const lessonPrefix = /^(?:第\s*(\d+)\s*节课|本期教学内容)\s*·\s*/;
 
 function courseLineLesson(line: string) {
-  return Number(lessonPrefix.exec(line)?.[1] ?? 1);
+  const match = lessonPrefix.exec(line);
+  if (!match) return 1;
+  return match[1] ? Number(match[1]) : 1;
 }
 
-const lessonFieldPrefixes = subjectLessonCategories.map(category => `${category}：`);
-
-function readLessonFields(content: string) {
+function readLessonFields(content: string, titles: string[] = subjectLessonCategories) {
   const lines = content.split("\n");
-  return {
-    fields: lessonFieldPrefixes.map(prefix =>
-      lines
-        .filter(line => line.startsWith(prefix))
-        .map(line => line.slice(prefix.length))
-        .join("\n")
-    ),
-    other: lines.filter(line => !lessonFieldPrefixes.some(prefix => line.startsWith(prefix))).join("\n")
-  };
+  const fields = titles.map(title => {
+    const fullPrefix = `${title}：`;
+    const halfPrefix = `${title}:`;
+    return lines
+      .filter(line => line.startsWith(fullPrefix) || line.startsWith(halfPrefix))
+      .map(line => (line.startsWith(fullPrefix) ? line.slice(fullPrefix.length) : line.slice(halfPrefix.length)))
+      .join("\n");
+  });
+  const isMatch = (line: string) => titles.some(title => line.startsWith(`${title}：`) || line.startsWith(`${title}:`));
+  const other = lines.filter(line => line.trim() && !isMatch(line)).join("\n");
+  return { fields, other };
 }
 
-function writeLessonFields(fields: string[], other: string) {
+function writeLessonFields(fields: string[], other: string, titles: string[] = subjectLessonCategories) {
   return [
     other,
-    ...fields.flatMap((value, index) => (value ? value.split("\n").map(line => lessonFieldPrefixes[index] + line) : []))
+    ...fields.flatMap((value, index) => {
+      const title = titles[index];
+      if (!title || !value) return [];
+      return value.split("\n").map(line => `${title}：${line}`);
+    })
   ]
     .filter(Boolean)
     .join("\n");
@@ -119,18 +127,20 @@ function SubjectDraftLessonContent({
   value,
   onChange,
   pdf,
-  period
+  period,
+  titles = subjectLessonCategories
 }: {
   lesson: number;
   value: string;
   onChange: (update: (current: string) => string) => void;
   pdf?: SubjectDraftPdf;
   period: DraftModalReport["period"];
+  titles?: string[];
 }) {
   const [scope, setScope] = useState("");
   const lastImport = useRef<string[]>([]);
   const manuallyEdited = useRef(new Set<number>());
-  const { fields, other } = readLessonFields(value);
+  const { fields, other } = readLessonFields(value, titles);
   const [showOther] = useState(Boolean(other));
   const otherId = lesson === 1 ? "subject-draft-course-content" : `subject-draft-legacy-content-${lesson}`;
   const id = lesson === 1 ? "subject-draft-course-content" : `subject-draft-course-content-${lesson}`;
@@ -148,13 +158,14 @@ function SubjectDraftLessonContent({
             const edited = new Set(manuallyEdited.current);
             lastImport.current = imported;
             onChange(current => {
-              const { fields, other } = readLessonFields(current);
+              const { fields, other } = readLessonFields(current, titles);
               // PDF 只更新空字段或上次带入的值，保留教师填写的字段。
               return writeLessonFields(
-                fields.map((value, index) =>
-                  !edited.has(index) && (!value || value === previousImport[index]) ? (imported[index] ?? "") : value
+                fields.map((val, index) =>
+                  !edited.has(index) && (!val || val === previousImport[index]) ? (imported[index] ?? "") : val
                 ),
-                other
+                other,
+                titles
               );
             });
           }}
@@ -162,13 +173,14 @@ function SubjectDraftLessonContent({
       )}
       <SubjectLessonFields
         id={id}
+        titles={titles}
         values={fields}
-        onChange={(index, value) => {
+        onChange={(index, val) => {
           manuallyEdited.current.add(index);
           onChange(current => {
-            const { fields, other } = readLessonFields(current);
-            fields[index] = value;
-            return writeLessonFields(fields, other);
+            const { fields, other } = readLessonFields(current, titles);
+            fields[index] = val;
+            return writeLessonFields(fields, other, titles);
           });
         }}
       />
@@ -182,7 +194,7 @@ function SubjectDraftLessonContent({
             value={other}
             onChange={event => {
               const text = event.target.value;
-              onChange(current => writeLessonFields(readLessonFields(current).fields, text));
+              onChange(current => writeLessonFields(readLessonFields(current, titles).fields, text, titles));
             }}
             rows={4}
           />
@@ -241,8 +253,20 @@ export function DraftEditModal({
       );
     }
 
+    const rawCourseScope =
+      typeof baseContent.courseScope === "string"
+        ? baseContent.courseScope
+        : typeof report.courseScope === "string" &&
+            report.courseScope !== "教学内容" &&
+            report.courseScope !== baseContent.courseContent
+          ? report.courseScope
+          : "";
+    const rawNextWeek = typeof baseContent.nextWeekContent === "string" ? baseContent.nextWeekContent : "";
+
     let resContent: LearningReportContent = {
       ...baseContent,
+      courseScope: rawCourseScope,
+      nextWeekContent: rawNextWeek,
       ...(subjectReport
         ? {
             attendance: initialAttendances?.[0] ?? baseContent.attendance ?? "present",
@@ -351,10 +375,42 @@ export function DraftEditModal({
       return {
         id: sub.subjectId,
         name: sub.name,
-        performanceConfig: found?.performanceConfig || null
+        performanceConfig: found?.performanceConfig || null,
+        courseContentTitles: found?.courseContentTitles
       };
     });
   }, [content.reportSubjects, allAvailableSubjects]);
+
+  const currentSubject = useMemo(() => {
+    const targetId =
+      report.subjectId ||
+      subjectPdf?.subjectId ||
+      content.reportSubjects?.[0]?.subjectId ||
+      allAvailableSubjects[0]?.id;
+    return (
+      allAvailableSubjects.find(s => s.id === targetId) ||
+      allAvailableSubjects.find(s => s.name === content.reportSubjects?.[0]?.name) ||
+      allAvailableSubjects[0]
+    );
+  }, [allAvailableSubjects, report.subjectId, subjectPdf?.subjectId, content.reportSubjects]);
+
+  const subjectTitles = useMemo(() => {
+    if (currentSubject?.courseContentTitles !== undefined && currentSubject?.courseContentTitles !== null) {
+      return currentSubject.courseContentTitles;
+    }
+    const extracted: string[] = [];
+    const lines = (content.courseContent ?? "").split("\n");
+    for (const line of lines) {
+      const match = /^(?:第\s*\d+\s*节课|本期教学内容)\s*·\s*([^：:\s][^：:]*)[：:]/.exec(line);
+      if (match && match[1] && !extracted.includes(match[1])) {
+        extracted.push(match[1]);
+      }
+    }
+    if (extracted.length > 0) {
+      return extracted;
+    }
+    return subjectLessonCategories;
+  }, [currentSubject, content.courseContent]);
 
   // 未选中的学科列表（可添加）
   const unselectedSubjects = useMemo(() => {
@@ -534,8 +590,10 @@ export function DraftEditModal({
     if (report.id && !report.id.startsWith("gen-")) {
       const form = new FormData();
       form.append("file", file);
+      const isSubject = subjectReport || Boolean(report.isSubjectReport);
+      const photoApiPrefix = isSubject ? "/api/subject-reports" : "/api/semester-reports";
       request
-        .post(`/api/semester-reports/reports/${report.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`, form, {
+        .post(`${photoApiPrefix}/reports/${report.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`, form, {
           headers: { "Content-Type": undefined }
         })
         .catch(err => {
@@ -562,8 +620,10 @@ export function DraftEditModal({
       };
     });
     if (report.id && !report.id.startsWith("gen-")) {
+      const isSubject = subjectReport || Boolean(report.isSubjectReport);
+      const photoApiPrefix = isSubject ? "/api/subject-reports" : "/api/semester-reports";
       request
-        .delete(`/api/semester-reports/reports/${report.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`)
+        .delete(`${photoApiPrefix}/reports/${report.id}/classroom-photo${slot === 1 ? "?slot=1" : ""}`)
         .catch(() => null);
     }
   }
@@ -598,6 +658,100 @@ export function DraftEditModal({
     }));
   }
 
+  const lessonList = useMemo(() => {
+    return content.attendances && content.attendances.length > 0
+      ? content.attendances
+      : [content.attendance ?? "present"];
+  }, [content.attendances, content.attendance]);
+
+  const handleLessonContentChange = useCallback(
+    (lesson: number, update: (current: string) => string) => {
+      setContent(current => {
+        // 沿用报告正文的课次前缀，兼容已有预览和保存接口。
+        const lines = (current.courseContent ?? "").split("\n");
+        const ownLines = lines.filter(line => courseLineLesson(line) === lesson);
+        const text = update(ownLines.map(line => line.replace(lessonPrefix, "")).join("\n"));
+        const prefix =
+          lesson > 1 || ownLines.some(line => lessonPrefix.test(line))
+            ? report.period === "week"
+              ? `第 ${lesson} 节课 · `
+              : (ownLines[0]?.match(/^(?:第\s*\d+\s*节课|本期教学内容)\s*·\s*/)?.[0] ?? `第 ${lesson} 节课 · `)
+            : "";
+        const rest = lines.filter(line => courseLineLesson(line) !== lesson);
+        const next = text ? [...rest, ...text.split("\n").map(line => prefix + line)] : rest;
+        next.sort((a, b) => courseLineLesson(a) - courseLineLesson(b));
+        return { ...current, courseContent: next.join("\n") };
+      });
+    },
+    [report.period]
+  );
+
+  const handleAttendanceChange = useCallback((idx: number, newAtt: CourseAttendanceStatus) => {
+    setContent(current => {
+      const currentList =
+        current.attendances && current.attendances.length > 0
+          ? [...current.attendances]
+          : [current.attendance ?? "present"];
+      currentList[idx] = newAtt;
+      return {
+        ...current,
+        attendances: currentList,
+        attendance: currentList[0] ?? newAtt
+      };
+    });
+  }, []);
+
+  const handleDeleteLesson = useCallback((idx: number) => {
+    setContent(current => {
+      const currentList = (
+        current.attendances && current.attendances.length > 0 ? current.attendances : [current.attendance ?? "present"]
+      ).filter((_, i) => i !== idx);
+      return {
+        ...current,
+        attendances: currentList.length ? currentList : ["present"],
+        courseContent: (current.courseContent ?? "")
+          .split("\n")
+          .filter(line => courseLineLesson(line) !== idx + 1)
+          .map(line => {
+            const lesson = courseLineLesson(line);
+            return lesson > idx + 1 ? line.replace(lessonPrefix, `第 ${lesson - 1} 节课 · `) : line;
+          })
+          .join("\n"),
+        attendance: currentList[0] ?? "present"
+      };
+    });
+  }, []);
+
+  const handleUpdateLessonCount = useCallback((nextCount: number) => {
+    setContent(current => {
+      const currentList =
+        current.attendances && current.attendances.length > 0
+          ? [...current.attendances]
+          : [current.attendance ?? "present"];
+      if (nextCount === currentList.length) return current;
+      if (nextCount > currentList.length) {
+        const diff = nextCount - currentList.length;
+        const updated = [...currentList, ...Array(diff).fill("present" as CourseAttendanceStatus)];
+        return {
+          ...current,
+          attendances: updated,
+          attendance: updated[0] ?? "present"
+        };
+      }
+      const updated = currentList.slice(0, nextCount);
+      const updatedContent = (current.courseContent ?? "")
+        .split("\n")
+        .filter(line => courseLineLesson(line) <= nextCount)
+        .join("\n");
+      return {
+        ...current,
+        attendances: updated,
+        courseContent: updatedContent,
+        attendance: updated[0] ?? "present"
+      };
+    });
+  }, []);
+
   // 实时长图预览数据组装
   const liveReportData: LearningReportData = useMemo(() => {
     return {
@@ -613,6 +767,7 @@ export function DraftEditModal({
       start: report.startDate,
       end: report.endDate,
       status: report.status,
+      courseScope: content.courseScope || undefined,
       content: {
         ...content,
         stageCustomName: report.stageCustomName || content.stageCustomName || content.stageTitle,
@@ -763,123 +918,6 @@ export function DraftEditModal({
             {/* 报告基本信息 */}
             <div className="space-y-3 rounded-xl border bg-background p-3.5">
               <span className="text-xs font-bold text-foreground">报告抬头与课程</span>
-              {subjectReport && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-foreground">每次课程出勤情况</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setContent(current => {
-                          const currentList =
-                            current.attendances && current.attendances.length > 0
-                              ? [...current.attendances]
-                              : [current.attendance ?? "present"];
-                          const updated = [...currentList, "present" as CourseAttendanceStatus];
-                          return {
-                            ...current,
-                            attendances: updated,
-                            attendance: updated[0] ?? "present"
-                          };
-                        });
-                      }}
-                      className="text-[11px] font-medium text-primary hover:underline"
-                    >
-                      + 添加课程
-                    </button>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {(content.attendances && content.attendances.length > 0
-                      ? content.attendances
-                      : [content.attendance ?? "present"]
-                    ).map((att, idx, arr) => (
-                      <div key={idx} className="min-w-0 space-y-2 rounded-lg border p-2.5">
-                        <SubjectDraftLessonContent
-                          key={arr.length}
-                          lesson={idx + 1}
-                          period={report.period}
-                          pdf={subjectPdf}
-                          value={(content.courseContent ?? "")
-                            .split("\n")
-                            .filter(line => courseLineLesson(line) === idx + 1)
-                            .map(line => line.replace(lessonPrefix, ""))
-                            .join("\n")}
-                          onChange={update =>
-                            setContent(current => {
-                              // 沿用报告正文的课次前缀，兼容已有预览和保存接口。
-                              const lesson = idx + 1;
-                              const lines = (current.courseContent ?? "").split("\n");
-                              const ownLines = lines.filter(line => courseLineLesson(line) === lesson);
-                              const text = update(ownLines.map(line => line.replace(lessonPrefix, "")).join("\n"));
-                              const prefix =
-                                lesson > 1 || ownLines.some(line => lessonPrefix.test(line))
-                                  ? `第 ${lesson} 节课 · `
-                                  : "";
-                              const rest = lines.filter(line => courseLineLesson(line) !== lesson);
-                              const next = text ? [...rest, ...text.split("\n").map(line => prefix + line)] : rest;
-                              next.sort((a, b) => courseLineLesson(a) - courseLineLesson(b));
-                              return { ...current, courseContent: next.join("\n") };
-                            })
-                          }
-                        />
-                        <div className="flex-1">
-                          <CourseAttendance
-                            label={arr.length > 1 ? `第 ${idx + 1} 节课出勤情况` : "课程出勤情况"}
-                            value={att}
-                            onChange={newAtt => {
-                              setContent(current => {
-                                const currentList =
-                                  current.attendances && current.attendances.length > 0
-                                    ? [...current.attendances]
-                                    : [current.attendance ?? "present"];
-                                currentList[idx] = newAtt;
-                                return {
-                                  ...current,
-                                  attendances: currentList,
-                                  attendance: currentList[0] ?? newAtt
-                                };
-                              });
-                            }}
-                          />
-                        </div>
-                        {arr.length > 1 && (
-                          <button
-                            type="button"
-                            aria-label={`删除第 ${idx + 1} 节课`}
-                            className="mb-1 text-xs text-muted-foreground hover:text-destructive"
-                            onClick={() => {
-                              setContent(current => {
-                                const currentList = (
-                                  current.attendances && current.attendances.length > 0
-                                    ? current.attendances
-                                    : [current.attendance ?? "present"]
-                                ).filter((_, i) => i !== idx);
-                                return {
-                                  ...current,
-                                  attendances: currentList.length ? currentList : ["present"],
-                                  courseContent: (current.courseContent ?? "")
-                                    .split("\n")
-                                    .filter(line => courseLineLesson(line) !== idx + 1)
-                                    .map(line => {
-                                      const lesson = courseLineLesson(line);
-                                      return lesson > idx + 1
-                                        ? line.replace(lessonPrefix, `第 ${lesson - 1} 节课 · `)
-                                        : line;
-                                    })
-                                    .join("\n"),
-                                  attendance: currentList[0] ?? "present"
-                                };
-                              });
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div className="grid gap-2.5 sm:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-muted-foreground">报告抬头</label>
@@ -970,6 +1008,121 @@ export function DraftEditModal({
                 </div>
               </div>
             </div>
+
+            {/* 学科报告：课程教学内容（与新增页面保持完全一致的布局与样式） */}
+            {subjectReport && (
+              <div className="space-y-4 rounded-xl border bg-background p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
+                  <div>
+                    <h3 className="text-xs font-bold text-foreground">课程内容</h3>
+                    <p className="text-[11px] text-muted-foreground">逐课次手填内容或从已确认的课程 PDF 带入。</p>
+                  </div>
+                  {report.period === "week" && (
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="subject-draft-lesson-count" className="text-xs font-semibold text-slate-700">
+                        本周课程次数
+                      </label>
+                      <Input
+                        id="subject-draft-lesson-count"
+                        type="number"
+                        min={1}
+                        max={30}
+                        aria-label="本周课程次数"
+                        value={lessonList.length}
+                        onChange={e => {
+                          const nextCount = Math.max(1, Math.min(30, Math.trunc(Number(e.target.value)) || 1));
+                          handleUpdateLessonCount(nextCount);
+                        }}
+                        className="h-8 w-20 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateLessonCount(lessonList.length + 1)}
+                        className="text-[11px] font-medium text-primary hover:underline"
+                      >
+                        + 添加课程
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 课次手填卡片 - 垂直单列铺开 */}
+                <div className="space-y-4">
+                  {lessonList.map((att, idx, arr) => (
+                    <div key={idx} className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-indigo-900">
+                          {report.period === "week" ? `第 ${idx + 1} 节课教学内容` : "本期教学内容"}
+                        </h4>
+                        {arr.length > 1 && (
+                          <button
+                            type="button"
+                            aria-label={`删除第 ${idx + 1} 节课`}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => handleDeleteLesson(idx)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>删除此课</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <SubjectDraftLessonContent
+                        key={arr.length}
+                        lesson={idx + 1}
+                        period={report.period}
+                        pdf={subjectPdf}
+                        titles={subjectTitles}
+                        value={(content.courseContent ?? "")
+                          .split("\n")
+                          .filter(line => courseLineLesson(line) === idx + 1)
+                          .map(line => line.replace(lessonPrefix, ""))
+                          .join("\n")}
+                        onChange={update => handleLessonContentChange(idx + 1, update)}
+                      />
+
+                      <div className="mt-3 border-t border-indigo-100/60 pt-2.5">
+                        <CourseAttendance
+                          label={arr.length > 1 ? `第 ${idx + 1} 节课出勤情况` : "课程出勤情况"}
+                          value={att}
+                          onChange={newAtt => handleAttendanceChange(idx, newAtt)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">
+                  教学内容 {(content.courseContent ?? "").length} / 1000 字
+                </p>
+
+                <div className="mt-4">
+                  <label className="text-xs font-semibold text-slate-700">授课范围备注文案（选填）</label>
+                  <Input
+                    value={content.courseScope ?? ""}
+                    onChange={e => setContent(prev => ({ ...prev, courseScope: e.target.value }))}
+                    placeholder="例如：Unit 1 单词复习与句型对话"
+                    className="mt-1 h-9 text-xs bg-white"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <label className="text-xs font-semibold text-slate-700">
+                    {report.period === "week"
+                      ? "下周教学内容重点（选填）"
+                      : report.period === "month"
+                        ? "下月教学内容重点（选填）"
+                        : "下学期教学内容重点（选填）"}
+                  </label>
+                  <Textarea
+                    value={content.nextWeekContent ?? ""}
+                    onChange={e => setContent(prev => ({ ...prev, nextWeekContent: e.target.value }))}
+                    placeholder="例如：继续巩固颜色与数字表达，开展课堂情景剧..."
+                    className="mt-1 min-h-[60px] text-xs bg-white"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* 报告学科 */}
             <div className="space-y-2 rounded-xl border bg-background p-3.5">

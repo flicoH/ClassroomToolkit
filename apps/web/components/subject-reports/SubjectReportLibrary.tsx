@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { CourseDocument, Subject, Term } from "@/components/semester-reports-v2/types";
 
+import { SubjectCourseContentConfig } from "./SubjectCourseContentConfig";
+
 const base = "/api/subject-reports";
 const documentStatus = {
   uploading: "上传中",
@@ -20,6 +22,7 @@ const documentStatus = {
   failed: "解析失败"
 };
 
+/** 学期设置共享，学科设置独立；删除只在请求成功后移除前端选项。 */
 export function SubjectReportLibrary({
   terms,
   subjects,
@@ -27,20 +30,33 @@ export function SubjectReportLibrary({
   initialTermId,
   initialSubjectId,
   onTerm,
+  onDeleteTerm,
   onSubject,
   onDeleteSubject,
   onDocuments,
   announce
 }: {
+  /** 仅供新建选择的启用学期，历史报告另由快照保留。 */
   terms: Term[];
+  /** 学科报告独立维护的启用学科。 */
   subjects: Subject[];
+  /** 教师已有资料，停用学期或学科不从此集合删除。 */
   documents: CourseDocument[];
+  /** 进入设置时从填写向导传入的学期选择。 */
   initialTermId: string;
+  /** 进入设置时从填写向导传入的学科选择。 */
   initialSubjectId: string;
+  /** 同步服务端新增学期的真实 ID。 */
   onTerm: (term: Term) => void;
+  /** 清理新建选项，不移除报告列表中的历史记录。 */
+  onDeleteTerm: (id: string) => void;
+  /** 新增或替换服务端返回的完整学科配置。 */
   onSubject: (subject: Subject) => void;
+  /** 只同步学科报告工作台的停用结果。 */
   onDeleteSubject: (id: string) => void;
+  /** 刷新资料列表，不触发报告正文重算。 */
   onDocuments: (documents: CourseDocument[]) => void;
+  /** 将操作结果交给工作台统一显示。 */
   announce: (message: string) => void;
 }) {
   const [termId, setTermId] = useState(initialTermId);
@@ -50,12 +66,15 @@ export function SubjectReportLibrary({
   const [newSubject, setNewSubject] = useState("");
   const [newTerm, setNewTerm] = useState({ name: "", startDate: "", endDate: "" });
   const [busy, setBusy] = useState(false);
+  const [termToDelete, setTermToDelete] = useState<Term | null>(null);
   const [subjectToDelete, setSubjectToDelete] = useState<Subject | null>(null);
   const [deleteId, setDeleteId] = useState("");
   const [unitEdits, setUnitEdits] = useState<Record<string, string>>({});
-  const subject = subjects.find(item => item.id === subjectId) ?? subjects[0];
-  const configSubject = subjects.find(item => item.id === configSubjectId) ?? subjects[0];
   const term = terms.find(item => item.id === termId) ?? terms[0];
+  const currentTermId = term?.id ?? "";
+  const currentTermSubjects = subjects.filter(item => item.termId === currentTermId || !item.termId);
+  const subject = currentTermSubjects.find(item => item.id === subjectId) ?? currentTermSubjects[0];
+  const configSubject = currentTermSubjects.find(item => item.id === configSubjectId) ?? currentTermSubjects[0];
   const scoped = documents.filter(item => item.termId === term?.id && item.subjectId === subject?.id);
   const pending = scoped.some(item => item.status === "queued" || item.status === "parsing");
 
@@ -86,6 +105,7 @@ export function SubjectReportLibrary({
     }
   }
 
+  /** 只刷新资料元数据，上传和解析均沿用后端状态。 */
   async function refresh() {
     onDocuments(await request<CourseDocument[], CourseDocument[]>(`${base}/course-documents`));
   }
@@ -93,127 +113,176 @@ export function SubjectReportLibrary({
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
       <div className="grid gap-4 md:grid-cols-2">
-        <section className="space-y-4 rounded-2xl border bg-card p-5">
-          <div className="flex items-center gap-2.5 border-b pb-2.5">
-            <Calendar className="h-7 w-7 shrink-0 text-indigo-600" aria-hidden="true" />
-            <div>
-              <h2 className="text-sm font-bold">学期与学科设置</h2>
-              <p className="text-xs text-muted-foreground">维护当前学校的学期日历以及任教学科列表。</p>
+        <div className="space-y-4">
+          <section aria-label="学科设置" className="space-y-4 rounded-2xl border bg-card p-5">
+            <div className="flex items-center gap-2.5 border-b pb-2.5">
+              <Calendar className="h-7 w-7 shrink-0 text-indigo-600" aria-hidden="true" />
+              <div>
+                <h2 className="text-sm font-bold">学科设置</h2>
+                <p className="text-xs text-muted-foreground">维护任教学科列表。</p>
+              </div>
             </div>
-          </div>
-          <p className="text-xs font-bold text-muted-foreground">新建学科</p>
-          <form
-            className="flex gap-2"
-            onSubmit={event => {
-              event.preventDefault();
-              void run(async () => {
-                const created = await request<Subject, Subject>(`${base}/report-subjects`, {
-                  method: "POST",
-                  data: { name: newSubject.trim() }
-                });
-                onSubject(created);
-                setSubjectId(created.id);
-                setConfigSubjectId(created.id);
-                setNewSubject("");
-                announce("学科已添加");
-              }, "添加学科失败，请重试。");
-            }}
-          >
-            <Input
-              aria-label="新建学科"
-              placeholder="新增学科名称（如 戏剧、陶艺）"
-              className="h-9 text-xs"
-              value={newSubject}
-              maxLength={100}
-              onChange={event => setNewSubject(event.target.value)}
-            />
-            <Button
-              size="sm"
-              type="submit"
-              className="h-9 bg-indigo-600 text-xs text-white hover:bg-indigo-700"
-              disabled={busy || !newSubject.trim()}
-            >
-              + 添加学科
-            </Button>
-          </form>
-          <div className="flex flex-wrap gap-1.5">
-            {subjects.map(item => (
-              <div key={item.id} className="flex items-center gap-1 rounded-lg border bg-muted/40 pl-2.5 text-xs">
-                <span className="font-medium">{item.name}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-9 text-muted-foreground hover:text-destructive"
-                  aria-label={`删除学科 ${item.name}`}
-                  disabled={busy || uploading}
-                  onClick={() => setSubjectToDelete(item)}
+            {terms.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-muted-foreground">所属学期</label>
+                <select
+                  aria-label="选择学科所属学期"
+                  className="h-9 w-full rounded-xl border border-input bg-background px-3 text-xs"
+                  value={currentTermId}
+                  onChange={event => {
+                    const nextId = event.target.value;
+                    setTermId(nextId);
+                    const matching = subjects.filter(s => s.termId === nextId || !s.termId);
+                    setSubjectId(matching[0]?.id ?? "");
+                    setConfigSubjectId(matching[0]?.id ?? "");
+                  }}
                 >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                  {terms.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ))}
-          </div>
-          <form
-            className="space-y-2 border-t pt-3"
-            onSubmit={event => {
-              event.preventDefault();
-              void run(async () => {
-                const created = await request<Term, Term>(`${base}/report-terms`, { method: "POST", data: newTerm });
-                onTerm(created);
-                setTermId(created.id);
-                setNewTerm({ name: "", startDate: "", endDate: "" });
-                announce("学期已添加");
-              }, "添加学期失败，请核对起止日期。");
-            }}
-          >
-            <p className="text-xs font-bold text-muted-foreground">新建学期</p>
-            <Input
-              className="h-9 text-xs"
-              aria-label="新建学期"
-              placeholder="新增学期名称"
-              required
-              maxLength={100}
-              value={newTerm.name}
-              onChange={event => setNewTerm({ ...newTerm, name: event.target.value })}
-            />
-            <div className="grid grid-cols-2 gap-2">
+            )}
+            <p className="text-xs font-bold text-muted-foreground">新建学科</p>
+            <form
+              className="flex gap-2"
+              onSubmit={event => {
+                event.preventDefault();
+                void run(async () => {
+                  const created = await request<Subject, Subject>(`${base}/report-subjects`, {
+                    method: "POST",
+                    data: { name: newSubject.trim(), termId: currentTermId || undefined }
+                  });
+                  onSubject(created);
+                  setSubjectId(created.id);
+                  setConfigSubjectId(created.id);
+                  setNewSubject("");
+                  announce("学科已添加");
+                }, "添加学科失败，请重试。");
+              }}
+            >
               <Input
-                className="h-8 min-w-0 text-xs"
-                aria-label="学期开始日期"
-                type="date"
-                required
-                value={newTerm.startDate}
-                onChange={event => setNewTerm({ ...newTerm, startDate: event.target.value })}
+                aria-label="新建学科"
+                placeholder="新增学科名称（如 戏剧、陶艺）"
+                className="h-9 text-xs"
+                value={newSubject}
+                maxLength={100}
+                onChange={event => setNewSubject(event.target.value)}
               />
-              <Input
-                className="h-8 min-w-0 text-xs"
-                aria-label="学期结束日期"
-                type="date"
-                required
-                value={newTerm.endDate}
-                onChange={event => setNewTerm({ ...newTerm, endDate: event.target.value })}
-              />
-            </div>
-            <Button size="sm" type="submit" variant="outline" className="h-8 w-full text-xs" disabled={busy}>
-              + 新建学期
-            </Button>
-          </form>
-          <div className="space-y-1.5 pt-2">
-            <span className="block text-[11px] font-bold text-muted-foreground">既有学期日历</span>
-            {terms.map(item => (
-              <div
-                key={item.id}
-                className="flex flex-wrap justify-between gap-1 rounded-lg border bg-muted/20 p-2 text-[11px]"
+              <Button
+                size="sm"
+                type="submit"
+                className="h-9 bg-indigo-600 text-xs text-white hover:bg-indigo-700"
+                disabled={busy || !newSubject.trim()}
               >
-                <span className="font-semibold">{item.name}</span>
-                <span className="text-muted-foreground">
-                  {item.startDate} 至 {item.endDate}
-                </span>
+                + 添加学科
+              </Button>
+            </form>
+            <div className="flex flex-wrap gap-1.5">
+              {currentTermSubjects.map(item => (
+                <div key={item.id} className="flex items-center gap-1 rounded-lg border bg-muted/40 pl-2.5 text-xs">
+                  <span className="font-medium">{item.name}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 text-muted-foreground hover:text-destructive"
+                    aria-label={`删除学科 ${item.name}`}
+                    disabled={busy || uploading}
+                    onClick={() => setSubjectToDelete(item)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+              {!currentTermSubjects.length && (
+                <p className="py-1 text-xs text-muted-foreground">该学期暂未添加学科，请在上方添加。</p>
+              )}
+            </div>
+          </section>
+          <section aria-label="学期设置" className="space-y-4 rounded-2xl border bg-card p-5">
+            <div className="flex items-center gap-2.5 border-b pb-2.5">
+              <Calendar className="h-7 w-7 shrink-0 text-indigo-600" aria-hidden="true" />
+              <div>
+                <h2 className="text-sm font-bold">学期设置</h2>
+                <p className="text-xs text-muted-foreground">维护学期日历，删除学期不会影响已生成报告。</p>
               </div>
-            ))}
-          </div>
-        </section>
+            </div>
+            <form
+              className="space-y-2"
+              onSubmit={event => {
+                event.preventDefault();
+                void run(async () => {
+                  const created = await request<Term, Term>(`${base}/report-terms`, { method: "POST", data: newTerm });
+                  onTerm(created);
+                  setTermId(created.id);
+                  setNewTerm({ name: "", startDate: "", endDate: "" });
+                  announce("学期已添加");
+                }, "添加学期失败，请核对起止日期。");
+              }}
+            >
+              <p className="text-xs font-bold text-muted-foreground">新建学期</p>
+              <Input
+                className="h-9 text-xs"
+                aria-label="新建学期"
+                placeholder="新增学期名称"
+                required
+                maxLength={100}
+                value={newTerm.name}
+                onChange={event => setNewTerm({ ...newTerm, name: event.target.value })}
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  className="h-8 min-w-0 text-xs"
+                  aria-label="学期开始日期"
+                  type="date"
+                  required
+                  value={newTerm.startDate}
+                  onChange={event => setNewTerm({ ...newTerm, startDate: event.target.value })}
+                />
+                <Input
+                  className="h-8 min-w-0 text-xs"
+                  aria-label="学期结束日期"
+                  type="date"
+                  required
+                  value={newTerm.endDate}
+                  onChange={event => setNewTerm({ ...newTerm, endDate: event.target.value })}
+                />
+              </div>
+              <Button size="sm" type="submit" variant="outline" className="h-8 w-full text-xs" disabled={busy}>
+                + 新建学期
+              </Button>
+            </form>
+            <div className="space-y-1.5 pt-2">
+              <span className="block text-[11px] font-bold text-muted-foreground">既有学期日历</span>
+              {/* 固定三列比例，让各学期日期左边缘一致；长名称允许折行。 */}
+              {terms.map(item => (
+                <div
+                  key={item.id}
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_2.25rem] items-center gap-2 rounded-lg border bg-muted/20 p-2 text-[11px]"
+                >
+                  <span className="min-w-0 break-words font-semibold">{item.name}</span>
+                  <span className="min-w-0 text-left tabular-nums text-muted-foreground">
+                    {item.startDate} 至 {item.endDate}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 text-muted-foreground hover:text-destructive"
+                    aria-label={`删除学期 ${item.name}`}
+                    disabled={busy || uploading}
+                    onClick={() => setTermToDelete(item)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
         <section className="space-y-4 rounded-2xl border bg-card p-5">
           <div className="flex items-center justify-between gap-2 border-b pb-2.5">
             <div className="flex items-center gap-2.5">
@@ -250,8 +319,8 @@ export function SubjectReportLibrary({
                 value={subject?.id ?? ""}
                 onChange={event => setSubjectId(event.target.value)}
               >
-                {!subjects.length && <option value="">请先添加学科</option>}
-                {subjects.map(item => (
+                {!currentTermSubjects.length && <option value="">请先添加学科</option>}
+                {currentTermSubjects.map(item => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
@@ -377,8 +446,8 @@ export function SubjectReportLibrary({
               onChange={event => setConfigSubjectId(event.target.value)}
               className="h-8 rounded-xl border border-indigo-300 bg-card px-3 font-bold text-indigo-600 dark:border-indigo-700"
             >
-              {!subjects.length && <option value="">请先添加学科</option>}
-              {subjects.map(item => (
+              {!currentTermSubjects.length && <option value="">请先添加学科</option>}
+              {currentTermSubjects.map(item => (
                 <option key={item.id} value={item.id}>
                   {item.name}
                 </option>
@@ -386,9 +455,19 @@ export function SubjectReportLibrary({
             </select>
           </label>
         </div>
+        {/* 并列编辑器使用不同 key 前缀；切换学科时各自丢弃未保存草稿。 */}
+        {/* 两个编辑器使用不同 key 前缀，切换学科时分别清空未保存输入。 */}
+        {configSubject && (
+          <SubjectCourseContentConfig
+            key={`course-content-${configSubject.id}`}
+            subject={configSubject}
+            onSubject={onSubject}
+            announce={announce}
+          />
+        )}
         {configSubject && (
           <SubjectPerformanceConfig
-            key={configSubject.id}
+            key={`performance-${configSubject.id}`}
             subject={configSubject}
             busy={busy}
             staged
@@ -407,6 +486,24 @@ export function SubjectReportLibrary({
           />
         )}
       </section>
+      <ConfirmDialog
+        open={!!termToDelete}
+        title={`删除学期「${termToDelete?.name ?? ""}」？`}
+        description="学期设置由学科报告和学期报告共用。删除后不再用于新建报告，已生成报告、分享链接及课程资料保留，已有草稿仍可编辑和发布。"
+        confirmText="删除学期"
+        onCancel={() => setTermToDelete(null)}
+        onConfirm={() => {
+          if (!termToDelete) return;
+          const { id } = termToDelete;
+          setTermToDelete(null);
+          void run(async () => {
+            await request(`${base}/report-terms/${encodeURIComponent(id)}`, { method: "DELETE" });
+            setTermId(current => (current === id ? (terms.find(item => item.id !== id)?.id ?? "") : current));
+            onDeleteTerm(id);
+            announce("学期已删除，已有报告保留");
+          }, "删除学期失败，请重试。");
+        }}
+      />
       <ConfirmDialog
         open={!!subjectToDelete}
         title={`删除学科「${subjectToDelete?.name ?? ""}」？`}

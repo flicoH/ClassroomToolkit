@@ -56,7 +56,12 @@ import {
 } from "@/components/semester-reports/StudentFeedbackForm";
 
 type Term = { id: string; name: string; startDate: string; endDate: string };
-type Subject = { id: string; name: string; performanceConfig?: PerformanceField[] | null };
+type Subject = {
+  id: string;
+  name: string;
+  termId?: string | null;
+  performanceConfig?: PerformanceField[] | null;
+};
 /** 报告选择器读取宠物积分学生 ID，头像则由后端匹配学生管理资料后写入报告快照。 */
 type Student = ReportPet & { id: string; name: string; classId: string; className: string; score: number };
 /** 列表响应只提供摘要；打开编辑时再取详情，避免轮询携带照片和完整报告正文。 */

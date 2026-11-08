@@ -13,6 +13,10 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import eslintPluginVue from "eslint-plugin-vue";
 import globals from "globals";
+import webEslintConfig from "./apps/web/eslint.config.mjs";
+
+// 复用 Web 已安装的 Hooks 插件，让根目录检查也能识别组件中的定向规则注释。
+const reactHooksPlugin = webEslintConfig.find(config => config.plugins?.["react-hooks"])?.plugins["react-hooks"];
 
 // Global ignores exclude generated output, not source tests or verification scripts.
 const ignores = [
@@ -50,6 +54,7 @@ export default defineConfig([
   },
   // Next.js (web) 配置
   {
+    plugins: { "react-hooks": reactHooksPlugin },
     files: ["apps/web/**/*.{ts,tsx,js,jsx}"],
     languageOptions: {
       ecmaVersion: "latest",

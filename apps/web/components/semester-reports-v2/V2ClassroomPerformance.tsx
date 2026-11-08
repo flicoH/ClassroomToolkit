@@ -13,6 +13,7 @@ export type V2Subject = {
   id: string;
   name: string;
   performanceConfig?: PerformanceField[] | null;
+  courseContentTitles?: string[] | null;
 };
 
 /**

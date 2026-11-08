@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** 独立学科报告任务及冻结正文，不与学期报告主表混存。 */
 @Entity('subject_reports')
 export class SubjectReportEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -54,6 +55,7 @@ export class SubjectReportEntity {
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }
 
+/** 独立学科报告的公开分享凭据。 */
 @Entity('subject_report_shares')
 export class SubjectReportShareEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -68,6 +70,7 @@ export class SubjectReportShareEntity {
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
+/** 独立学科报告的操作流程流水。 */
 @Entity('subject_report_events')
 export class SubjectReportEventEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -84,6 +87,7 @@ export class SubjectReportEventEntity {
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }
 
+/** 独立学科报告的模型调用和用量记录。 */
 @Entity('subject_report_token_calls')
 export class SubjectReportTokenCallEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
@@ -111,13 +115,19 @@ export class SubjectReportTokenCallEntity {
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }
 
+/** 仅供学科报告使用的学科设置，支持按学期绑定、停用及标题配置。 */
 @Entity('subject_report_subjects')
 export class SubjectReportSubjectEntity {
   @PrimaryColumn({ length: 64 }) id!: string;
   @Column({ name: 'teacher_id', length: 64 }) teacherId!: string;
+  @Column({ name: 'term_id', type: 'varchar', length: 64, nullable: true })
+  termId!: string | null;
   @Column({ length: 100 }) name!: string;
   @Column({ default: true }) enabled!: boolean;
   @Column({ name: 'performance_config', type: 'json', nullable: true })
   performanceConfig!: PerformanceField[] | null;
+  /** null 使用历史默认标题，空数组表示教师删除全部标题；不回写历史正文。 */
+  @Column({ name: 'course_content_titles', type: 'json', nullable: true })
+  courseContentTitles!: string[] | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }

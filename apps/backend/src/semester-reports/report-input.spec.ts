@@ -506,6 +506,29 @@ describe('report generation input', () => {
     expect(reports.save).not.toHaveBeenCalled();
   });
 
+  it('allows previewing with skipSubjectValidation even when subject is not in semester repo', async () => {
+    const { service, internals } = setup();
+    internals.requireSubject.mockRejectedValue(new Error('学科不存在'));
+    const input = {
+      ...request,
+      reportVersion: 'v1',
+      subjectId: 'external-subject',
+      courseSelections: [
+        {
+          subjectId: 'external-subject',
+          courseScope: '',
+          manualContent: '实际内容',
+        },
+      ],
+    };
+    await expect(service.preview(input)).rejects.toThrow('学科不存在');
+    const result = await service.preview(input, {
+      skipSubjectValidation: true,
+    });
+    expect(result.scoreSummaries).toBeDefined();
+    expect(result.petPreviews).toBeDefined();
+  });
+
   describe.each(['v1', 'v2'])('%s future report end', (reportVersion) => {
     it.each([
       ['week', '2026-09-21', '2026-09-25', '2026-09-25T16:00:00.000Z'],
