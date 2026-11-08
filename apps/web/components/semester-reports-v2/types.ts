@@ -100,6 +100,8 @@ export type ReportSummaryItem = {
   termId?: string;
   /** 本次报告引用的各学科教学范围。 */
   courseSelections?: Array<{ subjectId: string; courseScope?: string }>;
+  /** 单科报告的教学范围；旧摘要可能缺失，服务端未设置时返回 null。 */
+  courseScope?: string | null;
   /** 报告周期种类，stage 为阶段汇总。 */
   period: "week" | "month" | "term" | "stage";
   /** 兼容由学期周期承载的阶段汇总报告。 */
