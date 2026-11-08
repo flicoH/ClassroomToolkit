@@ -1132,3 +1132,44 @@ it.each([false, true])(
     expect(growthCards).toHaveLength(1);
   }
 );
+
+it.each([false, true])("shows course cards only when teaching content is filled (image: %s)", forImage => {
+  for (const period of ["week", "month", "term", "stage"]) {
+    for (const isSubjectReport of [undefined, false, true]) {
+      for (const courseContent of [undefined, "", " \n ", "第 1 节课：认识颜色"]) {
+        const html = renderToStaticMarkup(
+          <LearningReportView
+            forImage={forImage}
+            report={{
+              ...report,
+              period,
+              isSubjectReport,
+              courseScope: "旧课程范围",
+              content: {
+                ...report.content,
+                courseContent,
+                courseScope: "授课范围",
+                nextWeekContent: "后续教学内容",
+                attendance: "late",
+                attendances: ["present", "late"]
+              }
+            }}
+          />
+        );
+        if (courseContent?.trim()) {
+          expect(html).toContain("课程内容");
+          expect(html).toContain("认识颜色");
+          expect(html).toContain("授课范围");
+          expect(html).toContain("后续教学内容");
+          expect(html).toContain("课程出勤情况");
+        } else {
+          expect(html).not.toContain("课程内容");
+          expect(html).not.toContain("授课范围");
+          expect(html).not.toContain("后续教学内容");
+          expect(html).not.toContain("课程出勤情况");
+        }
+        expect(html).toContain("继续加油");
+      }
+    }
+  }
+});

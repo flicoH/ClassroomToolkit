@@ -242,21 +242,14 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         {isV2 && classroomPhotoSection}
         {/* 课次前缀沿用已有正文格式，无前缀的历史内容归入第一课。 */}
         {(() => {
+          // 出勤和范围备注不能单独撑起课程板块，未填写教学正文时隐藏。
+          if (!content.courseContent?.trim()) return null;
           const effectiveCourseScope =
             content.courseScope?.trim() ||
             (report.courseScope && report.courseScope !== "教学内容" && report.courseScope !== content.courseContent
               ? report.courseScope.trim()
               : "");
           const nextWeekContent = content.nextWeekContent?.trim();
-          const hasCourseContent = Boolean(
-            content.attendance ||
-            content.attendances?.length ||
-            content.courseContent?.trim() ||
-            effectiveCourseScope ||
-            nextWeekContent
-          );
-          if (!hasCourseContent) return null;
-
           const groups = new Map<number, string[]>();
           for (const line of (content.courseContent ?? "").split("\n")) {
             if (!line.trim()) continue;
