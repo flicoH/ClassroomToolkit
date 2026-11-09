@@ -1035,7 +1035,7 @@ it.each([false, true])(
     expect(scopeEl).not.toBeNull();
     expect(scopeEl?.textContent).toContain("Unit 1 Colours 词汇复习");
 
-    const nextEl = elementWithBoth.querySelector('[aria-label="下周教学内容重点"]');
+    const nextEl = elementWithBoth.querySelector('[aria-label="下周课堂预习内容"]');
     expect(nextEl).not.toBeNull();
     expect(nextEl?.textContent).toContain("下周进入 Unit 2 数字表达");
 
@@ -1056,7 +1056,40 @@ it.each([false, true])(
       />
     );
     expect(elementEmpty.querySelector('[aria-label="授课范围备注"]')).toBeNull();
-    expect(elementEmpty.querySelector('[aria-label="下周教学内容重点"]')).toBeNull();
+    expect(elementEmpty.querySelector('[aria-label="下周课堂预习内容"]')).toBeNull();
+  }
+);
+
+it.each([false, true])(
+  "renders '回家可以跟父母一起练' and omits growth assessment for subject reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            areasToImprove: [{ text: "回家练习对话", sourceRefs: [] }],
+            growthAssessment: {
+              learningReadiness: "上课很专注",
+              communicationCooperation: "乐于分享",
+              independenceRules: "遵守规则",
+              overallUnderstanding: "进步明显"
+            }
+          }
+        }}
+      />
+    );
+    expect(element.textContent).toContain("回家可以跟父母一起练");
+    expect(element.textContent).not.toContain("下一步重点");
+    expect(element.textContent).toContain("回家练习对话");
+    // Growth assessment is omitted for subject reports
+    expect(element.textContent).not.toContain("学习习惯与能力成长总结");
+    expect(element.textContent).not.toContain("上课很专注");
   }
 );
 

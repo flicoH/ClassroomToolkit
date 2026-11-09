@@ -422,7 +422,11 @@ describe('SubjectReportsService', () => {
     expect(mockSubjectsRepo.find).toHaveBeenCalledWith({
       where: [
         { teacherId: 'test-teacher', enabled: true, termId: 'term-1' },
-        { teacherId: 'test-teacher', enabled: true, termId: expect.anything() },
+        {
+          teacherId: 'test-teacher',
+          enabled: true,
+          termId: expect.anything() as unknown as string,
+        },
       ],
       order: { name: 'ASC' },
     });
@@ -653,7 +657,7 @@ describe('SubjectReportsService', () => {
         snapshot: expect.objectContaining({
           courseScope: 'Unit 1 Colours',
           nextWeekContent: 'Unit 2 Numbers',
-        }),
+        }) as unknown as Record<string, unknown>,
       }),
     );
 
@@ -695,7 +699,7 @@ describe('SubjectReportsService', () => {
       service.editDraft('r1', {
         nextWeekContent: ['invalid'] as unknown as string,
       }),
-    ).rejects.toThrow('下周教学内容重点必须为文本');
+    ).rejects.toThrow('下周课堂预习内容必须为文本');
 
     // Updating them in draft
     const updated = await service.editDraft('r1', {
@@ -777,7 +781,9 @@ describe('SubjectReportsService', () => {
       0,
     );
     expect(updatedSlot0.content).toMatchObject({
-      classroomPhoto: expect.stringContaining('data:image/png;base64,'),
+      classroomPhoto: expect.stringContaining(
+        'data:image/png;base64,',
+      ) as unknown as string,
       classroomPhotos: [
         expect.stringContaining('data:image/png;base64,'),
         null,
@@ -794,7 +800,9 @@ describe('SubjectReportsService', () => {
       '1',
     );
     expect(updatedSlot1.content).toMatchObject({
-      classroomPhoto: expect.stringContaining('data:image/png;base64,'),
+      classroomPhoto: expect.stringContaining(
+        'data:image/png;base64,',
+      ) as unknown as string,
       classroomPhotos: [
         expect.stringContaining('data:image/png;base64,'),
         expect.stringContaining('data:image/jpeg;base64,'),

@@ -5,7 +5,7 @@ import { Upload } from "lucide-react";
 
 export type ReportWizardStep = 1 | 2 | 3 | 4;
 
-const steps = [
+const defaultSteps = [
   [1, "周期与基础"],
   [2, "学科与内容来源"],
   [3, "选择学生"],
@@ -16,32 +16,42 @@ export function ReportWizardSteps({
   step,
   onChange,
   hasSubjects,
-  hasStudents
+  hasStudents,
+  steps: customSteps,
+  isStepDisabled
 }: {
   step: ReportWizardStep;
   onChange: (step: ReportWizardStep) => void;
   hasSubjects: boolean;
   hasStudents: boolean;
+  steps?: readonly (readonly [ReportWizardStep, string])[];
+  isStepDisabled?: (stepValue: ReportWizardStep) => boolean;
 }) {
+  const stepItems = customSteps ?? defaultSteps;
   return (
     <nav
       aria-label="报告填写步骤"
       className="grid grid-cols-4 gap-2 rounded-2xl border bg-card p-2 text-xs font-medium"
     >
-      {steps.map(([value, label]) => (
-        <button
-          key={value}
-          type="button"
-          aria-current={step === value ? "step" : undefined}
-          disabled={(value >= 3 && !hasSubjects) || (value === 4 && !hasStudents)}
-          onClick={() => onChange(value)}
-          className={`rounded-xl px-2 py-2.5 text-center transition disabled:cursor-not-allowed disabled:opacity-40 ${
-            step === value ? "bg-indigo-600 font-bold text-white shadow-xs" : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          {value}. {label}
-        </button>
-      ))}
+      {stepItems.map(([value, label]) => {
+        const disabled = isStepDisabled
+          ? isStepDisabled(value)
+          : (value >= 3 && !hasSubjects) || (value === 4 && !hasStudents);
+        return (
+          <button
+            key={value}
+            type="button"
+            aria-current={step === value ? "step" : undefined}
+            disabled={disabled}
+            onClick={() => onChange(value)}
+            className={`rounded-xl px-2 py-2.5 text-center transition disabled:cursor-not-allowed disabled:opacity-40 ${
+              step === value ? "bg-indigo-600 font-bold text-white shadow-xs" : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {value}. {label}
+          </button>
+        );
+      })}
     </nav>
   );
 }

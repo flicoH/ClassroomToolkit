@@ -298,6 +298,7 @@ export function DraftEditModal({
     normalizeContent(report.content, report.reportVersion)
   );
   const isV2 = content.reportVersion === "v2";
+  const isSubject = subjectReport || Boolean(report.isSubjectReport);
   const [activeSubjectId, setActiveSubjectId] = useState<string>(() => {
     return report.content.reportSubjects?.[0]?.subjectId || allAvailableSubjects[0]?.id || "english";
   });
@@ -1109,10 +1110,10 @@ export function DraftEditModal({
                 <div className="mt-4">
                   <label className="text-xs font-semibold text-slate-700">
                     {report.period === "week"
-                      ? "下周教学内容重点（选填）"
+                      ? "下周课堂预习内容（选填）"
                       : report.period === "month"
-                        ? "下月教学内容重点（选填）"
-                        : "下学期教学内容重点（选填）"}
+                        ? "下月课堂预习内容（选填）"
+                        : "下学期课堂预习内容（选填）"}
                   </label>
                   <Textarea
                     value={content.nextWeekContent ?? ""}
@@ -1315,40 +1316,42 @@ export function DraftEditModal({
             </div>
 
             {/* 学习习惯与能力成长总结 */}
-            <div className="space-y-3 rounded-xl border border-sky-100 bg-sky-50/40 p-3.5 dark:border-sky-900/40 dark:bg-sky-950/20">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-sky-900 dark:text-sky-200">学习习惯与能力成长总结</span>
-                <span className="text-[11px] text-muted-foreground">修改后实时镜像呈现于右侧长图</span>
+            {!isSubject && (
+              <div className="space-y-3 rounded-xl border border-sky-100 bg-sky-50/40 p-3.5 dark:border-sky-900/40 dark:bg-sky-950/20">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-sky-900 dark:text-sky-200">学习习惯与能力成长总结</span>
+                  <span className="text-[11px] text-muted-foreground">修改后实时镜像呈现于右侧长图</span>
+                </div>
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {growthDimensions.map(([key, label]) => (
+                    <div key={key} className="space-y-1">
+                      <label className="text-[11px] font-semibold text-sky-950 dark:text-sky-300">{label}</label>
+                      <Textarea
+                        aria-label={label}
+                        rows={2}
+                        value={content.growthAssessment?.[key] || ""}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setContent(prev => ({
+                            ...prev,
+                            growthAssessment: {
+                              ...(prev.growthAssessment || emptyGrowthAssessment()),
+                              [key]: val
+                            }
+                          }));
+                        }}
+                        placeholder={
+                          key === "overallUnderstanding"
+                            ? "综合本周期观察，填写成长变化与后续关注方向"
+                            : "填写实际观察到的成长亮点"
+                        }
+                        className="border-sky-200 bg-white text-xs dark:bg-card"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                {growthDimensions.map(([key, label]) => (
-                  <div key={key} className="space-y-1">
-                    <label className="text-[11px] font-semibold text-sky-950 dark:text-sky-300">{label}</label>
-                    <Textarea
-                      aria-label={label}
-                      rows={2}
-                      value={content.growthAssessment?.[key] || ""}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setContent(prev => ({
-                          ...prev,
-                          growthAssessment: {
-                            ...(prev.growthAssessment || emptyGrowthAssessment()),
-                            [key]: val
-                          }
-                        }));
-                      }}
-                      placeholder={
-                        key === "overallUnderstanding"
-                          ? "综合本周期观察，填写成长变化与后续关注方向"
-                          : "填写实际观察到的成长亮点"
-                      }
-                      className="border-sky-200 bg-white text-xs dark:bg-card"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* 老师想对你说 */}
             <div className="space-y-2 rounded-xl border bg-background p-3.5 text-xs">
@@ -1404,7 +1407,7 @@ export function DraftEditModal({
             {/* 下一步重点 */}
             <div className="space-y-2 rounded-xl border bg-background p-3.5 text-xs">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-foreground">下一步重点</span>
+                <span className="font-bold text-foreground">{isSubject ? "回家可以跟父母一起练" : "下一步重点"}</span>
                 <Button
                   type="button"
                   variant="outline"
@@ -1421,16 +1424,20 @@ export function DraftEditModal({
               <div className="space-y-2 pt-1">
                 {(content.areasToImprove || []).length === 0 && (
                   <p className="py-1 text-[11px] text-muted-foreground">
-                    暂无重点建议，可点击右上角“添加一条”添加（选填，最多8条）。
+                    {isSubject
+                      ? "暂无练习建议，可点击右上角“添加一条”添加（选填，最多8条）。"
+                      : "暂无重点建议，可点击右上角“添加一条”添加（选填，最多8条）。"}
                   </p>
                 )}
                 {(content.areasToImprove || []).map((item, idx) => (
                   <div key={idx} className="flex items-center gap-2">
                     <span className="font-bold text-indigo-600">{idx + 1}.</span>
                     <Input
-                      aria-label={`重点建议第${idx + 1}条`}
+                      aria-label={isSubject ? `练习建议第${idx + 1}条` : `重点建议第${idx + 1}条`}
                       value={item.text}
-                      placeholder="填写下一阶段具体学习或习惯重点..."
+                      placeholder={
+                        isSubject ? "填写回家可以跟父母一起练习的内容..." : "填写下一阶段具体学习或习惯重点..."
+                      }
                       onChange={e => handleUpdateFocusItem(idx, e.target.value)}
                       className="h-8 flex-1 text-xs"
                     />
@@ -1438,7 +1445,7 @@ export function DraftEditModal({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      aria-label={`删除第${idx + 1}条重点建议`}
+                      aria-label={isSubject ? `删除第${idx + 1}条练习建议` : `删除第${idx + 1}条重点建议`}
                       onClick={() => handleRemoveFocusItem(idx)}
                       className="h-8 w-8 text-muted-foreground hover:text-red-500"
                     >
