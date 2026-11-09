@@ -706,16 +706,9 @@ export class SubjectReportsService implements OnModuleInit {
       content.nextWeekContent.trim()
         ? content.nextWeekContent.trim()
         : content.nextWeekContent === undefined &&
-            typeof (row.snapshot as Record<string, unknown> | null)
-              ?.nextWeekContent === 'string' &&
-            (
-              (row.snapshot as Record<string, unknown>)
-                .nextWeekContent as string
-            ).trim()
-          ? (
-              (row.snapshot as Record<string, unknown>)
-                .nextWeekContent as string
-            ).trim()
+            typeof row.snapshot?.nextWeekContent === 'string' &&
+            row.snapshot.nextWeekContent.trim()
+          ? row.snapshot.nextWeekContent.trim()
           : undefined;
     const restContent = { ...content };
     delete restContent.courseScope;
@@ -1225,7 +1218,7 @@ export class SubjectReportsService implements OnModuleInit {
       content.nextWeekContent !== null &&
       typeof content.nextWeekContent !== 'string'
     ) {
-      throw new BadRequestException('下周教学内容重点必须为文本');
+      throw new BadRequestException('下周课堂预习内容必须为文本');
     }
     const previous = this.reportContent(report);
     // 草稿修改支持更新多课次出勤列表，同时双向同步单标量字段以兼容外部调用
@@ -1364,7 +1357,7 @@ export class SubjectReportsService implements OnModuleInit {
     }
 
     const currentSnapshot = report.snapshot ?? {};
-    const currentContent = (report.content ?? {}) as Record<string, unknown>;
+    const currentContent = report.content ?? {};
 
     const classroomPhotos = classroomPhotosForSnapshot({
       classroomPhoto:

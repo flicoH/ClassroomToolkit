@@ -331,6 +331,8 @@ describe("SubjectReportStudio", () => {
       [...container.querySelectorAll("button")].find(item => item.textContent?.includes(label))!;
     await act(async () => button("填写与生成报告").click());
     await act(async () => button("下一步").click());
+    await act(async () => button("小宇").click());
+    await act(async () => button("下一步").click());
     const manual = container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-0")!;
     const sentence = container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-1")!;
     const otherLesson = container.querySelector<HTMLTextAreaElement>("#subject-lesson-1-1")!;
@@ -407,7 +409,7 @@ describe("SubjectReportStudio", () => {
     const button = (label: string) =>
       [...container.querySelectorAll("button")].find(item => item.textContent?.includes(label))!;
     await act(async () => button("填写与生成报告").click());
-    await act(async () => button("3. 选择学生").click());
+    await act(async () => button("2. 选择学生").click());
     await act(async () => button("小宇").click());
     await act(async () => button("4. 课堂评价与生成").click());
     await act(async () => button("保存并切换下一位学生").click());
@@ -430,15 +432,15 @@ describe("SubjectReportStudio", () => {
       });
     };
     await act(async () => button("填写与生成报告").click());
-    await act(async () => button("2. 学科与内容来源").click());
+    await act(async () => button("2. 选择学生").click());
+    await act(async () => button("全选本班").click());
+    await act(async () => button("3. 学科与内容来源").click());
     await fill(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-0")!, "课堂阅读");
     const pdf = container.querySelector<HTMLSelectElement>('[aria-label="选择 PDF 章节"]')!;
     await act(async () => {
       pdf.value = "Unit1";
       pdf.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await act(async () => button("3. 选择学生").click());
-    await act(async () => button("全选本班").click());
     await act(async () => button("4. 课堂评价与生成").click());
     expect(apiMock).toHaveBeenCalledWith(
       "/api/subject-reports/reports/preview-input",
@@ -455,12 +457,14 @@ describe("SubjectReportStudio", () => {
       attendance.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await act(async () => button("主动参与").click());
-    await fill(
-      container.querySelector<HTMLTextAreaElement>('[aria-label="学习准备与课堂能力"]')!,
-      "能独立准备学习用品"
-    );
-    await act(async () => button("添加重点建议").click());
-    await fill(container.querySelector<HTMLInputElement>('[aria-label="重点建议 1"]')!, "每天朗读五分钟");
+    // 学习习惯与能力成长总结已移除
+    expect(container.querySelector('[aria-label="学习准备与课堂能力"]')).toBeNull();
+    expect(container.textContent).not.toContain("学习习惯与能力成长总结");
+    // 下一步重点已更名为回家可以跟父母一起练
+    expect(container.textContent).toContain("回家可以跟父母一起练");
+    expect(container.textContent).not.toContain("下一步重点");
+    await act(async () => button("添加练习建议").click());
+    await fill(container.querySelector<HTMLInputElement>('[aria-label="练习建议 1"]')!, "每天朗读五分钟");
     await act(async () => button("保存并切换下一位学生").click());
     expect(container.textContent).toContain("已暂存「小宇」的完整课堂反馈，已切换到下一位");
     expect(container.textContent).toContain("1 / 2 已评价");
@@ -482,7 +486,7 @@ describe("SubjectReportStudio", () => {
               attendance: "late",
               attendances: ["late", "present"],
               nextFocus: "每天朗读五分钟",
-              growthAssessment: expect.objectContaining({ learningReadiness: "能独立准备学习用品" }),
+              growthAssessment: undefined,
               classroomPerformance: [{ subjectId: "sub-1", label: "课堂参与", value: "主动参与" }]
             }),
             expect.objectContaining({
@@ -496,12 +500,12 @@ describe("SubjectReportStudio", () => {
       })
     );
     await act(async () => button("新建学科报告").click());
-    await act(async () => button("2. 学科与内容来源").click());
+    await act(async () => button("2. 选择学生").click());
+    await act(async () => button("全选本班").click());
+    await act(async () => button("3. 学科与内容来源").click());
     expect(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-0")?.value).toBe("");
     expect(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-1")?.value).toBe("");
     expect(container.querySelector<HTMLSelectElement>('[aria-label="选择 PDF 章节"]')?.value).toBe("");
-    await act(async () => button("3. 选择学生").click());
-    await act(async () => button("全选本班").click());
     await act(async () => button("4. 课堂评价与生成").click());
     expect(button("主动参与").getAttribute("aria-checked")).toBe("false");
   });
@@ -563,7 +567,10 @@ describe("SubjectReportStudio", () => {
 
     // Live preview initially does not have these sections
     expect(document.querySelector('[aria-label="授课范围备注"]')).toBeNull();
-    expect(document.querySelector('[aria-label="下周教学内容重点"]')).toBeNull();
+    expect(document.querySelector('[aria-label="下周课堂预习内容"]')).toBeNull();
+    // Draft edit modal does not show 学习习惯与能力成长总结, and shows 回家可以跟父母一起练
+    expect(document.body.textContent).not.toContain("学习习惯与能力成长总结");
+    expect(document.body.textContent).toContain("回家可以跟父母一起练");
 
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
@@ -581,7 +588,7 @@ describe("SubjectReportStudio", () => {
 
     // Live preview updates immediately
     expect(document.querySelector('[aria-label="授课范围备注"]')?.textContent).toContain("Unit 1 单词复习与句型对话");
-    expect(document.querySelector('[aria-label="下周教学内容重点"]')?.textContent).toContain(
+    expect(document.querySelector('[aria-label="下周课堂预习内容"]')?.textContent).toContain(
       "下周进入 Unit 2 重点句型"
     );
 
@@ -939,22 +946,28 @@ describe("SubjectReportStudio", () => {
       composeBtn?.click();
     });
 
-    // Step 1 -> Next Step -> Step 2
+    // Step 1 -> Next Step -> Step 2 (选择学生)
     const nextBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent?.includes("下一步"));
     expect(nextBtn).toBeTruthy();
     await act(async () => {
       nextBtn?.click();
     });
 
-    expect(container.textContent).toContain("步骤 2：报告学科与教学内容");
+    expect(container.textContent).toContain("步骤 2：挑选本次生成报告的学生");
 
-    // Step 2 -> Next Step -> Step 3
+    // Select student to allow proceeding to Step 3
+    const studentBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent?.includes("小宇"));
+    await act(async () => {
+      studentBtn?.click();
+    });
+
+    // Step 2 -> Next Step -> Step 3 (报告学科与教学内容)
     const nextBtn2 = Array.from(container.querySelectorAll("button")).find(b => b.textContent?.includes("下一步"));
     await act(async () => {
       nextBtn2?.click();
     });
 
-    expect(container.textContent).toContain("步骤 3：挑选本次生成报告的学生");
+    expect(container.textContent).toContain("步骤 3：报告学科与教学内容");
 
     const actions = [...container.querySelectorAll("button")].map(button => button.textContent?.trim());
     expect(actions).toContain("上一步");

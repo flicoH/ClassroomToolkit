@@ -308,13 +308,13 @@ export function LearningReportView({ report }: { report: LearningReportData; for
                 );
               })}
               {nextWeekContent && (
-                <div aria-label="下周教学内容重点" className="rounded-xl border border-indigo-100 bg-white p-3 sm:p-4">
+                <div aria-label="下周课堂预习内容" className="rounded-xl border border-indigo-100 bg-white p-3 sm:p-4">
                   <h3 className="mb-1 text-sm font-semibold text-indigo-950">
                     {report.period === "month"
-                      ? "下月教学内容重点"
+                      ? "下月课堂预习内容"
                       : report.period === "term"
-                        ? "下学期教学内容重点"
-                        : "下周教学内容重点"}
+                        ? "下学期课堂预习内容"
+                        : "下周课堂预习内容"}
                   </h3>
                   <p className="whitespace-pre-wrap break-words text-xs sm:text-sm leading-6 text-slate-700">
                     {nextWeekContent}
@@ -412,9 +412,10 @@ export function LearningReportView({ report }: { report: LearningReportData; for
                 )}
               </section>
             )}
-            {Boolean(Object.values(content.growthAssessment ?? {}).some(value => value?.trim())) && (
-              <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
-            )}
+            {!isSubjectReport &&
+              Boolean(Object.values(content.growthAssessment ?? {}).some(value => value?.trim())) && (
+                <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
+              )}
           </>
         )}
         {content.reportVersion !== "v2" && (
@@ -478,7 +479,13 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         {content.reportVersion !== "v2" && teacherMessage}
         {(!isV2 || showTeacherMessage || showNextFocus) && (
           <div
-            aria-label={content.reportVersion === "v2" ? "老师寄语与下一步重点" : undefined}
+            aria-label={
+              content.reportVersion === "v2"
+                ? isSubjectReport
+                  ? "老师寄语与回家练习"
+                  : "老师寄语与下一步重点"
+                : undefined
+            }
             className={
               isV2
                 ? `grid grid-cols-1 ${showTeacherMessage && showNextFocus ? "sm:grid-cols-2" : ""} gap-3 sm:gap-4`
@@ -499,9 +506,14 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               <section className="min-w-0 rounded-2xl border border-violet-100 bg-violet-50/70 p-3 sm:p-5">
                 <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-violet-800">
                   <Target className="h-4 w-4" />
-                  下一步重点
+                  {isSubjectReport ? "回家可以跟父母一起练" : "下一步重点"}
                 </h2>
-                <Entries entries={focusEntries} empty="等待老师补充下一阶段的练习重点。" />
+                <Entries
+                  entries={focusEntries}
+                  empty={
+                    isSubjectReport ? "等待老师补充回家可以跟父母一起练习的内容。" : "等待老师补充下一阶段的练习重点。"
+                  }
+                />
               </section>
             )}
           </div>

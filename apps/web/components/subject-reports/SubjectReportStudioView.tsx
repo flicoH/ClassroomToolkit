@@ -1,12 +1,12 @@
 "use client";
 
 import { CourseAttendance, type CourseAttendanceStatus } from "@/components/semester-reports/CourseAttendance";
-import { GrowthAssessmentFields, type GrowthAssessment } from "@/components/semester-reports/GrowthAssessmentFields";
+import type { GrowthAssessment } from "@/components/semester-reports/GrowthAssessmentFields";
 import { ReportPetView } from "@/components/semester-reports/ReportPetView";
 import { PeriodScoreChart } from "@/components/semester-reports/PeriodScoreChart";
 import { V2ClassroomPerformance } from "@/components/semester-reports-v2/V2ClassroomPerformance";
 import type { ScorePreview } from "@/components/semester-reports-v2/SemesterReportsV2View";
-import { ReportWizardSteps } from "@/components/semester-reports-v2/ReportStudioControls";
+import { ReportWizardSteps, type ReportWizardStep } from "@/components/semester-reports-v2/ReportStudioControls";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import request from "@/lib/request";
 import { createUuid } from "@/lib/id";
@@ -75,6 +75,13 @@ const messageTemplates = [
   { label: "积极参与", text: "你积极参与课堂活动，期待你继续主动分享自己的想法！" },
   { label: "继续加油", text: "老师看到了你的努力，继续保持练习，一步一步积累进步！" }
 ] as const;
+
+const subjectReportWizardSteps: readonly (readonly [ReportWizardStep, string])[] = [
+  [1, "周期与基础"],
+  [2, "选择学生"],
+  [3, "学科与内容来源"],
+  [4, "课堂评价与生成"]
+];
 
 /** 单学科报告工作台：维护填写草稿、报告分发与独立学科配置。 */
 export function SubjectReportStudioView() {
@@ -238,6 +245,7 @@ export function SubjectReportStudioView() {
   useEffect(() => {
     activeSubjectFilter.current = subjectFilter;
     // 列表加载同步设置 loading，属于请求生命周期的起点。
+
     void loadReports(subjectFilter);
   }, [loadReports, subjectFilter]);
 
@@ -403,7 +411,7 @@ export function SubjectReportStudioView() {
               .join("\n") ||
             fb.nextFocus ||
             undefined,
-          growthAssessment: fb.growthAssessment,
+          growthAssessment: undefined,
           classroomPerformance: ratingsArray
         };
       });
@@ -595,14 +603,18 @@ export function SubjectReportStudioView() {
           <Button
             size="sm"
             onClick={() => {
-              if (step === 3 && !selectedStudentIds.length) {
+              if (step === 2 && !selectedStudentIds.length) {
                 announce("请至少勾选 1 位学生");
+                return;
+              }
+              if (step === 3 && (!selectedSubjectId || !currentTermSubjects.length)) {
+                announce("请先选择报告学科");
                 return;
               }
               setStep(prev => (prev + 1) as 1 | 2 | 3 | 4);
             }}
           >
-            {step === 1 ? "下一步：配置学科与教学内容" : step === 2 ? "下一步：选择学生" : "下一步：课堂评价与生成"}{" "}
+            {step === 1 ? "下一步：选择学生" : step === 2 ? "下一步：配置学科与教学内容" : "下一步：课堂评价与生成"}{" "}
             <ArrowRight className="ml-1 h-3.5 w-3.5" />
           </Button>
         )}
@@ -1013,6 +1025,16 @@ export function SubjectReportStudioView() {
               onChange={setStep}
               hasSubjects={!!selectedTermId && !!selectedSubjectId && !!currentTermSubjects.length}
               hasStudents={selectedStudentIds.length > 0}
+              steps={subjectReportWizardSteps}
+              isStepDisabled={stepValue => {
+                if (stepValue === 3) return !selectedStudentIds.length;
+                if (stepValue === 4) {
+                  return (
+                    !selectedStudentIds.length || !selectedTermId || !selectedSubjectId || !currentTermSubjects.length
+                  );
+                }
+                return false;
+              }}
             />
 
             {step === 1 && (
@@ -1116,12 +1138,86 @@ export function SubjectReportStudioView() {
               </div>
             )}
 
-            {/* 步骤 2 */}
+            {/* 步骤 2：挑选本次生成报告的学生 */}
             {step === 2 && (
+              <div className="space-y-4 rounded-2xl border bg-card p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2.5">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900">
+                      步骤 2：挑选本次生成报告的学生（已选 {selectedStudentIds.length} 人）
+                    </h2>
+                    <p className="text-xs text-slate-500">每个已选学生将独立生成一份学科报告草稿（单次上限 30 人）。</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedClass}
+                      onChange={e => setSelectedClass(e.target.value)}
+                      className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
+                      aria-label="按班级筛选"
+                    >
+                      <option value="">全部班级 ({students.length}人)</option>
+                      {classes.map(c => (
+                        <option key={c} value={c}>
+                          {c} ({students.filter(s => (s.className || "未分班") === c).length}人)
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const ids = visibleStudents.map(s => s.id);
+                        setSelectedStudentIds(prev => Array.from(new Set([...prev, ...ids])).slice(0, 30));
+                      }}
+                    >
+                      全选本班
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedStudentIds([])}>
+                      清空
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  {visibleStudents.map(student => {
+                    const checked = selectedStudentIds.includes(student.id);
+                    return (
+                      <button
+                        key={student.id}
+                        type="button"
+                        aria-pressed={checked}
+                        disabled={!checked && selectedStudentIds.length >= 30}
+                        onClick={() => {
+                          setSelectedStudentIds(prev =>
+                            checked ? prev.filter(id => id !== student.id) : [...prev, student.id]
+                          );
+                        }}
+                        className={`space-y-1 rounded-xl border-2 p-3 text-left transition disabled:cursor-not-allowed ${
+                          checked
+                            ? "border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40"
+                            : "border-border bg-card opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        <div className="flex w-full items-center justify-between text-[11px] text-slate-500">
+                          <span>{student.className || "未分班"}</span>
+                          <span className={checked ? "font-bold text-indigo-600" : ""}>{checked ? "✓ 已选" : ""}</span>
+                        </div>
+                        <div className="mt-1 font-bold text-slate-900">{student.name}</div>
+                        <div className="text-[11px] text-slate-500">{student.score} 积分</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {wizardActions}
+              </div>
+            )}
+
+            {/* 步骤 3：报告学科与教学内容 */}
+            {step === 3 && (
               <div className="space-y-4 rounded-2xl border bg-card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
                   <div>
-                    <h2 className="text-sm font-bold">步骤 2：报告学科与教学内容</h2>
+                    <h2 className="text-sm font-bold">步骤 3：报告学科与教学内容</h2>
                     <p className="text-xs text-muted-foreground">
                       选择一门学科，逐课次手填内容或从已确认的课程 PDF 带入。
                     </p>
@@ -1246,87 +1342,19 @@ export function SubjectReportStudioView() {
                 </div>
 
                 <div className="mt-4">
-                  <label className="text-xs font-semibold text-slate-700">下周教学内容重点（选填）</label>
+                  <label className="text-xs font-semibold text-slate-700">
+                    {period === "month"
+                      ? "下月课堂预习内容（选填）"
+                      : period === "term"
+                        ? "下学期课堂预习内容（选填）"
+                        : "下周课堂预习内容（选填）"}
+                  </label>
                   <Textarea
                     value={nextWeekContent}
                     onChange={e => setNextWeekContent(e.target.value)}
                     placeholder="例如：继续巩固颜色与数字表达，开展课堂情景剧..."
                     className="mt-1 min-h-[60px] text-xs"
                   />
-                </div>
-                {wizardActions}
-              </div>
-            )}
-
-            {/* 步骤 3 */}
-            {step === 3 && (
-              <div className="space-y-4 rounded-2xl border bg-card p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2.5">
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-900">
-                      步骤 3：挑选本次生成报告的学生（已选 {selectedStudentIds.length} 人）
-                    </h2>
-                    <p className="text-xs text-slate-500">每个已选学生将独立生成一份学科报告草稿（单次上限 30 人）。</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={selectedClass}
-                      onChange={e => setSelectedClass(e.target.value)}
-                      className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
-                      aria-label="按班级筛选"
-                    >
-                      <option value="">全部班级 ({students.length}人)</option>
-                      {classes.map(c => (
-                        <option key={c} value={c}>
-                          {c} ({students.filter(s => (s.className || "未分班") === c).length}人)
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const ids = visibleStudents.map(s => s.id);
-                        setSelectedStudentIds(prev => Array.from(new Set([...prev, ...ids])).slice(0, 30));
-                      }}
-                    >
-                      全选本班
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedStudentIds([])}>
-                      清空
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                  {visibleStudents.map(student => {
-                    const checked = selectedStudentIds.includes(student.id);
-                    return (
-                      <button
-                        key={student.id}
-                        type="button"
-                        aria-pressed={checked}
-                        disabled={!checked && selectedStudentIds.length >= 30}
-                        onClick={() => {
-                          setSelectedStudentIds(prev =>
-                            checked ? prev.filter(id => id !== student.id) : [...prev, student.id]
-                          );
-                        }}
-                        className={`space-y-1 rounded-xl border-2 p-3 text-left transition disabled:cursor-not-allowed ${
-                          checked
-                            ? "border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40"
-                            : "border-border bg-card opacity-60 hover:opacity-100"
-                        }`}
-                      >
-                        <div className="flex w-full items-center justify-between text-[11px] text-slate-500">
-                          <span>{student.className || "未分班"}</span>
-                          <span className={checked ? "font-bold text-indigo-600" : ""}>{checked ? "✓ 已选" : ""}</span>
-                        </div>
-                        <div className="mt-1 font-bold text-slate-900">{student.name}</div>
-                        <div className="text-[11px] text-slate-500">{student.score} 积分</div>
-                      </button>
-                    );
-                  })}
                 </div>
                 {wizardActions}
               </div>
@@ -1343,7 +1371,7 @@ export function SubjectReportStudioView() {
                         进度：{completedCount} / {selectedStudentIds.length} 已评价
                       </span>
                     </h2>
-                    <p className="text-xs text-muted-foreground">核对本周期表现，逐人填写课堂评价和成长观察。</p>
+                    <p className="text-xs text-muted-foreground">核对本周期表现，逐人填写课堂评价。</p>
                   </div>
                   <Button
                     type="button"
@@ -1522,11 +1550,6 @@ export function SubjectReportStudioView() {
                               }
                             />
                           </section>
-                          <GrowthAssessmentFields
-                            compact
-                            value={feedback?.growthAssessment}
-                            onChange={growthAssessment => updateFeedback({ growthAssessment })}
-                          />
                           <label className="block space-y-1.5 text-xs font-bold">
                             老师想对你说
                             <Textarea
@@ -1539,7 +1562,7 @@ export function SubjectReportStudioView() {
                           </label>
                           <section className="space-y-2 rounded-xl border bg-card p-3">
                             <div className="flex items-center justify-between gap-2">
-                              <h4 className="text-xs font-bold">下一步重点</h4>
+                              <h4 className="text-xs font-bold">回家可以跟父母一起练</h4>
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -1549,15 +1572,16 @@ export function SubjectReportStudioView() {
                                   updateFeedback({ focusItems: [...focusItems, ""], nextFocus: undefined })
                                 }
                               >
-                                + 添加重点建议 ({focusItems.length}/8)
+                                + 添加练习建议 ({focusItems.length}/8)
                               </Button>
                             </div>
                             {focusItems.map((item, index) => (
                               <div key={index} className="flex items-center gap-2 rounded-lg border bg-muted/30 p-1.5">
                                 <Input
-                                  aria-label={`重点建议 ${index + 1}`}
+                                  aria-label={`练习建议 ${index + 1}`}
                                   value={item}
                                   maxLength={99}
+                                  placeholder="填写回家可以跟父母一起练习的内容..."
                                   onChange={event => {
                                     const value = event.target.value;
                                     updateFeedback({
@@ -1572,7 +1596,7 @@ export function SubjectReportStudioView() {
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  aria-label={`移除重点建议 ${index + 1}`}
+                                  aria-label={`移除练习建议 ${index + 1}`}
                                   onClick={() =>
                                     updateFeedback({
                                       focusItems: focusItems.filter((_, position) => index !== position),
