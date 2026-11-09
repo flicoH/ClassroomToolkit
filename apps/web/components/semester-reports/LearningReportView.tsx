@@ -15,7 +15,7 @@ export type LearningContent = ReportEntry & {
 export type LearningReportContent = {
   reportVersion?: "v2";
   studentPhoto?: string | null;
-  growthAssessment?: GrowthAssessment;
+  growthAssessment?: Partial<GrowthAssessment>;
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
   petAsOf?: string;

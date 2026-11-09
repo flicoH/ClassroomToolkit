@@ -162,7 +162,10 @@ export function SubjectReportStudioView() {
     currentTermSubjects.find(subject => subject.id === selectedSubjectId) ??
     subjects.find(subject => subject.id === selectedSubjectId);
   // null/缺省沿用历史四项，空数组保留教师主动清空的设置。
-  const categories = selectedSubject?.courseContentTitles ?? subjectLessonCategories;
+  const categories = useMemo(
+    () => selectedSubject?.courseContentTitles ?? subjectLessonCategories,
+    [selectedSubject?.courseContentTitles]
+  );
   const performanceFields =
     selectedSubject?.performanceConfig ??
     Object.entries(defaultRatings).map(([label, options]) => ({ label, options }));
@@ -231,13 +234,14 @@ export function SubjectReportStudioView() {
         startDate: target.startDate,
         endDate: target.endDate,
         reportVersion: target.reportVersion,
-        courseScope: target.content?.courseScope || target.courseScope || undefined,
+        courseScope:
+          target.content?.courseScope || (target as { courseScope?: string | null }).courseScope || undefined,
         content: target.content,
         isStageReport: false,
         status: target.status
       });
     },
-    [announce]
+    [announce, selectedSubjectId]
   );
 
   const activeSubjectFilter = useRef(subjectFilter);
@@ -245,7 +249,6 @@ export function SubjectReportStudioView() {
   useEffect(() => {
     activeSubjectFilter.current = subjectFilter;
     // 列表加载同步设置 loading，属于请求生命周期的起点。
-
     void loadReports(subjectFilter);
   }, [loadReports, subjectFilter]);
 

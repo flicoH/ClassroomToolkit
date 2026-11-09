@@ -19,12 +19,12 @@ export function GrowthAssessmentFields({
   studentName = "",
   compact = false
 }: {
-  value?: GrowthAssessment;
+  value?: Partial<GrowthAssessment>;
   onChange: (value: GrowthAssessment) => void;
   studentName?: string;
   compact?: boolean;
 }) {
-  const current = value ?? emptyGrowthAssessment();
+  const current = { ...emptyGrowthAssessment(), ...value };
   return (
     <section className={`rounded-xl border bg-sky-50/30 p-3 ${compact ? "grid gap-2.5 sm:grid-cols-2" : "space-y-3"}`}>
       <h3 className={compact ? "text-xs font-bold sm:col-span-2" : "font-semibold"}>学习习惯与能力成长总结</h3>
@@ -50,7 +50,13 @@ export function GrowthAssessmentFields({
     </section>
   );
 }
-export function GrowthAssessmentView({ value, periodTitle }: { value?: GrowthAssessment; periodTitle: string }) {
+export function GrowthAssessmentView({
+  value,
+  periodTitle
+}: {
+  value?: Partial<GrowthAssessment>;
+  periodTitle: string;
+}) {
   const filledDimensions = growthDimensions.filter(([key]) => Boolean(value?.[key]?.trim()));
   if (filledDimensions.length === 0) return null;
   return (
