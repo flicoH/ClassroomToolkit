@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -38,8 +38,49 @@ describe("PetSprite", () => {
     expect(html).toContain("/pets/starling/star-compass-fox-3.png");
   });
 
-  it("contains 27 pets across four series and uses every physical form asset", () => {
-    expect(petOptions).toHaveLength(27);
+  it.each([
+    "dawn-rooster",
+    "flame-tiger",
+    "astral-lion",
+    "sprout-ox",
+    "nebula-giraffe",
+    "frost-leopard",
+    "canopy-parrot",
+    "crystal-goldfish",
+    "vine-snake",
+    "ember-monkey",
+    "wave-elephant",
+    "starlight-mouse"
+  ])("serves all four transparent 512 px forms for %s", petId => {
+    const pet = petOptions.find(option => option.id === petId)!;
+    const sprites = [petId, `${petId}-2`, `${petId}-3`, `${petId}-4`];
+    const files = sprites.map(sprite => readFileSync(resolve(process.cwd(), "public/pets/starling", `${sprite}.png`)));
+
+    for (const png of files) {
+      expect(png.subarray(12, 16).toString("ascii")).toBe("IHDR");
+      expect(png.readUInt32BE(16)).toBe(512);
+      expect(png.readUInt32BE(20)).toBe(512);
+      expect(png[25]).toBe(6); // RGBA keeps the sprite background transparent on every card.
+    }
+
+    for (let stageIndex = 1; stageIndex <= 9; stageIndex += 1) {
+      const sprite = sprites[Math.min(3, Math.floor((stageIndex - 1) / 2))];
+      const html = renderToStaticMarkup(<PetSprite pet={pet} stageIndex={stageIndex} />);
+      expect(html).toContain(`/pets/starling/${sprite}.png`);
+    }
+  });
+
+  it.each([
+    ["vine-snake", "萌芽系"],
+    ["ember-monkey", "焰岩系"],
+    ["wave-elephant", "潮汐系"],
+    ["starlight-mouse", "星辉系"]
+  ])("lists %s in %s", (petId, family) => {
+    expect(petOptions.find(pet => pet.id === petId)?.family).toBe(family);
+  });
+
+  it("contains 39 pets across four series and uses every physical form asset", () => {
+    expect(petOptions).toHaveLength(39);
     expect(new Set(petOptions.map(pet => pet.id)).size).toBe(petOptions.length);
 
     const seriesCounts = {
@@ -50,10 +91,10 @@ describe("PetSprite", () => {
     };
 
     expect(seriesCounts).toEqual({
-      萌芽系: 7,
-      焰岩系: 7,
-      潮汐系: 7,
-      星辉系: 6
+      萌芽系: 10,
+      焰岩系: 10,
+      潮汐系: 10,
+      星辉系: 9
     });
 
     const spriteDirectory = resolve(process.cwd(), "public/pets/starling");

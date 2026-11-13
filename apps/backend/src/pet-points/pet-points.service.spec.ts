@@ -523,6 +523,19 @@ describe('PetPointsService transactional workflows', () => {
     expect(t.state().completed[0]).toEqual(snapshot);
     expect(t.state().students[0]!.trophies).toBe(1);
   });
+  it.each(['vine-snake', 'ember-monkey', 'wave-elephant', 'starlight-mouse'])(
+    'binds %s only to a student in the current teacher scope',
+    async (petId) => {
+      const t = setup();
+      await expect(
+        t.service.bindPet('outside-scope', { ...t.meta(), petId }),
+      ).rejects.toThrow('积分学生不存在');
+      await expect(
+        t.service.bindPet('one', { ...t.meta(), petId }),
+      ).resolves.toMatchObject({ petId });
+    },
+  );
+
   it('rejects invalid rubric, reward, pet, note and unprovable historical rollback inputs', async () => {
     const t = setup();
     await expect(
@@ -539,20 +552,28 @@ describe('PetPointsService transactional workflows', () => {
     await expect(
       t.service.bindPet('one', { ...t.meta(), petId: 'fake' }),
     ).rejects.toThrow();
-    // 验证新加入的四系12只宠物均可正常绑定
+    // 验证新加入的四系20只宠物均可正常绑定
     const newPetIds = [
       'bamboo-panda',
       'clover-koala',
       'clover-sheep',
+      'sprout-ox',
+      'canopy-parrot',
       'flame-dino',
       'lava-hedgehog',
       'lava-pig',
+      'dawn-rooster',
+      'flame-tiger',
       'frost-penguin',
       'wave-dolphin',
       'tide-dragon',
+      'crystal-goldfish',
+      'frost-leopard',
       'star-owl',
       'galaxy-shiba',
       'astral-horse',
+      'astral-lion',
+      'nebula-giraffe',
     ];
     for (const petId of newPetIds) {
       await t.service.bindPet('one', { ...t.meta(), petId });

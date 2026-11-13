@@ -267,6 +267,122 @@ export const petOptions: PetOption[] = [
     badge: "bg-violet-100 text-violet-700",
     evolutions: ["星尘小驹", "极光骏马", "星轨天马", "天穹宙光神驹"],
     description: "四蹄踏着星轨尘埃的银河天马，志在浩瀚星海，一马当先的昂扬朝气总能激励同伴勇往直前、追寻心中梦想。"
+  },
+  {
+    id: "sprout-ox",
+    name: "青萌牛",
+    family: "萌芽系",
+    tone: "from-emerald-50 to-lime-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["青萌牛", "翠角犊", "青木战牛", "撼岳森皇牛"],
+    description:
+      "额间顶着嫩绿草芽的憨厚小牛，象征脚踏实地、辛勤耕耘的沉稳品格。只要专注完成每一次课堂练习，角上就会结出甜美的智慧灵果。"
+  },
+  {
+    id: "canopy-parrot",
+    name: "翠羽鹦",
+    family: "萌芽系",
+    tone: "from-lime-50 to-emerald-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["翠羽鹦", "鸣林鹦", "翡翠灵羽鹦", "万籁森天风皇"],
+    description:
+      "栖息于密林枝头的灵音小鹦，最擅长倾听与积极表达，声音清脆如泉水叮咚。课堂上的每一次踊跃发言与同伴交流，都会让它的羽冠绽放出七彩花叶。"
+  },
+  {
+    id: "dawn-rooster",
+    name: "曜晨鸡",
+    family: "焰岩系",
+    tone: "from-amber-50 to-orange-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["曜晨鸡", "金冠雏", "炽阳火羽鸡", "破晓赤焱日冠神禽"],
+    description:
+      "迎着破晓晨曦诞生的神采小公鸡，代表守时自律与蓬勃朝气。清晨的一声清亮啼鸣能唤醒所有斗志，每一次自觉自律的坚持都会点燃头顶如火炬般的赤金鸡冠。"
+  },
+  {
+    id: "flame-tiger",
+    name: "赤焰虎",
+    family: "焰岩系",
+    tone: "from-orange-50 to-red-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["赤焰虎", "熔纹小虎", "炽炎狂暴虎", "九曜炼狱炽天虎"],
+    description:
+      "百兽之王在炽火中淬炼出的威猛星灵，额前金火“王”字象征无所畏惧的勇气。面对最具挑战性的难题绝不退让，越是迎难而上，周身的熔岩火斑就越发璀璨耀眼。"
+  },
+  {
+    id: "crystal-goldfish",
+    name: "琉璃鱼",
+    family: "潮汐系",
+    tone: "from-cyan-50 to-sky-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["琉璃鱼", "澜波金鳞", "碧海锦仙鱼", "九霄沧海龙鲤"],
+    description:
+      "在深海明澈灵泉中悠游的灵动金鱼，性情沉着典雅，象征心如止水的专注与细腻思考。课堂中每一次专注深思，都会让它吐出的灵能水泡化作保护同伴的智慧屏障。"
+  },
+  {
+    id: "frost-leopard",
+    name: "冰魄豹",
+    family: "潮汐系",
+    tone: "from-sky-50 to-blue-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["冰魄豹", "霜浪幼豹", "极寒裂冰豹", "冰渊凛冬幻皇豹"],
+    description:
+      "踏着极寒浮冰巡弋的雪豹星灵，拥有潮汐系最极致的爆发速度与冷静判断。在最复杂的难题面前总能保持冷静、迅速找出突破口，每次果断决策都会让它的爪尖凝结极光寒晶。"
+  },
+  {
+    id: "astral-lion",
+    name: "星曜狮",
+    family: "星辉系",
+    tone: "from-violet-50 to-indigo-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["星曜狮", "紫冕幼狮", "星宿霸天狮", "万界星穹神耀皇狮"],
+    description:
+      "承载黄道狮子座守护星辉的王座圣兽，头戴星云冠冕，与生俱来拥有自信昂扬的领袖风范。积极担当班级责任、带领团队攻克难关的每一次行动，都会点亮它鬃毛中流淌的璀璨群星。"
+  },
+  {
+    id: "nebula-giraffe",
+    name: "漫星鹿",
+    family: "星辉系",
+    tone: "from-indigo-50 to-fuchsia-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["漫星鹿", "探星小鹿", "宙光星云鹿", "北天极星神穹鹿"],
+    description:
+      "源自北方天空“鹿豹座”的优雅星灵，拥有高耸修长的颈项，能俯瞰全知、昂首触及星汉。鼓励同学们放眼未来、树立远大理想，每一次追逐梦想的努力都会在它的星云斑纹中烙下闪烁的星座连线。"
+  },
+  {
+    id: "vine-snake",
+    name: "嫩芽蛇",
+    family: "萌芽系",
+    tone: "from-emerald-50 to-lime-100",
+    badge: "bg-emerald-100 text-emerald-700",
+    evolutions: ["嫩芽蛇", "卷藤蛇", "花叶灵蛇", "碧藤花冠蛇"],
+    description: "头顶嫩芽的小蛇喜欢安静倾听。每一次耐心练习，都像给它的藤叶浇了一点水。"
+  },
+  {
+    id: "ember-monkey",
+    name: "火苗猴",
+    family: "焰岩系",
+    tone: "from-orange-50 to-amber-100",
+    badge: "bg-orange-100 text-orange-700",
+    evolutions: ["火苗猴", "暖火猴", "金焰灵猴", "晨光焰尾猴"],
+    description: "卷尾上亮着火苗的小猴爱试新办法。每次勇敢举手，它的尾巴就会亮一点。"
+  },
+  {
+    id: "wave-elephant",
+    name: "水花象",
+    family: "潮汐系",
+    tone: "from-sky-50 to-cyan-100",
+    badge: "bg-sky-100 text-sky-700",
+    evolutions: ["水花象", "踏浪象", "碧波灵象", "潮光水环象"],
+    description: "长鼻子会喷出水花的小象，喜欢和同伴一起做事。每帮一次忙，水花就会多一圈。"
+  },
+  {
+    id: "starlight-mouse",
+    name: "星点鼠",
+    family: "星辉系",
+    tone: "from-violet-50 to-indigo-100",
+    badge: "bg-violet-100 text-violet-700",
+    evolutions: ["星点鼠", "追星鼠", "星纹灵鼠", "星河光尾鼠"],
+    description: "圆耳朵的小老鼠总能发现别人没留意的细节。每发现一件新事，它的尾巴就会亮起一颗小星星。"
   }
 ];
 
