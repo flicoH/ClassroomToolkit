@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS teacher_auth_teachers (
   avatar VARCHAR(512) NOT NULL DEFAULT '' COMMENT '头像地址',
   password_hash VARCHAR(256) NOT NULL COMMENT '加盐后的密码哈希',
   password_salt VARCHAR(64) NOT NULL COMMENT '密码盐',
+  status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '账号状态：active正常 locked锁定',
+  locked_at DATETIME NULL COMMENT '锁定时间',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB COMMENT='教师账号表';
@@ -332,16 +334,19 @@ CREATE TABLE IF NOT EXISTS gacha_machine_draw_records (
 CREATE TABLE IF NOT EXISTS semester_report_terms (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
   name VARCHAR(100) NOT NULL, start_date DATE NOT NULL, end_date DATE NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   INDEX idx_sr_terms_teacher (teacher_id, start_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告学期';
 
 CREATE TABLE IF NOT EXISTS semester_report_subjects (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL,
+  term_id VARCHAR(64) NULL,
   name VARCHAR(100) NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE,
   performance_config JSON NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  INDEX idx_sr_subjects_teacher (teacher_id, enabled)
+  INDEX idx_sr_subjects_teacher (teacher_id, enabled),
+  INDEX idx_sr_subjects_term (teacher_id, term_id, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告学科';
 
 CREATE TABLE IF NOT EXISTS semester_report_documents (
@@ -361,7 +366,7 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   term_id VARCHAR(64) NOT NULL, subject_id VARCHAR(64) NOT NULL, student_id VARCHAR(64) NOT NULL,
   student_name VARCHAR(100) NOT NULL, class_name VARCHAR(100) NOT NULL,
   period_type VARCHAR(16) NOT NULL, period_start DATETIME NOT NULL, period_end DATETIME NOT NULL,
-  score_scope VARCHAR(16) NOT NULL DEFAULT 'overall', snapshot JSON NULL, content JSON NULL,
+  score_scope VARCHAR(16) NOT NULL DEFAULT 'overall', snapshot JSON NULL, content JSON NULL, ai_response JSON NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'queued', keywords TEXT NULL, teacher_observation TEXT NULL, course_scope TEXT NULL,
   error_message VARCHAR(500) NULL, published_at DATETIME NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -370,6 +375,42 @@ CREATE TABLE IF NOT EXISTS semester_reports (
   INDEX idx_sr_reports_student (teacher_id, student_id, subject_id, period_start),
   INDEX idx_sr_reports_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告及生成任务';
+
+CREATE TABLE IF NOT EXISTS semester_report_token_calls (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  report_id VARCHAR(64) NOT NULL,
+  teacher_id VARCHAR(64) NOT NULL,
+  student_id VARCHAR(64) NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'kimi',
+  model VARCHAR(64) NOT NULL,
+  called_at DATETIME(6) NOT NULL,
+  responded_at DATETIME(6) NULL,
+  prompt_tokens INT NULL,
+  completion_tokens INT NULL,
+  total_tokens INT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'in_progress',
+  response_id VARCHAR(128) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  INDEX idx_srtc_called_at (called_at),
+  INDEX idx_srtc_report_called (report_id, called_at),
+  INDEX idx_srtc_student_called (student_id, called_at),
+  INDEX idx_srtc_teacher (teacher_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告大模型调用流水及Token用量';
+
+CREATE TABLE IF NOT EXISTS admin_report_ai_settings (
+  id VARCHAR(32) PRIMARY KEY, base_url VARCHAR(500) NOT NULL, model VARCHAR(100) NOT NULL,
+  api_key_ciphertext TEXT NOT NULL,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理员维护的报告 AI 服务配置';
+
+CREATE TABLE IF NOT EXISTS admin_report_ai_teacher_permissions (
+  teacher_id VARCHAR(64) PRIMARY KEY COMMENT '教师ID',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间',
+  CONSTRAINT fk_admin_report_ai_teacher
+    FOREIGN KEY (teacher_id) REFERENCES teacher_auth_teachers(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 报告权限配置教师表';
 
 CREATE TABLE IF NOT EXISTS semester_report_shares (
   id VARCHAR(64) PRIMARY KEY, teacher_id VARCHAR(64) NOT NULL, report_id VARCHAR(64) NOT NULL,
@@ -388,3 +429,91 @@ CREATE TABLE IF NOT EXISTS semester_report_events (
   INDEX idx_sr_events_doc (teacher_id, document_id, created_at),
   INDEX idx_sr_events_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学期报告流程记录';
+
+CREATE TABLE IF NOT EXISTS subject_reports (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  teacher_id VARCHAR(64) NOT NULL,
+  term_id VARCHAR(64) NOT NULL,
+  subject_id VARCHAR(64) NOT NULL,
+  student_id VARCHAR(64) NOT NULL,
+  student_name VARCHAR(100) NOT NULL,
+  class_name VARCHAR(100) NOT NULL,
+  period_type VARCHAR(16) NOT NULL,
+  period_start DATETIME NOT NULL,
+  period_end DATETIME NOT NULL,
+  score_scope VARCHAR(16) NOT NULL DEFAULT 'overall',
+  snapshot JSON NULL,
+  content JSON NULL,
+  ai_response JSON NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'queued',
+  keywords TEXT NULL,
+  teacher_observation TEXT NULL,
+  course_scope TEXT NULL,
+  error_message VARCHAR(500) NULL,
+  published_at DATETIME NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  INDEX idx_sub_reports_teacher_period (teacher_id, period_start, period_type),
+  INDEX idx_sub_reports_student (teacher_id, student_id, subject_id, period_start),
+  INDEX idx_sub_reports_status (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学科报告及生成任务';
+
+CREATE TABLE IF NOT EXISTS subject_report_shares (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  teacher_id VARCHAR(64) NOT NULL,
+  report_id VARCHAR(64) NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  token_ciphertext TEXT NOT NULL,
+  expires_at DATETIME NULL,
+  revoked_at DATETIME NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  INDEX idx_sub_share_report (teacher_id, report_id, revoked_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='免登录家长学科报告链接';
+
+CREATE TABLE IF NOT EXISTS subject_report_events (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  teacher_id VARCHAR(64) NOT NULL,
+  report_id VARCHAR(64) NULL,
+  document_id VARCHAR(64) NULL,
+  action VARCHAR(40) NOT NULL,
+  details JSON NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  INDEX idx_sub_events_report (teacher_id, report_id, created_at),
+  INDEX idx_sub_events_doc (teacher_id, document_id, created_at),
+  INDEX idx_sub_events_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学科报告流程记录';
+
+CREATE TABLE IF NOT EXISTS subject_report_token_calls (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  report_id VARCHAR(64) NOT NULL,
+  teacher_id VARCHAR(64) NOT NULL,
+  student_id VARCHAR(64) NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'kimi',
+  model VARCHAR(64) NOT NULL,
+  called_at DATETIME(6) NOT NULL,
+  responded_at DATETIME(6) NULL,
+  prompt_tokens INT NULL,
+  completion_tokens INT NULL,
+  total_tokens INT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'in_progress',
+  response_id VARCHAR(128) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  INDEX idx_srtc_sub_called_at (called_at),
+  INDEX idx_srtc_sub_report_called (report_id, called_at),
+  INDEX idx_srtc_sub_student_called (student_id, called_at),
+  INDEX idx_srtc_sub_teacher (teacher_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学科报告大模型调用流水及Token用量';
+
+CREATE TABLE IF NOT EXISTS subject_report_subjects (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  teacher_id VARCHAR(64) NOT NULL,
+  term_id VARCHAR(64) NULL,
+  name VARCHAR(100) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  performance_config JSON NULL,
+  course_content_titles JSON NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  INDEX idx_srs_teacher (teacher_id, enabled, name),
+  INDEX idx_srs_term (teacher_id, term_id, enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学科报告专用学科配置';

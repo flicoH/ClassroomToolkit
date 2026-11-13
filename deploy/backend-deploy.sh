@@ -63,6 +63,19 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+login_proxy_secret=$(sed -n 's/^LOGIN_PROXY_SECRET=//p' "$ENV_FILE" | tail -n 1)
+if (( ${#login_proxy_secret} < 32 )) || [[ "$login_proxy_secret" == *CHANGE_ME* ]]; then
+  log "LOGIN_PROXY_SECRET in $ENV_FILE must be a non-placeholder value of at least 32 characters"
+  exit 1
+fi
+if [[ -f deploy/.env.frontend ]]; then
+  frontend_login_proxy_secret=$(sed -n 's/^LOGIN_PROXY_SECRET=//p' deploy/.env.frontend | tail -n 1)
+  if [[ "$login_proxy_secret" != "$frontend_login_proxy_secret" ]]; then
+    log "LOGIN_PROXY_SECRET must be identical in deploy/.env.backend and deploy/.env.frontend"
+    exit 1
+  fi
+fi
+
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   log "Docker Engine with the Compose plugin is required"
   exit 1
@@ -148,7 +161,7 @@ else
 fi
 
 log "Starting MySQL"
-compose up -d --wait mysql
+compose up -d --wait --wait-timeout 180 mysql
 
 log "Running database migrations"
 # Migrations must never consume a deployment script supplied via stdin.
@@ -156,9 +169,9 @@ compose --profile tools run -T --rm migrate </dev/null
 
 log "Starting backend with $PARSER_PROVIDER PDF parsing"
 if [[ "$PARSER_PROVIDER" == docling ]]; then
-  compose --profile docling up -d --wait --force-recreate --remove-orphans --pull=never docling-parser backend
+  compose --profile docling up -d --wait --wait-timeout 300 --force-recreate --remove-orphans --pull=never docling-parser backend
 else
-  compose up -d --wait --force-recreate --remove-orphans --pull=never backend
+  compose up -d --wait --wait-timeout 300 --force-recreate --remove-orphans --pull=never backend
 fi
 
 expected_backend_image="${IMAGE_NAMESPACE}-backend:${BACKEND_IMAGE_TAG}"

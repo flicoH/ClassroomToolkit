@@ -345,6 +345,41 @@ describe('report publishing', () => {
       ]),
     );
   });
+  it('saves a rating for a draft subject added without course material', async () => {
+    const { service, row } = removableDraft();
+    const internals = service as unknown as {
+      requireSubject: jest.Mock;
+      findStudents: jest.Mock;
+      findUsableDocuments: jest.Mock;
+    };
+    jest.spyOn(internals, 'requireSubject').mockResolvedValue({ name: '科学' });
+    jest
+      .spyOn(internals, 'findStudents')
+      .mockResolvedValue([{ id: 'student', classId: 'class' }]);
+    jest.spyOn(internals, 'findUsableDocuments').mockResolvedValue([]);
+    const rating = {
+      subjectId: 'science',
+      text: '课堂参与 · 主动参与',
+      sourceRefs: ['teacher-review'],
+    };
+    await expect(
+      service.editDraft('report', {
+        ...row.content,
+        classroomPerformance: [rating],
+      }),
+    ).rejects.toThrow('课堂表现必须对应报告中的学科');
+    await service.addDraftSubjects('report', [
+      { subjectId: 'science', courseScope: '', manualContent: '' },
+    ]);
+    await service.editDraft('report', {
+      ...row.content,
+      classroomPerformance: [rating],
+    });
+    expect(row.content!.classroomPerformance).toEqual([rating]);
+    expect(row.snapshot.allowedReferences).not.toContain(
+      'teacher-course:science',
+    );
+  });
   it('saves, validates and restores per-student growth dimensions with Chinese history', async () => {
     const { service, row, events } = setup();
     row.snapshot = { reportVersion: 'v2' };
@@ -1029,6 +1064,38 @@ describe('report publishing', () => {
     expect(row.snapshot!.scoreSummary).toEqual(original.snapshot!.scoreSummary);
   });
 
+  it('uses audited snapshot evidence for draft reads and publication', async () => {
+    const { service, row, scores, summary } = liveDraft();
+    const pet = {
+      petId: 'coral-whale',
+      petName: '珊瑚鲸',
+      stage: '第2形态',
+      level: 2,
+      petHatched: true,
+    };
+    row.snapshot = {
+      ...row.snapshot,
+      reportKind: 'stage',
+      reportScoreSummaryRepaired: true,
+      reportScoreSummary: summary,
+      pet,
+      petHistoryStatus: 'recorded',
+    };
+    const expected = {
+      pet,
+      petHistoryStatus: 'recorded',
+      scoreDetails: {
+        positiveItems: summary.positiveItems,
+        count: summary.count,
+      },
+    };
+    expect((await service.getReport('report')).content).toMatchObject(expected);
+    expect((await service.publish('report')).report.content).toMatchObject(
+      expected,
+    );
+    expect(scores).not.toHaveBeenCalled();
+  });
+
   it('freezes the latest points atomically at publishing, resumes live counts after withdrawal', async () => {
     const { service, row, scores, summary } = liveDraft();
     const published = await service.publish('report');
@@ -1553,5 +1620,57 @@ describe('report publishing', () => {
       ],
     });
     expect(parent).not.toHaveProperty('snapshot');
+  });
+  it('re-creates a new share if existing share cannot be authenticated after key rotation', async () => {
+    const { service } = setup('published');
+    const oldKey = Buffer.alloc(32, 1).toString('base64');
+    const newKey = Buffer.alloc(32, 2).toString('base64');
+
+    process.env.REPORT_SHARE_ENCRYPTION_KEY = oldKey;
+    const initialShare = await service.createShare('report');
+    expect(initialShare.url).toBeDefined();
+
+    process.env.REPORT_SHARE_ENCRYPTION_KEY = newKey;
+    const renewedShare = await service.createShare('report');
+    expect(renewedShare.url).toBeDefined();
+    expect(renewedShare.url).not.toEqual(initialShare.url);
+  });
+  it('returns period: "stage", stageCustomName, and replaces "本阶段" across content in publicReport', async () => {
+    const { service, row } = setup('published');
+    row.periodType = 'term';
+    row.snapshot = {
+      reportKind: 'stage',
+      stageCustomName: '10月份',
+      scheduledTask: {
+        id: 'task-1',
+        name: '10月汇总',
+        executeAt: '2026-11-01',
+        stageCustomName: '10月份',
+      },
+    };
+    row.content = {
+      ...content,
+      summary: '本阶段课前准备充分，在本阶段表现出色。',
+      growthAssessment: {
+        learningReadiness: '本阶段学具摆放整齐。',
+        communicationCooperation: '',
+        independenceRules: '',
+        overallUnderstanding: '',
+      },
+    };
+    const share = await service.createShare('report');
+    const token = new URL(share.url).pathname.split('/').pop()!;
+    const parent = await service.publicReport(token);
+    expect(parent.period).toBe('stage');
+    expect(parent.isStageReport).toBe(true);
+    expect(parent.stageCustomName).toBe('10月份');
+    expect(parent.content.stageCustomName).toBe('10月份');
+    expect(parent.content.stageTitle).toBe('10月份');
+    expect(parent.content.summary).toBe(
+      '10月份课前准备充分，在10月份表现出色。',
+    );
+    expect(parent.content.growthAssessment.learningReadiness).toBe(
+      '10月份学具摆放整齐。',
+    );
   });
 });

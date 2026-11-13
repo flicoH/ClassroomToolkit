@@ -13,7 +13,8 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(TOKEN_KEY)?.value;
   const isAuthRoute = authRoutes.has(pathname);
-  const isPublicReportRoute = /^\/r\/[A-Za-z0-9_-]{40,50}$/.test(pathname);
+  // 公开页面负责展示无效学科链接的错误，家长访问不应转到教师登录页。
+  const isPublicReportRoute = /^\/r\/[A-Za-z0-9_-]{40,50}$/.test(pathname) || /^\/r\/subject\/[^/]+\/?$/.test(pathname);
   const isPublicRoute = isAuthRoute || isPublicReportRoute || publicSeoRoutes.has(pathname);
 
   if (!token && !isPublicRoute) {

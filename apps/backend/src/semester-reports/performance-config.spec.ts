@@ -14,6 +14,7 @@ describe('subject classroom performance configuration', () => {
       findOne: jest.fn(),
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => value),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     const service = new SemesterReportsService(
       undefined!,
@@ -63,7 +64,11 @@ describe('subject classroom performance configuration', () => {
         performanceConfig: config,
       }),
     ).rejects.toThrow('学科不存在');
-    expect(subjects.save).toHaveBeenCalledTimes(1);
+    expect(subjects.update).toHaveBeenCalledTimes(1);
+    expect(subjects.update).toHaveBeenCalledWith(
+      { id: 'math', teacherId: 'teacher', enabled: true },
+      { performanceConfig: result.performanceConfig },
+    );
   });
   it.each([
     null,
@@ -86,10 +91,20 @@ describe('subject classroom performance configuration', () => {
   ])('rejects malformed or excessive configuration: %j', (value) => {
     expect(() => parsePerformanceConfig(value)).toThrow('课堂表现需要');
   });
+  it('rejects a configuration update when the subject was concurrently disabled', async () => {
+    const { service, subjects } = setup();
+    subjects.findOne.mockResolvedValue({ id: 'math' });
+    subjects.update.mockResolvedValue({ affected: 0 });
+    await expect(
+      service.updateSubjectPerformance('math', {
+        performanceConfig: defaultPerformanceConfig(),
+      }),
+    ).rejects.toThrow('学科不存在');
+  });
   it('keeps a failed save from reporting success', async () => {
     const { service, subjects } = setup();
     subjects.findOne.mockResolvedValue({ id: 'math' });
-    subjects.save.mockRejectedValue(new Error('database unavailable'));
+    subjects.update.mockRejectedValue(new Error('database unavailable'));
     await expect(
       service.updateSubjectPerformance('math', {
         performanceConfig: defaultPerformanceConfig(),

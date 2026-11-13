@@ -6,7 +6,7 @@
  * **********************************************************************************************
  * @Date: 2026-04-18 21:28:36
  * @LastEditors: flicoH
- * @LastEditTime: 2026-04-21 23:12:59
+ * @LastEditTime: 2026-11-08 00:19:57
  */
 "use client";
 
@@ -29,6 +29,8 @@ import { TaskStats } from "@/components/apps/TaskStats";
 import { Feedback } from "@/components/apps/Feedback";
 import { SemesterReportsV2 } from "@/components/apps/SemesterReportsV2";
 import { SemesterReports } from "@/components/apps/SemesterReports";
+import { SemesterReportStudio } from "@/components/apps/SemesterReportStudio";
+import { SubjectReportStudio } from "@/components/apps/SubjectReportStudio";
 import {
   CartoonCountdownIcon,
   CartoonGachaIcon,
@@ -42,14 +44,16 @@ import {
 } from "@/components/icons/CartoonAppIcons";
 
 const menuItems: MenuItemData[] = [
-  { name: "倒计时", icon: CartoonCountdownIcon, contentKey: "countdown" },
+  { name: "计时器", icon: CartoonCountdownIcon, contentKey: "countdown" },
   { name: "随机点名", icon: CartoonRandomPickerIcon, contentKey: "randomPicker" },
   { name: "学生管理", icon: CartoonStudentsIcon, contentKey: "studentManagement" },
   { name: "任务统计", icon: CartoonTaskStatsIcon, contentKey: "taskStats" },
   { name: "座位表", icon: CartoonSeatingIcon, contentKey: "seatingChart" },
   { name: "宠物积分", icon: CartoonPetPointsIcon, contentKey: "petPoints" },
-  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
-  { name: "学期报告v2", icon: CartoonSemesterReportIcon, contentKey: "semesterReportsV2" },
+  // 菜单“学期报告”直接进入新工作台；旧版路由映射仍保留兼容。
+  // { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReports" },
+  { name: "学期报告", icon: CartoonSemesterReportIcon, contentKey: "semesterReportStudio" },
+  { name: "学科报告", icon: CartoonSemesterReportIcon, contentKey: "subjectReports" },
   { name: "扭蛋机", icon: CartoonGachaIcon, contentKey: "gachaMachine" },
   { name: "便签", icon: CartoonStickyNoteIcon, contentKey: "stickyNotes" },
   { name: "意见反馈", icon: MessageSquareHeart, contentKey: "feedback" }
@@ -72,6 +76,10 @@ function WindowContent({ contentKey }: { contentKey: string }) {
       return <SemesterReportsV2 />;
     case "semesterReports":
       return <SemesterReports />;
+    case "semesterReportStudio":
+      return <SemesterReportStudio />;
+    case "subjectReports":
+      return <SubjectReportStudio />;
     case "gachaMachine":
       return <GachaMachine />;
     case "stickyNotesList":

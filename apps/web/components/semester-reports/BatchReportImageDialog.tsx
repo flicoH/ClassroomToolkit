@@ -9,25 +9,38 @@ import { LearningReportView, type LearningReportData } from "./LearningReportVie
 import { renderReportImage } from "./report-image";
 import { reportImageArchive, reportImageFileName, type ReportImageFile } from "./report-image-archive";
 
+/** 导出所需的最小报告摘要；公开快照在生成每张图片时单独获取。 */
 type ExportReport = {
+  /** 用于获取已发布报告的稳定标识。 */
   id: string;
+  /** 图片文件名中的学生姓名。 */
   studentName: string;
+  /** 图片归档时区分同名学生的班级。 */
   className: string;
+  /** 文件命名使用的周期标签。 */
   period: string;
+  /** 可选周期开始时间，兼容旧列表摘要。 */
   start?: string;
+  /** 仅已发布报告可以导出公开快照。 */
   status: string;
+  /** 已有公开地址；缺失时按报告类型创建分享。 */
   share?: { url: string } | null;
 };
-type Props = { reports: ExportReport[]; onClose: () => void };
+/** reports 在弹窗挂载时冻结；subjectReport 决定使用哪类报告分享接口。 */
+type Props = { reports: ExportReport[]; onClose: () => void; subjectReport?: boolean };
 
 /** 串行加载公开发布快照并复用长图视图；单份失败继续处理，其余图片保留以便仅重试失败项。 */
-export function BatchReportImageDialog({ reports, onClose }: Props) {
+export function BatchReportImageDialog({ reports: selectedReports, onClose, subjectReport = false }: Props) {
+  // 固定本次导出清单；父页面重绘会重建筛选数组，不能因此取消生成或撤销 ZIP 下载地址。
+  const [reports] = useState(() => [...selectedReports]);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
   const files = useRef(new Map<string, ReportImageFile>());
   const [report, setReport] = useState<LearningReportData | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -70,6 +83,8 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
     let cancelled = false;
     let archiveUrl: string | undefined;
     let controller = new AbortController();
+    // 导出批次启动时先清理上次资源，状态更新属于外部图片生成任务的生命周期。
+
     setArchive(null);
     setBusy(true);
     setError("");
@@ -86,12 +101,16 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
           if (item.status !== "published") throw new Error("请先发布报告。");
           const share =
             item.share ??
-            (await request.post<{ url: string }, { url: string }>(`/api/semester-reports/reports/${item.id}/shares`));
+            (await request.post<{ url: string }, { url: string }>(
+              `/api/${subjectReport ? "subject-reports" : "semester-reports"}/reports/${item.id}/shares`
+            ));
           if (cancelled) return;
           const path = new URL(share.url, window.location.origin).pathname;
-          const token = /^\/r\/([A-Za-z0-9_-]{40,50})$/.exec(path)?.[1];
+          const token = (
+            subjectReport ? /^\/r\/subject\/([A-Za-z0-9_-]{40,50})$/ : /^\/r\/([A-Za-z0-9_-]{40,50})$/
+          ).exec(path)?.[1];
           if (!token) throw new Error("报告链接无效，请重新发布。");
-          const response = await fetch(`/api/public-reports/${token}`, {
+          const response = await fetch(`/api/public-reports/${subjectReport ? "subject/" : ""}${token}`, {
             cache: "no-store",
             signal: controller.signal
           });
@@ -99,7 +118,12 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
           if (!response.ok) throw new Error(data.message || "报告链接无效或已失效。");
           if (cancelled) return;
           // 每次只挂载一份报告，避免整班的照片和 DOM 同时占用内存。
-          flushSync(() => setReport(data as LearningReportData));
+          flushSync(() =>
+            setReport({
+              ...(data as LearningReportData),
+              isSubjectReport: subjectReport || Boolean((data as LearningReportData).isSubjectReport)
+            })
+          );
           const blob = await renderReportImage(reportRef.current!);
           if (cancelled) return;
           const total = [...files.current.values()].reduce((size, file) => size + file.blob.size, 0);
@@ -142,7 +166,7 @@ export function BatchReportImageDialog({ reports, onClose }: Props) {
       controller.abort();
       if (archiveUrl) URL.revokeObjectURL(archiveUrl);
     };
-  }, [reports, attempt]);
+  }, [reports, attempt, subjectReport]);
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-3 sm:p-4">

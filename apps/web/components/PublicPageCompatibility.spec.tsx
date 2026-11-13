@@ -18,8 +18,8 @@ it("disables all iOS data detection, including dates, before hydration", () => {
   });
 });
 describe("public page provider isolation", () => {
-  it("does not server-render desktop browser infrastructure on a report link", () => {
-    route.path = "/r/token";
+  it.each(["/r/token", "/r/subject/token"])("isolates the public page at %s from teacher infrastructure", path => {
+    route.path = path;
     const html = renderToStaticMarkup(
       <Providers>
         <p>report-content</p>

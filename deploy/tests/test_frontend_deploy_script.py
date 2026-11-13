@@ -41,12 +41,12 @@ sys.exit(0)
 
 
 class FrontendDeploymentTests(unittest.TestCase):
-    def run_deploy(self, overrides=None, expected_status=0):
+    def run_deploy(self, overrides=None, expected_status=0, proxy_secret='x' * 32):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / '.git').mkdir()
             (work / 'deploy').mkdir()
-            (work / 'deploy/.env.frontend').write_text('# mock only\n')
+            (work / 'deploy/.env.frontend').write_text('LOGIN_PROXY_SECRET=' + proxy_secret + '\n')
             release = work / 'deploy/.frontend-release.env'
             release.write_text('FRONTEND_IMAGE_TAG=previous-release\n')
             binary = work / 'bin'
@@ -75,6 +75,9 @@ class FrontendDeploymentTests(unittest.TestCase):
 
     def test_promotes_a_release_when_both_running_images_match(self):
         self.run_deploy()
+
+    def test_placeholder_login_proxy_secret_is_rejected(self):
+        self.run_deploy(expected_status=1, proxy_secret='CHANGE_ME_LOGIN_PROXY_SECRET')
 
     def test_matching_tags_cannot_hide_old_web_or_admin_content(self):
         for service in ['WEB', 'ADMIN']:

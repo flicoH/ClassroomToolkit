@@ -8,6 +8,7 @@
     "dev": "concurrently \"pnpm --filter ClassRoomToolkitBackend dev\" \"pnpm --filter ClassRoomToolkitWeb dev\" \"pnpm --filter ClassRoomToolkitAdmin dev\"",
     "lint:prettier": "prettier --write \"**/*.{js,ts,mjs,cjs,json,tsx,css,less,scss,vue,html,md}\"",
     "lint:eslint": "eslint .",
+    "db:repair-pet-scores": "pnpm --filter ClassRoomToolkitBackend run db:repair-pet-scores",
     "commit": "pnpm exec git-cz",
     "precommit": "lint-staged",
     "test": "pnpm run test:standards && pnpm run test:backend && pnpm run test:web && pnpm run test:admin",

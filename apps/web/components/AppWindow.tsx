@@ -96,13 +96,14 @@ export function AppWindow({ window: win, children }: AppWindowProps) {
     return () => globalThis.removeEventListener("resize", keepWindowVisible);
   }, [isMaximized, isCompact, updatePosition, win.id, win.position.x, win.position.y, win.size.h, win.size.w]);
 
-  if (isMinimized) return null;
-
   return (
     <div
+      aria-hidden={isMinimized || undefined}
       className={[
         "absolute flex flex-col overflow-hidden border border-white/20 bg-white/90 shadow-2xl backdrop-blur-md dark:border-white/10 dark:bg-slate-900/90",
-        isCompact ? "rounded-none" : "rounded-xl"
+        isCompact ? "rounded-none" : "rounded-xl",
+        // 最小化只隐藏窗口，不能卸载应用；否则尚未提交的表单状态会在还原时丢失。
+        isMinimized ? "hidden" : ""
       ].join(" ")}
       style={
         isCompact

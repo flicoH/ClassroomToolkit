@@ -12,6 +12,10 @@ import type { EventKind } from '../analytics.types';
 @Index('idx_analytics_teacher', ['teacherId', 'createdAt'])
 @Index('idx_analytics_feature', ['feature', 'kind', 'createdAt'])
 export class AnalyticsEventEntity {
+  @Column({ name: 'login_ip', type: 'varchar', length: 45, nullable: true })
+  loginIp!: string | null;
+  @Column({ name: 'ip_location', type: 'varchar', length: 255, nullable: true })
+  ipLocation!: string | null;
   @PrimaryColumn({ length: 64 }) id!: string;
   @Column({ name: 'teacher_id', type: 'varchar', length: 64, nullable: true })
   teacherId!: string | null;

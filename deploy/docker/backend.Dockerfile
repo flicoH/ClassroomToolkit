@@ -20,6 +20,11 @@ COPY tsconfig.json ./tsconfig.json
 COPY apps/backend apps/backend
 RUN pnpm --filter ClassRoomToolkitBackend build
 
+# pnpm deploy creates a self-contained dependency tree without web/admin or dev tools.
+# Enable shared-lockfile deployment for this command only; keep locked versions.
+FROM dependencies AS production-dependencies
+RUN pnpm --config.inject-workspace-packages=true --filter ClassRoomToolkitBackend deploy --prod /prod/backend
+
 FROM node:22-bookworm-slim AS runner
 
 ENV NODE_ENV=production
@@ -27,8 +32,7 @@ ENV HOST=0.0.0.0
 ENV PORT=3000
 
 WORKDIR /app
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/apps/backend/node_modules ./apps/backend/node_modules
+COPY --from=production-dependencies --chown=node:node /prod/backend/node_modules ./apps/backend/node_modules
 COPY --from=builder --chown=node:node /app/apps/backend/package.json ./apps/backend/package.json
 COPY --from=builder --chown=node:node /app/apps/backend/dist ./apps/backend/dist
 

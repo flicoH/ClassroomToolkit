@@ -273,4 +273,441 @@ describe('report list metadata query', () => {
     await expect(service.listReports(filters)).rejects.toThrow();
     expect(reports.createQueryBuilder).not.toHaveBeenCalled();
   });
+  it('gracefully handles share decryption errors without crashing the report list', async () => {
+    const { service, shares } = setup([
+      { reportVersion: 'v2', subjectName: '英语' },
+    ]);
+    const previousKey = process.env.REPORT_SHARE_ENCRYPTION_KEY;
+    const previousBase = process.env.REPORT_PUBLIC_BASE_URL;
+    try {
+      process.env.REPORT_SHARE_ENCRYPTION_KEY = Buffer.alloc(32, 1).toString(
+        'base64',
+      );
+      process.env.REPORT_PUBLIC_BASE_URL = 'https://reports.school.test';
+      // Simulate an unauthenticatable/corrupted share ciphertext from a different key
+      shares.findOne.mockResolvedValueOnce({
+        id: 'share-corrupt',
+        tokenCiphertext: Buffer.concat([
+          Buffer.alloc(12, 0),
+          Buffer.alloc(16, 0),
+          Buffer.from('cipher-with-different-key'),
+        ]).toString('base64'),
+        expiresAt: null,
+        revokedAt: null,
+      });
+      const result = await service.listReports();
+      expect(result).toHaveLength(1);
+      expect(result[0].share).toBeNull();
+    } finally {
+      if (previousKey !== undefined)
+        process.env.REPORT_SHARE_ENCRYPTION_KEY = previousKey;
+      else delete process.env.REPORT_SHARE_ENCRYPTION_KEY;
+      if (previousBase !== undefined)
+        process.env.REPORT_PUBLIC_BASE_URL = previousBase;
+      else delete process.env.REPORT_PUBLIC_BASE_URL;
+    }
+  });
+
+  it('extracts stageCustomName correctly for scheduled tasks even if stored in snapshot', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'report-1',
+          status: 'scheduled',
+          studentId: 'stu-1',
+          studentName: '学生甲',
+          className: '一班',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-31T00:00:00+08:00'),
+          createdAt: new Date('2026-10-01T10:00:00Z'),
+          scheduledTask: JSON.stringify({
+            id: 'task-100',
+            name: '10月汇总任务',
+            classId: 'all',
+            executeAt: '2026-10-30T12:00:00.000Z',
+            repeatType: 'none',
+            selectedStudents: [
+              {
+                requestedId: 'profile-stu-1',
+                studentId: 'teacher-1:pet-stu-1',
+                name: '创建时学生甲',
+              },
+            ],
+          }),
+          snapshotStageCustomName: '10月份',
+        },
+      ]),
+    };
+    const reports = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const tasks = await service.listScheduledTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('task-100');
+    expect(tasks[0].name).toBe('10月汇总任务');
+    expect(tasks[0].stageCustomName).toBe('10月份');
+    expect(tasks[0].studentIds).toEqual(['profile-stu-1']);
+    expect(tasks[0].studentNames).toBe('创建时学生甲');
+    expect(tasks[0]).toMatchObject({
+      totalCount: 1,
+      completedCount: 0,
+      processingCount: 0,
+      failedCount: 0,
+      progressPercent: 0,
+    });
+    expect(query.andWhere).toHaveBeenCalledWith(
+      "JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL",
+    );
+    // Sorting JSON-backed report rows can make MySQL carry multi-megabyte
+    // snapshots into filesort and fail with ER_OUT_OF_SORTMEMORY.
+    expect(query.orderBy).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy scheduled tasks that only have scheduledTask identity', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'legacy-report',
+          status: 'scheduled',
+          studentId: 'legacy-student',
+          studentName: '历史学生',
+          className: '历史班级',
+          periodStart: '2026-09-01 00:00:00',
+          periodEnd: '2026-10-01 00:00:00',
+          createdAt: '2026-09-01 08:00:00',
+          scheduledTask: JSON.stringify({
+            taskId: 'legacy-task',
+            name: '历史阶段汇总',
+            executeAt: '2026-10-01T12:00:00.000Z',
+            selectedStudents: [
+              'legacy-request-id',
+              null,
+              { studentId: 'legacy-storage-id', name: '历史学生乙' },
+            ],
+          }),
+        },
+      ]),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+
+    await expect(service.listScheduledTasks()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'legacy-task',
+        name: '历史阶段汇总',
+        status: 'pending',
+        studentIds: ['legacy-request-id', 'legacy-storage-id'],
+      }),
+    ]);
+  });
+
+  it('does not disguise a scheduled task query failure as an empty queue', async () => {
+    const databaseError = new Error('database unavailable');
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockRejectedValue(databaseError),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+
+    await expect(service.listScheduledTasks()).rejects.toBe(databaseError);
+  });
+
+  it('tolerates string dates, missing fields and malformed scheduledTask without throwing 500 error', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          id: 'report-raw-1',
+          status: 'draft',
+          studentId: 'stu-1',
+          studentName: '学生甲',
+          className: '一班',
+          periodStart: '2026-10-01 00:00:00', // string format from mysql driver
+          periodEnd: '2026-10-31 00:00:00', // string format from mysql driver
+          createdAt: '2026-10-01 10:00:00',
+          scheduledTask: {
+            id: 'task-raw-1',
+            name: '阶段测试',
+            executeAt: '2026-10-30T12:00:00.000Z',
+          },
+        },
+        {
+          id: 'report-raw-2',
+          status: 'scheduled',
+          studentId: 'stu-2',
+          studentName: '学生乙',
+          className: '一班',
+          periodStart: null,
+          periodEnd: null,
+          createdAt: null,
+          scheduledTask: 'invalid json text',
+        },
+      ]),
+    };
+    const reports = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const tasks = await service.listScheduledTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('task-raw-1');
+    expect(tasks[0].startDate).toBe('2026-10-01');
+    expect(tasks[0].endDate).toBe('2026-10-30');
+  });
+
+  it('collects stage four-dimension sources from existing report text without score data', async () => {
+    const query = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'weekly-1',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-08T00:00:00+08:00'),
+          snapshot: { scoreSummary: { net: 99 } },
+          content: {
+            growthAssessment: {
+              learningReadiness: '能够主动准备学习用品。',
+              communicationCooperation: '能够倾听同伴表达。',
+              independenceRules: '能够遵守课堂约定。',
+              overallUnderstanding: '本周状态稳定。',
+            },
+          },
+        },
+      ]),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      { createQueryBuilder: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const internals = service as unknown as {
+      stageGrowthAssessmentSources(
+        student: Record<string, unknown>,
+        start: Date,
+        end: Date,
+      ): Promise<Array<Record<string, unknown>>>;
+    };
+
+    const sources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-10-01T00:00:00+08:00'),
+      new Date('2026-11-01T00:00:00+08:00'),
+    );
+
+    expect(sources).toEqual([
+      expect.objectContaining({
+        reportId: 'weekly-1',
+        growthAssessment: expect.objectContaining({
+          learningReadiness: '能够主动准备学习用品。',
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(sources)).not.toContain('99');
+  });
+
+  it('restricts stage reports to only read weekly reports and semester reports to only read stage summaries', async () => {
+    const stageQuery = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'weekly-only',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-08T00:00:00+08:00'),
+          content: {
+            growthAssessment: {
+              learningReadiness: '周报评价良好',
+            },
+          },
+        },
+      ]),
+    };
+    const termQuery = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 'stage-summary-1',
+          periodStart: new Date('2026-10-01T00:00:00+08:00'),
+          periodEnd: new Date('2026-10-31T00:00:00+08:00'),
+          content: {
+            growthAssessment: {
+              learningReadiness: '阶段汇总评价良好',
+            },
+          },
+        },
+      ]),
+    };
+
+    let activeQuery = stageQuery;
+    const reports = {
+      createQueryBuilder: jest.fn(() => activeQuery),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      reports as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+    );
+    const internals = service as unknown as {
+      stageGrowthAssessmentSources(
+        student: Record<string, unknown>,
+        start: Date,
+        end: Date,
+        targetKind?: 'stage' | 'term',
+      ): Promise<Array<Record<string, unknown>>>;
+    };
+
+    // 1. 阶段报告：只读取周报 (targetKind = 'stage')
+    activeQuery = stageQuery;
+    const stageSources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-10-01T00:00:00+08:00'),
+      new Date('2026-11-01T00:00:00+08:00'),
+      'stage',
+    );
+    expect(stageSources).toHaveLength(1);
+    expect(stageSources[0].reportId).toBe('weekly-only');
+    expect(stageQuery.andWhere).toHaveBeenCalledWith(
+      'sourceReport.period_type = :periodType',
+      { periodType: 'week' },
+    );
+    expect(stageQuery.andWhere).toHaveBeenCalledWith(
+      "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
+    );
+
+    // 2. 学期报告：只读取阶段汇总报告 (targetKind = 'term')
+    activeQuery = termQuery;
+    const termSources = await internals.stageGrowthAssessmentSources(
+      { id: 'student-1' },
+      new Date('2026-09-01T00:00:00+08:00'),
+      new Date('2027-01-31T00:00:00+08:00'),
+      'term',
+    );
+    expect(termSources).toHaveLength(1);
+    expect(termSources[0].reportId).toBe('stage-summary-1');
+    expect(termQuery.andWhere).toHaveBeenCalledWith(
+      "(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')) = 'stage' OR JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.scheduledTask')) IS NOT NULL)",
+    );
+  });
+
+  it('resolves a stage report name and photo from the same selected student profile', async () => {
+    const selectedProfile = {
+      id: 'profile-1',
+      teacherId: 'teacher-1',
+      name: '正确学生',
+      photo: 'data:image/jpeg;base64,correct',
+    };
+    const studentProfiles = {
+      findOne: jest.fn(async ({ where }) =>
+        where.id === 'profile-1' ? selectedProfile : null,
+      ),
+    };
+    const service = new SemesterReportsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { teacherId: 'teacher-1' } as never,
+      studentProfiles as never,
+    );
+    const internals = service as unknown as {
+      stageStudentProfile(
+        requestedId: string,
+        student: Record<string, unknown>,
+      ): Promise<typeof selectedProfile | null>;
+    };
+
+    const profile = await internals.stageStudentProfile('profile-1', {
+      id: 'teacher-1:legacy-pet-row',
+      logicalId: 'different-profile',
+      name: '错误旧姓名',
+    });
+
+    expect(profile).toEqual(selectedProfile);
+    expect(profile?.name).toBe('正确学生');
+    expect(profile?.photo).toBe('data:image/jpeg;base64,correct');
+  });
 });

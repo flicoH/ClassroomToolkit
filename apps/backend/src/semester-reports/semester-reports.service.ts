@@ -1,11 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
+  Optional,
+  UnauthorizedException,
+  type MessageEvent,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EMPTY, from, interval, merge, Observable } from 'rxjs';
+import { map, switchMap, throttleTime } from 'rxjs/operators';
+import { ScheduledTasksEventsService } from './scheduled-tasks-events.service';
+import { ReportAiTeacherPermissionEntity } from '../admin/entities/report-ai-teacher-permission.entity';
 import {
   createHash,
   createCipheriv,
@@ -18,7 +26,9 @@ import { join } from 'node:path';
 import { EntityManager, IsNull, Repository } from 'typeorm';
 import { TeacherContext } from '../auth/teacher-context';
 import { normalizeUploadedFileName } from './uploaded-file-name';
+import { readReportShareKey } from './report-share-key';
 import { readReportPublicBaseUrl } from './report-public-url';
+import { readReportAiConfig } from './report-ai-config';
 import {
   detectCourseUnits as detectUnits,
   selectCoursePages,
@@ -34,6 +44,8 @@ import {
   reportVisualsForSnapshot,
   classroomPhotosForSnapshot,
   classroomPhotoCaptionsForSnapshot,
+  formatShanghaiDate,
+  replaceStageTerm,
 } from './report-generation';
 import { PetEvaluationRecordEntity } from '../pet-points/entities/pet-evaluation-record.entity';
 import {
@@ -46,6 +58,7 @@ import {
 } from './report-input';
 import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 import { StudentEntity } from '../students/entities/student.entity';
+import { ClassroomEntity } from '../students/entities/classroom.entity';
 import { PetStateHistoryEntity } from '../pet-points/entities/pet-state-history.entity';
 import { petAppearanceAtReportEnd } from '../pet-points/pet-state-history';
 import {
@@ -71,6 +84,50 @@ import {
 
 const periods = ['week', 'month', 'term'] as const;
 
+/** 调度器传给报告生成的已解析上下文，执行时间已转换为 Date。 */
+type ScheduledReportOptions = {
+  /** 调度任务稳定标识，用于关联生成记录。 */
+  taskId: string;
+  /** 任务展示名称。 */
+  name: string;
+  /** 班级范围标识，不替代教师归属校验。 */
+  classId: string;
+  /** 计划执行时刻；请求结构兼容 ISO 文本，内部结构使用 Date。 */
+  executeAt: Date;
+  /** 调度重复规则，缺省表示单次执行。 */
+  repeatType?: 'none' | 'weekly' | 'monthly';
+  /** 教师指定的阶段称谓，用于替换报告中的周期文案。 */
+  stageCustomName?: string;
+  /** 固定本次执行的学生身份映射，避免同名学生串联。 */
+  selectedStudents?: Array<{
+    requestedId: string;
+    studentId: string;
+    name: string;
+  }>;
+};
+
+/** 定时任务持久化输入的兼容结构；可选旧字段须在执行边界再次校验。 */
+interface ScheduledTaskPayload {
+  /** 调度任务稳定标识，用于关联生成记录。 */
+  taskId?: string;
+  /** 旧任务记录的兼容 ID，读取时与 taskId 统一。 */
+  id?: string;
+  /** 任务展示名称。 */
+  name?: string;
+  /** 班级范围标识，不替代教师归属校验。 */
+  classId?: string;
+  /** 教师指定的阶段称谓，用于替换报告中的周期文案。 */
+  stageCustomName?: string;
+  /** 旧客户端阶段称谓，兼容读取后统一到 stageCustomName。 */
+  stageTitle?: string;
+  /** 计划执行时刻；请求结构兼容 ISO 文本，内部结构使用 Date。 */
+  executeAt?: string | Date;
+  /** 调度重复规则，缺省表示单次执行。 */
+  repeatType?: string;
+  /** 固定本次执行的学生身份映射，避免同名学生串联。 */
+  selectedStudents?: unknown[];
+}
+
 @Injectable()
 export class SemesterReportsService {
   constructor(
@@ -93,17 +150,118 @@ export class SemesterReportsService {
     private readonly teacher: TeacherContext,
     @InjectRepository(StudentEntity)
     private readonly studentProfiles: Repository<StudentEntity>,
+    @Optional()
+    private readonly eventsService?: ScheduledTasksEventsService,
   ) {}
+
+  /**
+   * 采用 Server-Sent Events (SSE) 实时推送当前教师的阶段汇总定时任务队列快照与进度更新。
+   */
+  streamScheduledTasks(teacherId?: string): Observable<MessageEvent> {
+    let targetId: string;
+    try {
+      targetId = teacherId || this.teacher?.teacherId;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new UnauthorizedException('未登录');
+    }
+    if (!targetId) {
+      throw new UnauthorizedException('未登录');
+    }
+
+    // A read failure must close the stream and let EventSource reconnect; an
+    // empty snapshot would falsely erase the teacher's visible queue.
+    const initial$ = from(this.listScheduledTasks(targetId)).pipe(
+      map(
+        (tasks) =>
+          ({
+            data: { type: 'tasks_sync', tasks },
+          }) as MessageEvent,
+      ),
+    );
+
+    const updates$ = this.eventsService
+      ? this.eventsService.onTeacherEvents(targetId).pipe(
+          throttleTime(80, undefined, { leading: true, trailing: true }),
+          switchMap(async (event) => {
+            const tasks = await this.listScheduledTasks(targetId);
+            return {
+              data: {
+                type: 'tasks_sync',
+                tasks,
+                trigger: event.type,
+                taskId: event.taskId,
+              },
+            } as MessageEvent;
+          }),
+        )
+      : EMPTY;
+
+    const heartbeat$ = interval(20000).pipe(
+      map(
+        () =>
+          ({
+            data: { type: 'ping', timestamp: Date.now() },
+          }) as MessageEvent,
+      ),
+    );
+
+    return merge(initial$, updates$, heartbeat$);
+  }
+
+  /** 查询当前教师是否拥有 AI 报告权限。未授权时不能使用 AI 阶段汇总报告。 */
+  async hasAiReportPermission(
+    teacherId = this.teacher?.teacherId,
+  ): Promise<boolean> {
+    if (!teacherId) return false;
+    try {
+      return await this.reports.manager.existsBy(
+        ReportAiTeacherPermissionEntity,
+        { teacherId },
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async assertAiReportPermission(
+    teacherId = this.teacher?.teacherId,
+  ): Promise<void> {
+    const allowed = await this.hasAiReportPermission(teacherId);
+    if (!allowed) {
+      throw new ForbiddenException({
+        code: 'AI_REPORT_PERMISSION_DENIED',
+        message: '您暂无 AI 汇总报告使用权限，请联系管理员开启授权',
+      });
+    }
+  }
+
+  async aiReportPermission() {
+    return {
+      hasPermission: await this.hasAiReportPermission(),
+    };
+  }
 
   async listTerms() {
     return this.terms.find({
-      where: { teacherId: this.teacher.teacherId },
+      where: { teacherId: this.teacher.teacherId, enabled: true },
       order: { startDate: 'DESC' },
     });
   }
-  async listSubjects() {
+  async listSubjects(query?: { termId?: string }) {
+    const termId = typeof query?.termId === 'string' ? query.termId.trim() : '';
+    const where = termId
+      ? [
+          { teacherId: this.teacher.teacherId, enabled: true, termId },
+          {
+            teacherId: this.teacher.teacherId,
+            enabled: true,
+            termId: IsNull(),
+          },
+        ]
+      : { teacherId: this.teacher.teacherId, enabled: true };
     const subjects = await this.subjects.find({
-      where: { teacherId: this.teacher.teacherId, enabled: true },
+      where,
       order: { name: 'ASC' },
     });
     return subjects.map((subject) => ({
@@ -111,6 +269,17 @@ export class SemesterReportsService {
       performanceConfig:
         subject.performanceConfig ?? defaultPerformanceConfig(),
     }));
+  }
+
+  /** 教师归属参与更新条件；重复停用不删除历史学期记录。 */
+  async deleteTerm(id: string) {
+    // 只停用学期，保留报告、分享和课程资料的关联。
+    const result = await this.terms.update(
+      { id, teacherId: this.teacher.teacherId },
+      { enabled: false },
+    );
+    if (!result.affected) throw new NotFoundException('学期不存在');
+    return { deleted: true };
   }
 
   async createTerm(input: Record<string, string>) {
@@ -126,6 +295,7 @@ export class SemesterReportsService {
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
         name: input.name.trim().slice(0, 100),
+        enabled: true,
         startDate: input.startDate,
         endDate: input.endDate,
       }),
@@ -134,10 +304,22 @@ export class SemesterReportsService {
 
   async createSubject(input: Record<string, string>) {
     if (!input.name?.trim()) throw new BadRequestException('请填写学科名称');
+    const termId = typeof input.termId === 'string' ? input.termId.trim() : '';
+    if (!termId && this.terms && typeof this.terms.count === 'function') {
+      const hasTerms = await this.terms.count({
+        where: { teacherId: this.teacher.teacherId, enabled: true },
+      });
+      if (hasTerms > 0) {
+        throw new BadRequestException('请选择所属学期');
+      }
+    } else if (termId) {
+      await this.requireTerm(termId);
+    }
     return this.subjects.save(
       this.subjects.create({
         id: randomUUID(),
         teacherId: this.teacher.teacherId,
+        termId: termId || null,
         name: input.name.trim().slice(0, 100),
         enabled: true,
         performanceConfig: defaultPerformanceConfig(),
@@ -145,10 +327,27 @@ export class SemesterReportsService {
     );
   }
 
+  /** 使用独立学科仓库，避免停用学科报告工作台中的同名学科。 */
+  async deleteSubject(id: string) {
+    // 仅停用本工作台学科，已有报告和资料继续保留关联。
+    const result = await this.subjects.update(
+      { id, teacherId: this.teacher.teacherId },
+      { enabled: false },
+    );
+    if (!result.affected) throw new NotFoundException('学科不存在');
+    return { deleted: true };
+  }
+
   async updateSubjectPerformance(id: string, input: Record<string, unknown>) {
     const subject = await this.requireSubject(id);
     const performanceConfig = parsePerformanceConfig(input.performanceConfig);
-    return this.subjects.save({ ...subject, performanceConfig });
+    // 只更新仍启用的学科，避免并发保存配置时重新启用已删除的学科。
+    const result = await this.subjects.update(
+      { id, teacherId: this.teacher.teacherId, enabled: true },
+      { performanceConfig },
+    );
+    if (!result.affected) throw new NotFoundException('学科不存在');
+    return { ...subject, performanceConfig };
   }
 
   async listDocuments() {
@@ -166,6 +365,7 @@ export class SemesterReportsService {
       | { originalname: string; mimetype: string; buffer: Buffer; size: number }
       | undefined,
     input: Record<string, string>,
+    options: { skipSubjectValidation?: boolean } = {},
   ) {
     if (
       !file ||
@@ -177,7 +377,9 @@ export class SemesterReportsService {
     if (!input.termId || !input.subjectId)
       throw new BadRequestException('请先选择学期和学科');
     await this.requireTerm(input.termId);
-    await this.requireSubject(input.subjectId);
+    if (!options.skipSubjectValidation) {
+      await this.requireSubject(input.subjectId);
+    }
     const teacherId = this.teacher.teacherId;
     const hash = createHash('sha256').update(file.buffer).digest('hex');
     const existing = await this.documents.findOne({
@@ -277,11 +479,15 @@ export class SemesterReportsService {
     return { deleted: true };
   }
 
-  async preview(input: Record<string, unknown>) {
+  async preview(
+    input: Record<string, unknown>,
+    options: { skipSubjectValidation?: boolean } = {},
+  ) {
     const { period, start, end, termId, subjectId, studentIds } =
       this.validateRequest(input);
     const term = await this.requireTerm(termId);
-    if (subjectId !== '*') await this.requireSubject(subjectId);
+    if (subjectId !== '*' && !options.skipSubjectValidation)
+      await this.requireSubject(subjectId);
     if (
       start < shanghaiMidnight(term.startDate) ||
       end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
@@ -292,6 +498,8 @@ export class SemesterReportsService {
       termId,
       subjectId,
       period,
+      undefined,
+      options,
     );
     const students = await this.findStudents(studentIds);
     const summaries = await Promise.all(
@@ -324,20 +532,33 @@ export class SemesterReportsService {
     };
   }
 
-  async previewCourseScope(input: Record<string, unknown>) {
+  async previewCourseScope(
+    input: Record<string, unknown>,
+    options: {
+      allowDisabledSubject?: boolean;
+      /** 仅由已校验归属的历史草稿调用方启用，新建流程保持禁用。 */
+      allowDisabledTerm?: boolean;
+      skipSubjectValidation?: boolean;
+    } = {},
+  ) {
     const period = input.period as (typeof periods)[number];
     if (!periods.includes(period))
       throw new BadRequestException('请选择报告周期');
-    const termId = String(input.termId ?? '');
+    const termId = String((input.termId ?? '') as string);
     const subjectId =
-      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
-    await this.requireTerm(termId);
-    if (input.reportVersion !== 'v2') await this.requireSubject(subjectId);
+      input.reportVersion === 'v2'
+        ? '*'
+        : String((input.subjectId ?? '') as string);
+    await this.requireTerm(termId, options.allowDisabledTerm);
+    if (input.reportVersion !== 'v2' && !options.skipSubjectValidation)
+      await this.requireSubject(subjectId, options.allowDisabledSubject);
     const courses = await this.selectedCourses(
       input,
       termId,
       subjectId,
       period,
+      undefined,
+      options,
     );
     const { selected, learningContents, courseScope: scope } = courses;
     return {
@@ -366,18 +587,46 @@ export class SemesterReportsService {
     classroomPhotos?: Array<string | null>,
     classroomPhotoCaptions?: string[],
     studentPhoto?: string | null,
+    scheduled?: ScheduledReportOptions,
   ) {
+    const teacherId = this.teacher?.teacherId;
+    const rawPeriod = input.period as (typeof periods)[number] | undefined;
+    const isWeeklyReport = rawPeriod === 'week';
+    const isScheduledSemester =
+      Boolean(scheduled) &&
+      (input.periodPreset === 'current-term' ||
+        input.isSemesterReport === true);
+    const isStageReport =
+      (Boolean(scheduled) && !isScheduledSemester) ||
+      input.period === 'stage' ||
+      input.reportKind === 'stage' ||
+      input.isStageReport === true;
+    const isSemesterReport =
+      isScheduledSemester ||
+      (!isWeeklyReport &&
+        !isStageReport &&
+        (rawPeriod === 'term' ||
+          input.isSemesterReport === true ||
+          input.periodPreset === 'current-term'));
+    if (
+      !isWeeklyReport &&
+      (isStageReport ||
+        input.generationMode === 'ai' ||
+        (isSemesterReport && input.generationMode === 'ai'))
+    ) {
+      await this.assertAiReportPermission(teacherId);
+    }
     const { period, start, end, termId, subjectId, studentIds } =
-      this.validateRequest(input);
-    const teacherId = this.teacher.teacherId;
+      this.validateRequest(input, Boolean(scheduled) || isStageReport);
     const term = await this.requireTerm(termId);
     const subject =
       subjectId === '*'
         ? { name: '全部课程' }
         : await this.requireSubject(subjectId);
     if (
-      start < shanghaiMidnight(term.startDate) ||
-      end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000)
+      !scheduled &&
+      (start < shanghaiMidnight(term.startDate) ||
+        end > new Date(shanghaiMidnight(term.endDate).getTime() + 86400000))
     )
       throw new BadRequestException('报告周期必须在学期日期范围内');
     const {
@@ -420,14 +669,46 @@ export class SemesterReportsService {
         '课程资料内容较多，请按章节拆分 PDF 后再生成，避免漏读课程内容',
       );
     let generationMode: 'template' | 'ai';
-    try {
-      generationMode = resolveReportGenerationMode(input.generationMode);
-    } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : '报告生成方式无效',
-      );
+    const managedAiConfig = await readReportAiConfig(this.reports.manager);
+    if (isWeeklyReport) {
+      // 手动填写的周报不需要调用 AI 生成，强制走模版生成
+      generationMode = 'template';
+    } else {
+      try {
+        generationMode = resolveReportGenerationMode(
+          input.generationMode ??
+            (isStageReport && managedAiConfig ? 'ai' : undefined),
+          Boolean(managedAiConfig),
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : '报告生成方式无效',
+        );
+      }
     }
     const students = await this.findStudents(studentIds);
+    const stageCustomName = String(
+      (scheduled?.stageCustomName ?? input.stageCustomName ?? '') as string,
+    )
+      .trim()
+      .slice(0, 50);
+    const stageStudentProfiles = isStageReport
+      ? await Promise.all(
+          students.map((student, index) =>
+            this.stageStudentProfile(studentIds[index]!, student),
+          ),
+        )
+      : students.map(() => null);
+    const scheduledTask = scheduled
+      ? {
+          ...scheduled,
+          selectedStudents: students.map((student, index) => ({
+            requestedId: studentIds[index]!,
+            studentId: student.id,
+            name: stageStudentProfiles[index]?.name ?? student.name,
+          })),
+        }
+      : undefined;
     let reportDetails: ReportDetails | undefined;
     let feedback: Map<string, StudentFeedback>;
     try {
@@ -443,10 +724,10 @@ export class SemesterReportsService {
         error instanceof Error ? error.message : '报告输入无效',
       );
     }
-    const keyword = String(input.keywords ?? '')
+    const keyword = String((input.keywords ?? '') as string)
       .trim()
       .slice(0, 1000);
-    const observation = String(input.teacherObservation ?? '')
+    const observation = String((input.teacherObservation ?? '') as string)
       .trim()
       .slice(0, 3000);
     const isV2 = input.reportVersion === 'v2';
@@ -480,19 +761,54 @@ export class SemesterReportsService {
       throw new BadRequestException('部分学生所在班级没有可用的已确认课程资料');
     const created: SemesterReportEntity[] = [];
     for (const [index, student] of students.entries()) {
+      const stageProfile = stageStudentProfiles[index];
+      const reportStudentName = stageProfile?.name ?? student.name;
       // 评价按客户端提交的 ID 取值，再换成教师隔离后的存储 ID，避免批量生成时把评价配给其他学生。
       const submittedFeedback = feedback.get(studentIds[index]!);
       const teacherInput = submittedFeedback
         ? { ...submittedFeedback, studentId: student.id }
         : undefined;
       const scores = await this.scoreSummary(student, start, end);
+      const stageGrowthAssessmentSources = isStageReport
+        ? await this.stageGrowthAssessmentSources(student, start, end, 'stage')
+        : isSemesterReport
+          ? await this.stageGrowthAssessmentSources(student, start, end, 'term')
+          : undefined;
       const snapshot = {
         reportVersion: isV2 ? 'v2' : 'v1',
+        ...(isStageReport
+          ? {
+              reportKind: 'stage',
+              stageCustomName,
+              stageTitle: stageCustomName,
+            }
+          : isSemesterReport
+            ? {
+                reportKind: 'term',
+                stageCustomName: stageCustomName || '',
+                stageTitle: stageCustomName || '',
+              }
+            : {}),
+        ...(scheduledTask
+          ? {
+              scheduledTask: {
+                id: scheduledTask.taskId,
+                name: scheduledTask.name,
+                classId: scheduledTask.classId,
+                executeAt: scheduledTask.executeAt.toISOString(),
+                repeatType: scheduledTask.repeatType || 'none',
+                stageCustomName: scheduledTask.stageCustomName || '',
+                stageTitle: scheduledTask.stageCustomName || '',
+                selectedStudents: scheduledTask.selectedStudents,
+              },
+            }
+          : {}),
         ...(isV2
           ? {
               studentPhoto:
                 studentPhoto === undefined
-                  ? await this.photoForStudent(student)
+                  ? (stageProfile?.photo ??
+                    (await this.photoForStudent(student)))
                   : studentPhoto,
             }
           : {}),
@@ -516,9 +832,12 @@ export class SemesterReportsService {
           : learningContents,
         reportDetails,
         teacherInput,
+        ...(stageGrowthAssessmentSources
+          ? { stageGrowthAssessmentSources }
+          : {}),
         student: {
           id: student.id,
-          name: student.name,
+          name: reportStudentName,
           className: student.className,
         },
         subjectName: subject.name,
@@ -545,6 +864,7 @@ export class SemesterReportsService {
           ...scores.records.map((record) => `score:${record.id}`),
           ...(observation ? ['teacher-observation'] : []),
           ...(teacherInput ? ['teacher-input'] : []),
+          ...(isStageReport || isSemesterReport ? ['stage-summary'] : []),
         ],
         courseScope,
         scoreNotice: '综合课堂表现记录，不代表该学科知识掌握程度。',
@@ -557,7 +877,7 @@ export class SemesterReportsService {
           termId,
           subjectId,
           studentId: student.id,
-          studentName: student.name,
+          studentName: reportStudentName,
           className: student.className,
           periodType: period,
           periodStart: start,
@@ -565,7 +885,7 @@ export class SemesterReportsService {
           scoreScope: 'overall',
           snapshot,
           content: null,
-          status: 'queued',
+          status: scheduled ? 'scheduled' : 'queued',
           keywords: keyword || null,
           teacherObservation: observation || null,
           courseScope: courseScope || null,
@@ -573,7 +893,7 @@ export class SemesterReportsService {
           publishedAt: null,
         }),
       );
-      await this.log('report-queued', {
+      await this.log(scheduled ? 'report-scheduled' : 'report-queued', {
         reportId: report.id,
         details: {
           period,
@@ -589,6 +909,354 @@ export class SemesterReportsService {
       reports: created.map((r) => this.reportDto(r)),
       scoreScope: 'overall',
     };
+  }
+
+  /**
+   * 定时任务在教师会话内完成权限校验并冻结生成快照；到点后仅由后台 Worker
+   * 将 scheduled 状态推进到 queued，因此退出登录不会丢失任务。
+   */
+  async createScheduledTask(input: Record<string, unknown>) {
+    await this.assertAiReportPermission();
+    const executeAt = new Date(String((input.executeAt ?? '') as string));
+    if (
+      Number.isNaN(executeAt.getTime()) ||
+      executeAt.getTime() < Date.now() + 5000 ||
+      executeAt.getTime() > Date.now() + 400 * 86400000
+    )
+      throw new BadRequestException(
+        '云端执行时间必须晚于当前时间且不超过 400 天',
+      );
+    const name = String((input.name ?? '') as string)
+      .trim()
+      .slice(0, 100);
+    if (!name) throw new BadRequestException('请填写定时任务名称');
+    const taskId = randomUUID();
+    const classId = String((input.classId ?? 'all') as string).slice(0, 64);
+    const rawRepeat = String((input.repeatType ?? 'none') as string);
+    const repeatType = (
+      ['none', 'weekly', 'monthly'].includes(rawRepeat) ? rawRepeat : 'none'
+    ) as 'none' | 'weekly' | 'monthly';
+    const periodPreset = String((input.periodPreset ?? '') as string);
+    const isSemesterReport =
+      periodPreset === 'current-term' || input.isSemesterReport === true;
+    const stageCustomName = String(
+      (input.stageCustomName ?? input.stageTitle ?? '') as string,
+    )
+      .trim()
+      .slice(0, 50);
+    const result = await this.generate(
+      {
+        ...input,
+        reportVersion: 'v2',
+        period: 'term',
+        start: input.startDate,
+        end: input.endDate,
+        periodPreset,
+        isSemesterReport,
+        generationMode: input.generationMode ?? 'ai',
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { taskId, name, classId, executeAt, repeatType, stageCustomName },
+    );
+    const reports = result.reports;
+    const requestedStudentIds = Array.isArray(input.studentIds)
+      ? input.studentIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'tasks_changed',
+      { taskId },
+    );
+    return {
+      id: taskId,
+      name,
+      classId,
+      className:
+        new Set(reports.map((report) => report.className)).size === 1
+          ? reports[0]?.className
+          : '跨班挑选',
+      studentIds: requestedStudentIds,
+      studentNames: reports.map((report) => report.studentName).join('、'),
+      startDate: String(input.startDate),
+      endDate: String(input.endDate),
+      executeAt: executeAt.toISOString(),
+      repeatType,
+      stageCustomName,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  async listScheduledTasks(teacherId?: string) {
+    let targetTeacherId: string;
+    try {
+      targetTeacherId = teacherId || this.teacher?.teacherId;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new UnauthorizedException('未登录');
+    }
+    if (!targetTeacherId) {
+      throw new UnauthorizedException('未登录');
+    }
+
+    const rows = await this.reports
+      .createQueryBuilder('report')
+      .select('report.id', 'id')
+      .addSelect('report.status', 'status')
+      .addSelect('report.studentId', 'studentId')
+      .addSelect('report.studentName', 'studentName')
+      .addSelect('report.className', 'className')
+      .addSelect('report.periodStart', 'periodStart')
+      .addSelect('report.periodEnd', 'periodEnd')
+      .addSelect('report.createdAt', 'createdAt')
+      .addSelect(
+        "JSON_EXTRACT(report.snapshot, '$.scheduledTask')",
+        'scheduledTask',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageCustomName'))",
+        'snapshotStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.stageTitle'))",
+        'snapshotStageTitle',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageCustomName'))",
+        'taskStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.snapshot, '$.scheduledTask.stageTitle'))",
+        'taskStageTitle',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageCustomName'))",
+        'contentStageCustomName',
+      )
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(report.content, '$.stageTitle'))",
+        'contentStageTitle',
+      )
+      .where('report.teacherId = :teacherId', {
+        teacherId: targetTeacherId,
+      })
+      // scheduledTask is the persisted queue identity. Older production rows
+      // may predate reportKind, so filtering by that derived marker hides
+      // valid tasks after an application upgrade.
+      .andWhere("JSON_EXTRACT(report.snapshot, '$.scheduledTask') IS NOT NULL")
+      .andWhere('report.status != :deleted', { deleted: 'deleted' })
+      .getRawMany<{
+        id: string;
+        status: string;
+        studentId: string;
+        studentName: string;
+        className: string;
+        periodStart: Date | string;
+        periodEnd: Date | string;
+        createdAt: Date | string;
+        scheduledTask: string | ScheduledReportOptions;
+        snapshotStageCustomName?: string;
+        snapshotStageTitle?: string;
+        taskStageCustomName?: string;
+        taskStageTitle?: string;
+        contentStageCustomName?: string;
+        contentStageTitle?: string;
+      }>();
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      let task: ScheduledTaskPayload | null = null;
+      if (typeof row.scheduledTask === 'string') {
+        try {
+          task = JSON.parse(row.scheduledTask) as ScheduledTaskPayload;
+        } catch {
+          continue;
+        }
+      } else if (row.scheduledTask && typeof row.scheduledTask === 'object') {
+        task = row.scheduledTask as ScheduledTaskPayload;
+      }
+      if (!task || typeof task !== 'object') continue;
+      if (!task.taskId && !task.id) continue;
+      const id = String(task.taskId ?? task.id);
+      groups.set(id, [...(groups.get(id) ?? []), row]);
+    }
+    return [...groups.entries()]
+      .map(([id, taskRows]) => {
+        if (!taskRows || taskRows.length === 0) return null;
+        const rawTask = taskRows[0]!.scheduledTask;
+        let task: ScheduledTaskPayload = {};
+        if (typeof rawTask === 'string') {
+          try {
+            task = JSON.parse(rawTask) as ScheduledTaskPayload;
+          } catch {
+            task = {};
+          }
+        } else if (rawTask && typeof rawTask === 'object') {
+          task = rawTask as ScheduledTaskPayload;
+        }
+        task = task && typeof task === 'object' ? task : {};
+        const statuses = new Set(taskRows.map((row) => row.status));
+        const status = statuses.has('scheduled')
+          ? 'pending'
+          : statuses.has('queued') || statuses.has('generating')
+            ? 'running'
+            : statuses.has('failed')
+              ? 'failed'
+              : 'completed';
+        const selectedStudents = Array.isArray(task.selectedStudents)
+          ? task.selectedStudents.flatMap((student) => {
+              if (typeof student === 'string') {
+                return [{ requestedId: student, name: '' }];
+              }
+              if (!student || typeof student !== 'object') return [];
+              const value = student as {
+                requestedId?: unknown;
+                studentId?: unknown;
+                name?: unknown;
+              };
+              const requestedId =
+                typeof value.requestedId === 'string'
+                  ? value.requestedId
+                  : typeof value.studentId === 'string'
+                    ? value.studentId
+                    : '';
+              if (!requestedId) return [];
+              return [
+                {
+                  requestedId,
+                  name: typeof value.name === 'string' ? value.name : '',
+                },
+              ];
+            })
+          : [];
+        const totalCount = taskRows.length;
+        const completedCount = taskRows.filter((row) =>
+          ['draft', 'published'].includes(row.status),
+        ).length;
+        const failedCount = taskRows.filter(
+          (row) => row.status === 'failed',
+        ).length;
+        const processingCount = taskRows.filter((row) =>
+          ['queued', 'generating'].includes(row.status),
+        ).length;
+
+        let stageCustomName = task.stageCustomName || task.stageTitle || '';
+
+        if (!stageCustomName) {
+          const clean = (val?: string) =>
+            val && val !== 'null' && val !== 'undefined' ? val.trim() : '';
+          for (const r of taskRows) {
+            const candidate =
+              clean(r.taskStageCustomName) ||
+              clean(r.snapshotStageCustomName) ||
+              clean(r.taskStageTitle) ||
+              clean(r.snapshotStageTitle) ||
+              clean(r.contentStageCustomName) ||
+              clean(r.contentStageTitle);
+            if (candidate) {
+              stageCustomName = candidate;
+              break;
+            }
+          }
+        }
+
+        const rawEnd = taskRows[0]?.periodEnd;
+        const endDateObj = parseDatabaseDate(rawEnd);
+        const endDate =
+          endDateObj && !Number.isNaN(endDateObj.getTime())
+            ? formatShanghaiDate(new Date(endDateObj.getTime() - 1))
+            : formatShanghaiDate(taskRows[0]?.periodStart ?? new Date());
+
+        const rawStart = taskRows[0]?.periodStart;
+        const startDateObj = parseDatabaseDate(rawStart);
+        const startDate = startDateObj ? formatShanghaiDate(startDateObj) : '';
+
+        return {
+          id,
+          name: task.name || '阶段汇总任务',
+          classId: task.classId || '',
+          className:
+            new Set(taskRows.map((row) => row.className)).size === 1
+              ? taskRows[0]!.className
+              : '跨班挑选',
+          studentIds: selectedStudents.length
+            ? selectedStudents.map((student) => student.requestedId)
+            : taskRows.map((row) => row.studentId),
+          studentNames: selectedStudents.length
+            ? selectedStudents.map((student) => student.name).join('、')
+            : taskRows.map((row) => row.studentName).join('、'),
+          startDate,
+          endDate,
+          executeAt: task.executeAt
+            ? String(task.executeAt)
+            : new Date().toISOString(),
+          repeatType: task.repeatType || 'none',
+          stageCustomName,
+          status,
+          totalCount,
+          completedCount,
+          generatedCount: completedCount,
+          processingCount,
+          failedCount,
+          progressPercent: totalCount
+            ? Math.round(((completedCount + failedCount) / totalCount) * 100)
+            : 0,
+          createdAt: taskRows[0]?.createdAt ?? new Date(),
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== null)
+      .sort(
+        (left, right) =>
+          parseDatabaseTimestamp(right.createdAt) -
+          parseDatabaseTimestamp(left.createdAt),
+      );
+  }
+
+  async executeScheduledTask(id: string) {
+    await this.assertAiReportPermission();
+    const result = await this.reports
+      .createQueryBuilder()
+      .update(SemesterReportEntity)
+      .set({ status: 'queued', errorMessage: null })
+      .where('teacher_id = :teacherId', { teacherId: this.teacher.teacherId })
+      .andWhere('status IN (:...statuses)', {
+        statuses: ['scheduled', 'failed'],
+      })
+      .andWhere(
+        "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.id')), JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.taskId'))) = :id",
+        { id },
+      )
+      .execute();
+    if (!result.affected) throw new NotFoundException('未找到待执行的定时任务');
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'task_progress',
+      { taskId: id },
+    );
+    return { id, status: 'running' };
+  }
+
+  async deleteScheduledTask(id: string) {
+    const result = await this.reports
+      .createQueryBuilder()
+      .update(SemesterReportEntity)
+      .set({ status: 'deleted' })
+      .where('teacher_id = :teacherId', { teacherId: this.teacher.teacherId })
+      .andWhere('status = :status', { status: 'scheduled' })
+      .andWhere(
+        "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.id')), JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.scheduledTask.taskId'))) = :id",
+        { id },
+      )
+      .execute();
+    if (!result.affected) throw new NotFoundException('未找到可取消的定时任务');
+    this.eventsService?.emitTasksChanged(
+      this.teacher?.teacherId,
+      'tasks_changed',
+      { taskId: id },
+    );
+    return { id, deleted: true };
   }
 
   async listReports(filters: Record<string, unknown> = {}) {
@@ -636,6 +1304,7 @@ export class SemesterReportsService {
         teacherId: this.teacher.teacherId,
       })
       .andWhere('report.status != :deleted', { deleted: 'deleted' });
+    query.andWhere('report.status != :scheduled', { scheduled: 'scheduled' });
     // 在教师范围内先检索再分页，保证历史报告也可查到；LIKE 通配符按老师输入的原文搜索。
     if (q)
       query.andWhere(
@@ -714,6 +1383,9 @@ export class SemesterReportsService {
           'subjectName', JSON_EXTRACT(report.snapshot, '$.subjectName'),
           'courseSelections', JSON_EXTRACT(report.snapshot, '$.courseSelections'),
           'generationMode', JSON_EXTRACT(report.snapshot, '$.generationMode'),
+          'reportKind', JSON_EXTRACT(report.snapshot, '$.reportKind'),
+          'stageCustomName', JSON_EXTRACT(report.snapshot, '$.stageCustomName'),
+          'scheduledTask', JSON_EXTRACT(report.snapshot, '$.scheduledTask'),
           'courseSubjectIds', JSON_EXTRACT(report.snapshot, '$.courseDocuments[*].subjectId')
         )`,
         'summary_snapshot',
@@ -723,20 +1395,34 @@ export class SemesterReportsService {
       })
       .andWhere('report.status != :deleted', { deleted: 'deleted' })
       .andWhere('report.id IN (:...ids)', { ids })
-      .getRawAndEntities();
+      .getRawAndEntities<{
+        summary_snapshot: Record<string, unknown> | string | null;
+      }>();
     const summaries = await Promise.all(
       entities.map(async (r, index) => {
         // MySQL driver versions return JSON projections as either text or objects.
-        const value = raw[index].summary_snapshot;
-        const metadata =
-          (typeof value === 'string' ? JSON.parse(value) : value) ?? {};
+        const value = raw[index]!.summary_snapshot;
+        const metadata = ((typeof value === 'string'
+          ? JSON.parse(value)
+          : value) ?? {}) as Record<string, unknown>;
+        const scheduledTask =
+          typeof metadata.scheduledTask === 'string'
+            ? (JSON.parse(metadata.scheduledTask) as unknown)
+            : metadata.scheduledTask;
+        const stageCustomName =
+          (scheduledTask as { stageCustomName?: string } | undefined)
+            ?.stageCustomName ||
+          metadata.stageCustomName ||
+          undefined;
         const summary = this.reportDto({
           ...r,
           snapshot: {
             ...metadata,
-            courseDocuments: (metadata.courseSubjectIds ?? []).map(
-              (subjectId: string) => ({ subjectId }),
-            ),
+            scheduledTask,
+            stageCustomName,
+            courseDocuments: (
+              (metadata.courseSubjectIds ?? []) as string[]
+            ).map((subjectId: string) => ({ subjectId })),
           },
           content: null,
         });
@@ -865,7 +1551,19 @@ export class SemesterReportsService {
             throw new BadRequestException('该位置没有照片，不能保存说明');
         }
       }
-      const reviewedSnapshot = {
+      const stageCustomName =
+        (typeof content.stageCustomName === 'string' &&
+          content.stageCustomName.trim()) ||
+        (typeof content.stageTitle === 'string' && content.stageTitle.trim()) ||
+        (
+          row.snapshot?.scheduledTask as
+            | { stageCustomName?: string }
+            | undefined
+        )?.stageCustomName ||
+        (row.snapshot as { stageCustomName?: string } | undefined)
+          ?.stageCustomName ||
+        '';
+      const reviewedSnapshot: Record<string, unknown> = {
         ...row.snapshot,
         classroomPhotoCaptions,
         allowedReferences: [
@@ -875,10 +1573,14 @@ export class SemesterReportsService {
           ]),
         ],
         teacherReviewedAt: new Date().toISOString(),
+        ...(stageCustomName ? { stageCustomName } : {}),
       };
       content = {
         ...content,
         ...reportVisualsForSnapshot(reviewedSnapshot),
+        ...(stageCustomName
+          ? { stageCustomName, stageTitle: stageCustomName }
+          : {}),
         // v2 clients may submit live counts from a newer read; only server data is trusted.
         ...(row.snapshot?.reportVersion === 'v2'
           ? {
@@ -896,6 +1598,9 @@ export class SemesterReportsService {
             }
           : {}),
       };
+      if (stageCustomName) {
+        content = replaceStageTerm(content, stageCustomName);
+      }
       this.validateContent(content, reviewedSnapshot);
       row.snapshot = reviewedSnapshot;
       row.content = content;
@@ -924,7 +1629,7 @@ export class SemesterReportsService {
         !row.content
       )
         throw new BadRequestException('只有 v2 草稿可以添加学科');
-      await this.requireTerm(row.termId);
+      await this.requireTerm(row.termId, true);
       let additions: CourseSelection[];
       try {
         additions = parseCourseSelections(input, row.periodType);
@@ -994,7 +1699,7 @@ export class SemesterReportsService {
           ...courses.reportSubjects,
         ],
         subjectName: [
-          String(row.snapshot.subjectName ?? ''),
+          String((row.snapshot.subjectName ?? '') as string),
           courses.subjectName,
         ]
           .filter(Boolean)
@@ -1321,6 +2026,14 @@ export class SemesterReportsService {
       termId: old.termId,
       subjectId: old.subjectId,
       reportVersion: old.snapshot?.reportVersion,
+      generationMode: old.snapshot?.generationMode,
+      ...(old.snapshot?.reportKind === 'stage'
+        ? {
+            reportKind: 'stage',
+            stageCustomName:
+              old.snapshot.stageCustomName ?? old.snapshot.stageTitle,
+          }
+        : {}),
       courseSelections: old.snapshot?.courseSelections,
       studentIds: [old.studentId],
       reportDetails: old.snapshot?.reportDetails,
@@ -1382,14 +2095,22 @@ export class SemesterReportsService {
         revokedAt: IsNull(),
       },
     });
-    if (existing && (!existing.expiresAt || existing.expiresAt > new Date())) {
+    const existingToken = existing
+      ? this.decrypt(existing.tokenCiphertext)
+      : null;
+    if (
+      existing &&
+      existingToken &&
+      (!existing.expiresAt || existing.expiresAt > new Date())
+    ) {
       return {
-        url: this.shareUrl(this.decrypt(existing.tokenCiphertext)),
+        url: this.shareUrl(existingToken),
         shareId: existing.id,
         expiresAt: existing.expiresAt,
       };
     }
     if (existing) {
+      // 既有分享若已过期或因密钥轮转无法解密，将其作废并重新生成当前密钥加密的新链接
       existing.revokedAt = new Date();
       await shares.save(existing);
     }
@@ -1525,6 +2246,7 @@ export class SemesterReportsService {
         `课堂评价：${record.label}${record.delta > 0 ? ` +${record.delta}` : ` ${record.delta}`}`;
     if (report.teacherObservation)
       sourceLabels['teacher-observation'] = '教师观察';
+    /** 公开正文仅将已确认引用映射为可读标签，未知引用不补造证据。 */
     type ReferencedEntry = { sourceRefs: string[] };
     const content = structuredClone(report.content) as Record<
       string,
@@ -1552,18 +2274,42 @@ export class SemesterReportsService {
         item.sourceRefs = item.sourceRefs
           .map((ref: string) => sourceLabels[ref])
           .filter((label): label is string => label !== undefined);
+    const isStage = report.snapshot?.reportKind === 'stage';
+    const stageCustomName =
+      (
+        report.snapshot?.scheduledTask as
+          | { stageCustomName?: string }
+          | undefined
+      )?.stageCustomName ||
+      (report.snapshot as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (report.content as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (report.content as { stageTitle?: string } | undefined)?.stageTitle ||
+      undefined;
+
+    if (stageCustomName) {
+      content.stageCustomName = stageCustomName;
+      content.stageTitle = stageCustomName;
+    }
+    const finalContent = stageCustomName
+      ? replaceStageTerm(content, stageCustomName)
+      : content;
+
     return {
       studentName: report.studentName,
       className: report.className,
       subject:
         report.snapshot?.reportVersion === 'v2'
-          ? String(report.snapshot.subjectName ?? '全部课程')
+          ? String((report.snapshot.subjectName ?? '全部课程') as string)
           : (subject?.name ?? ''),
       term: term?.name ?? '',
-      period: report.periodType,
+      period: isStage ? 'stage' : report.periodType,
+      isStageReport: isStage,
+      stageCustomName: stageCustomName || undefined,
       start: report.periodStart,
       end: report.periodEnd,
-      content,
+      content: finalContent,
       publishedAt: report.publishedAt,
       generationMode: report.snapshot?.generationMode ?? null,
       courseScope: report.courseScope,
@@ -1659,7 +2405,7 @@ export class SemesterReportsService {
     }
   }
 
-  private validateRequest(input: Record<string, unknown>) {
+  private validateRequest(input: Record<string, unknown>, isScheduled = false) {
     const period = input.period as (typeof periods)[number];
     if (!periods.includes(period))
       throw new BadRequestException('周期必须是 week、month 或 term');
@@ -1678,21 +2424,54 @@ export class SemesterReportsService {
     if (period === 'month' && duration > 31 * 86400000)
       throw new BadRequestException('月报周期不能超过 31 天');
     // 允许完整周/月/学期的未来结束日期；预览和生成仍校验学期归属及日期边界。
-    const termId = String(input.termId ?? '');
+    const termId = String((input.termId ?? '') as string);
     const subjectId =
-      input.reportVersion === 'v2' ? '*' : String(input.subjectId ?? '');
+      input.reportVersion === 'v2'
+        ? '*'
+        : String((input.subjectId ?? '') as string);
     const studentIds = Array.isArray(input.studentIds)
       ? [...new Set(input.studentIds.map(String))]
       : [];
+    // 同步生成限制 30 人避免请求超时与手工批阅过载；离线守护队列与阶段任务支持整班批量生成（上限 200 人）
+    const maxStudents = isScheduled ? 200 : 30;
     if (
       !termId ||
       !subjectId ||
       (subjectId === '*' && input.reportVersion !== 'v2') ||
       studentIds.length < 1 ||
-      studentIds.length > 30
+      studentIds.length > maxStudents
     )
-      throw new BadRequestException('请选择学期、学科及 1 至 30 名学生');
+      throw new BadRequestException(
+        isScheduled
+          ? `请选择学期、学科及 1 至 ${maxStudents} 名学生`
+          : '请选择学期、学科及 1 至 30 名学生',
+      );
     return { period, start, end, termId, subjectId, studentIds };
+  }
+
+  /** 旧学科报告缺少学生信息时补充读取展示，不改写原报告快照。 */
+  async subjectReportStudent(studentId: string, teacherId: string) {
+    const students = await this.students.find({ where: { teacherId } });
+    const student = students.find((item) =>
+      this.getStudentCandidateIds(item, teacherId).includes(studentId),
+    );
+    return student
+      ? {
+          name: student.name,
+          className: student.className,
+          studentPhoto: await this.photoForStudent(student, teacherId),
+        }
+      : null;
+  }
+
+  /** 学科报告复用同一学生身份、头像与周期截止形态口径。 */
+  async subjectReportPresentation(studentId: string, end: Date) {
+    const [student] = await this.findStudents([studentId]);
+    return {
+      student: student!,
+      studentPhoto: await this.photoForStudent(student!),
+      ...(await this.petForPeriod(student!, end)),
+    };
   }
 
   private petForPeriod(student: PetStudentEntity, end: Date) {
@@ -1710,12 +2489,28 @@ export class SemesterReportsService {
     row: SemesterReportEntity,
     manager?: EntityManager,
   ) {
+    // Audited repairs freeze only the presentation evidence, leaving AI citations intact.
+    if (
+      row.snapshot?.reportScoreSummaryRepaired === true &&
+      row.snapshot.reportScoreSummary
+    )
+      return row.snapshot.reportScoreSummary;
     const savedStudent = row.snapshot?.student as { id?: string } | undefined;
-    const student = savedStudent?.id
-      ? { id: savedStudent.id }
-      : (await this.findStudents([row.studentId]))[0]!;
+    let student:
+      | (Pick<PetStudentEntity, 'id'> & Partial<PetStudentEntity>)
+      | undefined;
+    try {
+      const found = await this.findStudents([
+        savedStudent?.id || row.studentId,
+      ]);
+      student = found[0];
+    } catch {
+      student = savedStudent?.id
+        ? { id: savedStudent.id }
+        : { id: row.studentId };
+    }
     return this.scoreSummary(
-      student,
+      student ?? { id: row.studentId },
       row.periodStart,
       row.periodEnd,
       manager?.getRepository(PetEvaluationRecordEntity),
@@ -1739,18 +2534,55 @@ export class SemesterReportsService {
     });
   }
 
+  /** Keep full persisted identities. A current school number can be reassigned. */
+  private getStudentCandidateIds(
+    student: {
+      id: string;
+      logicalId?: string | null;
+    },
+    teacherId = this.teacher.teacherId,
+  ): string[] {
+    const prefix = `${teacherId}:`;
+    const candidates = new Set<string>();
+    for (const id of [student.id, student.logicalId]) {
+      if (!id) continue;
+      candidates.add(id);
+      if (id.startsWith(prefix)) {
+        candidates.add(id.slice(prefix.length));
+      } else if (prefix.length + id.length <= 64) {
+        candidates.add(prefix + id);
+      }
+    }
+    return [...candidates];
+  }
+
   private async scoreSummary(
-    student: Pick<PetStudentEntity, 'id'>,
+    student: Pick<PetStudentEntity, 'id'> &
+      Partial<
+        Pick<PetStudentEntity, 'logicalId' | 'classId' | 'studentNo' | 'name'>
+      >,
     start: Date,
     end: Date,
     records = this.records,
   ) {
-    const included = await records
+    const candidateIds = this.getStudentCandidateIds(student);
+    const query = records
       .createQueryBuilder('record')
       .where('record.teacher_id = :teacherId', {
         teacherId: this.teacher.teacherId,
-      })
-      .andWhere('record.student_id = :studentId', { studentId: student.id })
+      });
+
+    if (candidateIds.length === 1) {
+      query.andWhere('record.student_id = :studentId', {
+        studentId: candidateIds[0],
+      });
+    } else {
+      query.andWhere('record.student_id IN (:...candidateIds)', {
+        candidateIds,
+      });
+    }
+
+    const included = await query
       .andWhere('record.created_at >= :start AND record.created_at < :end', {
         start,
         end,
@@ -1783,40 +2615,239 @@ export class SemesterReportsService {
   private async findStudents(ids: string[]) {
     const teacherId = this.teacher.teacherId;
     const rows = await this.students.find({ where: { teacherId } });
-    const byId = new Map<string, PetStudentEntity>();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const byAlias = new Map<string, PetStudentEntity | null>();
     for (const row of rows) {
-      byId.set(row.id, row);
-      if (row.logicalId) byId.set(row.logicalId, row);
-      byId.set(
-        row.id.startsWith(`${teacherId}:`)
-          ? row.id.slice(teacherId.length + 1)
-          : row.id,
-        row,
-      );
+      for (const alias of this.getStudentCandidateIds(row)) {
+        const previous = byAlias.get(alias);
+        byAlias.set(
+          alias,
+          previous === undefined || previous === row ? row : null,
+        );
+      }
     }
-    return ids.map((id) => {
-      const student = byId.get(id);
+    const result: PetStudentEntity[] = [];
+    for (const id of ids) {
+      let student = byId.get(id) ?? byAlias.get(id);
+      if (!student) {
+        const rawId = id.startsWith(`${teacherId}:`)
+          ? id.slice(teacherId.length + 1)
+          : id;
+        const profile = this.studentProfiles
+          ? await this.studentProfiles.findOne({
+              where: [
+                { id, teacherId },
+                { id: rawId, teacherId },
+              ],
+            })
+          : null;
+        if (profile) {
+          // A legacy profile match must agree with the current roster identity.
+          const existing = rows.find(
+            (r) =>
+              r.classId === profile.classroomId &&
+              r.name === profile.name &&
+              (!profile.studentNo || r.studentNo === profile.studentNo),
+          );
+          if (existing) {
+            if (!existing.logicalId) {
+              existing.logicalId = profile.id;
+            }
+            byId.set(id, existing);
+            byId.set(profile.id, existing);
+            student = existing;
+          } else {
+            const classroomRepo =
+              this.studentProfiles?.manager?.getRepository(ClassroomEntity);
+            const classroom = classroomRepo
+              ? await classroomRepo.findOne({
+                  where: { id: profile.classroomId, teacherId },
+                })
+              : null;
+            student = this.students.create({
+              id: `${teacherId}:${profile.id}`.slice(0, 64),
+              logicalId: profile.id,
+              teacherId,
+              classId: profile.classroomId,
+              className: classroom?.name ?? '',
+              name: profile.name,
+              studentNo: profile.studentNo,
+              group: profile.groupName ?? '',
+              score: 0,
+              maxScore: 30,
+              trophies: 0,
+              level: 1,
+              stage: '初始形态',
+              petProgress: 0,
+              petExperience: 0,
+              petHatched: false,
+              absent: false,
+              completedPets: 0,
+              cycleId: randomUUID(),
+              revision: 0,
+              completionPending: false,
+              cycleRulesVersion: 1,
+              rosterActive: true,
+            });
+            student = await this.students.save(student);
+            rows.push(student);
+            byId.set(student.id, student);
+            byId.set(profile.id, student);
+          }
+        }
+      }
       if (!student) throw new NotFoundException(`学生不存在：${id}`);
-      return student;
+      result.push(student);
+    }
+    return result;
+  }
+
+  /**
+   * 四维成长评价来源数据提取：
+   * 1. 阶段报告 (targetKind === 'stage')：只读取所选时间段内的周报 (period_type = 'week')，排除阶段汇总报告。
+   * 2. 学期报告 (targetKind === 'term')：只读取所选时间段/学期内的阶段汇总报告 (reportKind = 'stage')。
+   */
+  private async stageGrowthAssessmentSources(
+    student: PetStudentEntity,
+    start: Date,
+    end: Date,
+    targetKind: 'stage' | 'term' = 'stage',
+  ) {
+    const candidateIds = this.getStudentCandidateIds(student);
+    if (typeof this.reports?.createQueryBuilder !== 'function') {
+      return [];
+    }
+    const query = this.reports
+      .createQueryBuilder('sourceReport')
+      .where('sourceReport.teacher_id = :teacherId', {
+        teacherId: this.teacher.teacherId,
+      })
+      .andWhere('sourceReport.student_id IN (:...studentIds)', {
+        studentIds: candidateIds,
+      })
+      .andWhere(
+        'sourceReport.period_start >= :start AND sourceReport.period_end <= :end',
+        { start, end },
+      )
+      .andWhere('sourceReport.status IN (:...statuses)', {
+        statuses: ['draft', 'published'],
+      });
+
+    if (targetKind === 'term') {
+      query.andWhere(
+        "(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')) = 'stage' OR JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.scheduledTask')) IS NOT NULL)",
+      );
+    } else {
+      query
+        .andWhere('sourceReport.period_type = :periodType', {
+          periodType: 'week',
+        })
+        .andWhere(
+          "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sourceReport.snapshot, '$.reportKind')), '') != 'stage'",
+        );
+    }
+
+    query.orderBy('sourceReport.periodStart', 'ASC').take(40);
+    const rows = await query.getMany();
+    const keys = [
+      'learningReadiness',
+      'communicationCooperation',
+      'independenceRules',
+      'overallUnderstanding',
+    ] as const;
+    return rows.flatMap((row) => {
+      const contentGrowth = row.content?.growthAssessment;
+      const teacherGrowth = (
+        row.snapshot?.teacherInput as
+          | { growthAssessment?: Record<string, unknown> }
+          | undefined
+      )?.growthAssessment;
+      const contentSource =
+        contentGrowth && typeof contentGrowth === 'object'
+          ? (contentGrowth as Record<string, unknown>)
+          : undefined;
+      if (!contentSource && !teacherGrowth) return [];
+      const growthAssessment = Object.fromEntries(
+        keys.map((key) => {
+          const contentValue = contentSource?.[key];
+          const teacherValue = teacherGrowth?.[key];
+          const value =
+            typeof contentValue === 'string' && contentValue.trim()
+              ? contentValue
+              : teacherValue;
+          return [
+            key,
+            typeof value === 'string' ? value.trim().slice(0, 800) : '',
+          ];
+        }),
+      );
+      if (!Object.values(growthAssessment).some(Boolean)) return [];
+      return [
+        {
+          reportId: row.id,
+          start: formatShanghaiDate(row.periodStart),
+          end: formatShanghaiDate(new Date(row.periodEnd.getTime() - 1)),
+          growthAssessment,
+        },
+      ];
     });
   }
 
   /** 宠物积分 ID 兼容教师前缀和旧标识；即使用学号兜底，也必须限定同一教师与班级。 */
-  private async photoForStudent(student: PetStudentEntity) {
+  private async photoForStudent(
+    student: PetStudentEntity,
+    teacherId = this.teacher.teacherId,
+  ) {
     if (!student.classId) return null;
-    const teacherId = this.teacher.teacherId;
-    const id = student.id.startsWith(`${teacherId}:`)
-      ? student.id.slice(teacherId.length + 1)
-      : student.id;
     const scope = { teacherId, classroomId: student.classId };
-    const profile =
-      (await this.studentProfiles.findOne({ where: { ...scope, id } })) ??
-      (student.studentNo
-        ? await this.studentProfiles.findOne({
-            where: { ...scope, studentNo: student.studentNo },
-          })
-        : null);
+    // 旧积分记录的主键可能与学生资料不同，先用逻辑身份匹配，学号仅作为兜底。
+    const candidates = [
+      ...new Set(
+        [
+          student.logicalId,
+          ...this.getStudentCandidateIds(student, teacherId),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    for (const candidate of candidates) {
+      const id = candidate.startsWith(`${teacherId}:`)
+        ? candidate.slice(teacherId.length + 1)
+        : candidate;
+      const profile = await this.studentProfiles.findOne({
+        where: { ...scope, id },
+      });
+      if (profile) return profile.photo ?? null;
+    }
+    const profile = student.studentNo
+      ? await this.studentProfiles.findOne({
+          where: { ...scope, studentNo: student.studentNo },
+        })
+      : null;
     return profile?.photo ?? null;
+  }
+
+  /** Keep the selected profile's name and photo paired for stage reports. */
+  private async stageStudentProfile(
+    requestedId: string,
+    student: PetStudentEntity,
+  ) {
+    const teacherId = this.teacher.teacherId;
+    const ids = new Set(
+      [
+        requestedId,
+        requestedId.startsWith(`${teacherId}:`)
+          ? requestedId.slice(teacherId.length + 1)
+          : requestedId,
+        student.logicalId,
+      ].filter((id): id is string => Boolean(id)),
+    );
+    for (const id of ids) {
+      const profile = await this.studentProfiles.findOne({
+        where: { id, teacherId },
+      });
+      if (profile) return profile;
+    }
+    return null;
   }
 
   private async selectedCourses(
@@ -1825,6 +2856,7 @@ export class SemesterReportsService {
     subjectId: string,
     period: 'week' | 'month' | 'term',
     studentClassId?: string,
+    options: { skipSubjectValidation?: boolean } = {},
   ) {
     let selections: CourseSelection[] | undefined;
     if (input.reportVersion === 'v2' || input.courseSelections !== undefined) {
@@ -1847,15 +2879,34 @@ export class SemesterReportsService {
     }
     const subjects = selections
       ? await Promise.all(
-          selections.map((selection) =>
-            this.requireSubject(selection.subjectId),
-          ),
+          selections.map(async (selection) => {
+            if (options.skipSubjectValidation) {
+              const found =
+                typeof this.subjects?.findOne === 'function'
+                  ? await this.subjects.findOne({
+                      where: {
+                        id: selection.subjectId,
+                        teacherId: this.teacher?.teacherId,
+                      },
+                    })
+                  : null;
+              return (
+                found ?? {
+                  id: selection.subjectId,
+                  name: '学科',
+                  enabled: true,
+                  performanceConfig: null,
+                }
+              );
+            }
+            return this.requireSubject(selection.subjectId);
+          }),
         )
       : [];
     const found = await this.findUsableDocuments(
       termId,
       subjectId,
-      String(input.classId ?? '*'),
+      String((input.classId ?? '*') as string),
     );
     const available =
       // Draft additions target one student; global previews may include all classes.
@@ -1867,7 +2918,7 @@ export class SemesterReportsService {
     const groups: CourseSelection[] = selections ?? [
       {
         subjectId,
-        courseScope: String(input.courseScope ?? '')
+        courseScope: String((input.courseScope ?? '') as string)
           .trim()
           .slice(0, 1000),
       },
@@ -2005,16 +3056,25 @@ export class SemesterReportsService {
     });
   }
 
-  private async requireTerm(id: string) {
+  /** 新建流程只读启用学期；已有草稿可显式读取其停用学期。 */
+  private async requireTerm(id: string, allowDisabled = false) {
     const row = await this.terms.findOne({
-      where: { id, teacherId: this.teacher.teacherId },
+      where: {
+        id,
+        teacherId: this.teacher.teacherId,
+        ...(allowDisabled ? {} : { enabled: true }),
+      },
     });
     if (!row) throw new NotFoundException('学期不存在');
     return row;
   }
-  private async requireSubject(id: string) {
+  private async requireSubject(id: string, allowDisabled = false) {
     const row = await this.subjects.findOne({
-      where: { id, teacherId: this.teacher.teacherId, enabled: true },
+      where: {
+        id,
+        teacherId: this.teacher.teacherId,
+        ...(allowDisabled ? {} : { enabled: true }),
+      },
     });
     if (!row) throw new NotFoundException('学科不存在');
     return row;
@@ -2070,9 +3130,38 @@ export class SemesterReportsService {
     };
   }
   private reportDto(row: SemesterReportEntity) {
+    const isStage = row.snapshot?.reportKind === 'stage';
+    const stageCustomName =
+      (row.snapshot?.scheduledTask as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.snapshot as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.content as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      (row.content as { stageTitle?: string } | undefined)?.stageTitle ||
+      undefined;
+
+    let content = row.content
+      ? {
+          ...row.content,
+          ...reportVisualsForSnapshot(row.snapshot ?? {}),
+          learningContents:
+            row.content.learningContents ?? learningContentsForReport(row),
+          scoreDetails: scoreDetailsForSnapshot(row.snapshot ?? {}),
+          stageCustomName: stageCustomName || undefined,
+          stageTitle: stageCustomName || undefined,
+        }
+      : null;
+
+    if (content && stageCustomName) {
+      content = replaceStageTerm(content, stageCustomName);
+    }
+
     return {
       id: row.id,
       reportVersion: row.snapshot?.reportVersion ?? 'v1',
+      isStageReport: isStage,
+      stageCustomName,
       courseSelections: this.reportCourseSelections(row),
       subjectName: row.snapshot?.subjectName,
       termId: row.termId,
@@ -2080,20 +3169,18 @@ export class SemesterReportsService {
       studentId: row.studentId,
       studentName: row.studentName,
       className: row.className,
-      period: row.periodType,
+      period: isStage ? 'stage' : row.periodType,
       start: row.periodStart,
       end: row.periodEnd,
+      startDate: row.periodStart
+        ? formatShanghaiDate(row.periodStart)
+        : undefined,
+      endDate: row.periodEnd
+        ? formatShanghaiDate(new Date(row.periodEnd.getTime() - 1))
+        : undefined,
       scoreScope: row.scoreScope,
       status: row.status,
-      content: row.content
-        ? {
-            ...row.content,
-            ...reportVisualsForSnapshot(row.snapshot ?? {}),
-            learningContents:
-              row.content.learningContents ?? learningContentsForReport(row),
-            scoreDetails: scoreDetailsForSnapshot(row.snapshot ?? {}),
-          }
-        : null,
+      content,
       keywords: row.keywords,
       teacherObservation: row.teacherObservation,
       courseScope: row.courseScope,
@@ -2105,19 +3192,26 @@ export class SemesterReportsService {
     };
   }
   private async activeShare(reportId: string) {
-    const row = await this.shares.findOne({
-      where: {
-        reportId,
-        teacherId: this.teacher.teacherId,
-        revokedAt: IsNull(),
-      },
-    });
-    if (!row || (row.expiresAt && row.expiresAt < new Date())) return null;
-    return {
-      id: row.id,
-      url: this.shareUrl(this.decrypt(row.tokenCiphertext)),
-      expiresAt: row.expiresAt,
-    };
+    try {
+      const row = await this.shares.findOne({
+        where: {
+          reportId,
+          teacherId: this.teacher.teacherId,
+          revokedAt: IsNull(),
+        },
+      });
+      if (!row || (row.expiresAt && row.expiresAt < new Date())) return null;
+      const token = this.decrypt(row.tokenCiphertext);
+      if (!token) return null;
+      return {
+        id: row.id,
+        url: this.shareUrl(token),
+        expiresAt: row.expiresAt,
+      };
+    } catch {
+      // 密钥未配置或解密失败时降级返回 null，避免阻塞整个报告列表加载
+      return null;
+    }
   }
   private async log(
     action: string,
@@ -2183,12 +3277,7 @@ export class SemesterReportsService {
     return `${readReportPublicBaseUrl()}/r/${token}`;
   }
   private key() {
-    const configured = process.env.REPORT_SHARE_ENCRYPTION_KEY;
-    if (!configured || Buffer.from(configured, 'base64').length !== 32)
-      throw new ServiceUnavailableException(
-        'REPORT_SHARE_ENCRYPTION_KEY 必须配置为 32 字节 base64 密钥',
-      );
-    return Buffer.from(configured, 'base64');
+    return readReportShareKey();
   }
   private encrypt(text: string) {
     const iv = randomBytes(12);
@@ -2201,27 +3290,51 @@ export class SemesterReportsService {
       'base64',
     );
   }
-  private decrypt(value: string) {
-    const packed = Buffer.from(value, 'base64');
-    const decipher = createDecipheriv(
-      'aes-256-gcm',
-      this.key(),
-      packed.subarray(0, 12),
-    );
-    decipher.setAuthTag(packed.subarray(12, 28));
-    return Buffer.concat([
-      decipher.update(packed.subarray(28)),
-      decipher.final(),
-    ]).toString('utf8');
+  private decrypt(value: string): string | null {
+    // 密文结构为 12 字节 IV + 16 字节 GCM Auth Tag + 密文主体。
+    // 当密钥变更、数据损坏或 GCM 校验不通过时返回 null，由调用方平滑降级或重新生成。
+    try {
+      const packed = Buffer.from(value, 'base64');
+      if (packed.length < 28) return null;
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        this.key(),
+        packed.subarray(0, 12),
+      );
+      decipher.setAuthTag(packed.subarray(12, 28));
+      return Buffer.concat([
+        decipher.update(packed.subarray(28)),
+        decipher.final(),
+      ]).toString('utf8');
+    } catch {
+      return null;
+    }
   }
 }
 
 function shanghaiMidnight(value: string | Date) {
   const date =
-    value instanceof Date
-      ? value.toISOString().slice(0, 10)
-      : value.slice(0, 10);
+    value instanceof Date ? formatShanghaiDate(value) : value.slice(0, 10);
   return new Date(`${date}T00:00:00+08:00`);
+}
+
+function parseDatabaseDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  // MySQL DATETIME has no timezone. Interpret the driver's raw string in the
+  // application's Shanghai timezone so CI/server host timezone cannot shift it.
+  const mysqlDateTime =
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(value);
+  const parsed = new Date(
+    mysqlDateTime ? `${mysqlDateTime[1]}T${mysqlDateTime[2]}+08:00` : value,
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDatabaseTimestamp(value: Date | string | null | undefined) {
+  return parseDatabaseDate(value)?.getTime() ?? 0;
 }
 
 function parsePeriodBound(value: unknown, exclusiveEnd: boolean) {

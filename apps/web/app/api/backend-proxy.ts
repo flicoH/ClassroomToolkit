@@ -14,6 +14,7 @@
  *  Rights Reserved.
  * **********************************************************************************************
  */
+import { loginIpHeaders } from "./login-ip";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getBackendUrl } from "./backend-url";
@@ -50,7 +51,9 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
       method: request.method,
       headers: {
         "content-type": request.headers.get("content-type") || "application/json",
+        accept: request.headers.get("accept") || "*/*",
         authorization: `Bearer ${token}`,
+        ...loginIpHeaders(request),
         "x-analytics-event-id": request.headers.get("x-analytics-event-id") || "",
         "x-countdown-start": request.headers.get("x-countdown-start") || ""
       },
@@ -58,11 +61,28 @@ export async function proxyBackendRequest(request: Request, context: ProxyRouteC
     };
     if (isMultipart) init.duplex = "half";
     const response = await fetch(targetUrl, init);
+
+    const contentType = response.headers.get("content-type") || "";
+    // 支持 Server-Sent Events (SSE) 流式直传
+    if (response.ok && contentType.includes("text/event-stream")) {
+      return new Response(response.body, {
+        status: response.status,
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no"
+        }
+      });
+    }
+
     const data = await response.json().catch(() => ({ message: "接口响应异常" }));
     const result = NextResponse.json(data, { status: response.status });
-    if (response.status === 401) clearAuthCookie(result, request);
+    if (response.status === 401 || (response.status === 403 && data.code === "IP_LOGIN_BLOCKED"))
+      clearAuthCookie(result, request);
     return result;
-  } catch {
+  } catch (error) {
+    console.error(`[backend-proxy] Proxy request to ${targetUrl} failed:`, error);
     return NextResponse.json({ message: "后端服务连接失败" }, { status: 500 });
   }
 }

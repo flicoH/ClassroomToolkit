@@ -38,6 +38,8 @@ export class AnalyticsService {
     feature?: string,
     action?: string,
     eventId: string = randomUUID(),
+    loginIp?: string,
+    ipLocation?: string,
   ) {
     // 将身份和动作纳入唯一键：同一请求重试不重复计数，不同教师的事件互不覆盖。
     const key = createHash('sha256')
@@ -45,6 +47,8 @@ export class AnalyticsService {
       .digest('hex');
     try {
       await this.database.saveEvent({
+        loginIp: loginIp ?? null,
+        ipLocation: ipLocation ?? null,
         id: randomUUID(),
         teacherId,
         kind,

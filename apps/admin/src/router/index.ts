@@ -20,6 +20,11 @@ const router = createRouter({
       meta: { title: '登录分析' },
     },
     {
+      path: '/ip-restrictions',
+      component: () => import('../views/IpRestrictionsView.vue'),
+      meta: { title: 'IP 登录限制' },
+    },
+    {
       path: '/features',
       component: () => import('../views/FeaturesView.vue'),
       meta: { title: '功能分析' },
@@ -48,6 +53,16 @@ const router = createRouter({
       path: '/feedback',
       component: () => import('../views/FeedbackView.vue'),
       meta: { title: '意见反馈' },
+    },
+    {
+      path: '/report-ai-settings',
+      component: () => import('../views/ReportAiSettingsView.vue'),
+      meta: { title: 'AI 报告配置' },
+    },
+    {
+      path: '/report-token-usage',
+      component: () => import('../views/ReportTokenUsageView.vue'),
+      meta: { title: 'Token 追踪' },
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

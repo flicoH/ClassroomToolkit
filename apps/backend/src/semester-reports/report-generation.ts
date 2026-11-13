@@ -10,9 +10,69 @@ import {
 } from './report-input';
 
 export type ReportGenerationMode = 'template' | 'ai';
+
+export function formatShanghaiDate(value: Date | string): string {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const beijingTime = new Date(d.getTime() + 8 * 3600 * 1000);
+  return beijingTime.toISOString().slice(0, 10);
+}
+
+/** 替换报告结构中所有“本阶段”文本为用户自定义称谓（如：10月份、期中阶段） */
+export function replaceStageTerm<T>(obj: T, stageCustomName?: string): T {
+  if (
+    !stageCustomName ||
+    typeof stageCustomName !== 'string' ||
+    stageCustomName.trim() === '' ||
+    stageCustomName.trim() === '本阶段'
+  ) {
+    return obj;
+  }
+  const target = stageCustomName.trim();
+  if (typeof obj === 'string') {
+    let text: string = obj;
+    text = text.replaceAll('本阶段', target);
+    text = text.replaceAll('所选阶段', target);
+    text = text.replaceAll('该阶段', target);
+    text = text.replaceAll('此阶段', target);
+    text = text.replaceAll('阶段内', `${target}内`);
+    text = text.replaceAll('阶段学习', `${target}学习`);
+    text = text.replaceAll('阶段成长', `${target}成长`);
+    text = text.replaceAll('阶段汇总', `${target}汇总`);
+    text = text.replaceAll('阶段总结', `${target}总结`);
+    text = text.replaceAll(
+      '阶段报告',
+      target.endsWith('报告') ? target : `${target}报告`,
+    );
+    return text as unknown as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => replaceStageTerm(item, target)) as unknown as T;
+  }
+  if (obj && typeof obj === 'object') {
+    const res: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      res[key] = replaceStageTerm(val, target);
+    }
+    return res as unknown as T;
+  }
+  return obj;
+}
 type Entry = { text: string; sourceRefs: string[] };
 type Snapshot = {
   reportVersion?: string;
+  reportKind?: string;
+  stageCustomName?: string;
+  scheduledTask?: {
+    id: string;
+    name: string;
+    classId?: string;
+    executeAt: string;
+    stageCustomName?: string;
+  };
   studentPhoto?: string | null;
   pet?: {
     petId: string | null;
@@ -57,6 +117,11 @@ type Snapshot = {
   teacherReviewedAt?: string;
   reportDetails?: ReportDetails;
 };
+
+/** scheduledTask is authoritative for queue compatibility with pre-reportKind rows. */
+function isStageSnapshot(snapshot: Snapshot) {
+  return snapshot.reportKind === 'stage' || Boolean(snapshot.scheduledTask);
+}
 
 /** 两个固定位置保持照片及说明对应关系；旧单图只占第一位置，明确的双空位置不回退到旧图。 */
 export function classroomPhotosForSnapshot(snapshot: {
@@ -214,7 +279,7 @@ export function learningContentsForReport(report: SemesterReportEntity) {
     .map((item) => ({
       ...item,
       mastery:
-        snapshot.teacherInput?.learningMastery[item.id] ??
+        snapshot.teacherInput?.learningMastery?.[item.id] ??
         ('unassessed' as const),
     }));
 }
@@ -229,7 +294,38 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
   const teacherEntry = (text: string) => [
     { text, sourceRefs: ['teacher-input'] },
   ];
-  return {
+  const isStage = isStageSnapshot(snapshot);
+  const stageCustomName =
+    (snapshot.scheduledTask as { stageCustomName?: string } | undefined)
+      ?.stageCustomName ||
+    snapshot.stageCustomName ||
+    '';
+  const generatedGrowth = (content as Record<string, unknown>)
+    .growthAssessment as Record<string, unknown> | undefined;
+  const teacherGrowth = feedback?.growthAssessment;
+  const growthAssessment =
+    generatedGrowth || teacherGrowth
+      ? Object.fromEntries(
+          [
+            'learningReadiness',
+            'communicationCooperation',
+            'independenceRules',
+            'overallUnderstanding',
+          ].map((key) => {
+            const teacherValue =
+              teacherGrowth?.[key as keyof typeof teacherGrowth];
+            return [
+              key,
+              teacherValue?.trim()
+                ? teacherValue
+                : typeof generatedGrowth?.[key] === 'string'
+                  ? generatedGrowth[key]
+                  : '',
+            ];
+          }),
+        )
+      : undefined;
+  const rawResult = {
     ...content,
     ...reportVisualsForSnapshot(snapshot),
     ...(feedback?.teacherMessage ? { summary: feedback.teacherMessage } : {}),
@@ -239,10 +335,26 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
     ...(snapshot.reportVersion === 'v2'
       ? {
           // Optional teacher sections stay empty unless explicitly filled, including AI mode.
-          summary: feedback?.teacherMessage?.trim() ?? '',
-          areasToImprove: [],
+          summary:
+            feedback?.teacherMessage?.trim() ||
+            (isStage
+              ? typeof (content as Record<string, unknown>).summary ===
+                  'string' && (content as Record<string, unknown>).summary
+                ? ((content as Record<string, unknown>).summary as string)
+                : `${report.studentName}阶段成长报告草稿，由系统按计划自动汇总。`
+              : ''),
+          areasToImprove: feedback?.nextFocus?.trim()
+            ? teacherEntry(feedback.nextFocus)
+            : isStage &&
+                Array.isArray(
+                  (content as Record<string, unknown>).areasToImprove,
+                )
+              ? (content as Record<string, unknown>).areasToImprove
+              : [],
           homeSuggestions: [],
-          growthAssessment: feedback?.growthAssessment,
+          // 没有教师输入和 AI 生成的成长评价时保持为空，不伪造默认内容
+          // 教师仅覆盖明确填写的维度，其余维度保留 AI 基于本阶段证据生成的内容。
+          growthAssessment,
         }
       : {}),
     ...(feedback?.nextFocus?.trim()
@@ -261,20 +373,36 @@ export function addLearningReportSections<T extends Record<string, unknown>>(
         sourceRefs: ['teacher-input'],
       }),
     ),
+    ...(stageCustomName
+      ? { stageTitle: stageCustomName, stageCustomName }
+      : {}),
   };
+  return replaceStageTerm(rawResult, stageCustomName);
 }
 
 export function resolveReportGenerationMode(
   requested?: unknown,
+  hasAiConfig?: boolean,
 ): ReportGenerationMode {
   const mode = requested ?? process.env.REPORT_GENERATION_MODE ?? 'auto';
   if (typeof mode !== 'string' || !['auto', 'template', 'ai'].includes(mode))
     throw new Error('报告生成方式必须是 auto、template 或 ai');
   if (mode === 'template') return 'template';
+
+  // 优先依据外部传入的有效配置（优先后端数据库配置，后降级.env）
+  if (hasAiConfig !== undefined) {
+    if (hasAiConfig) return 'ai';
+    if (mode === 'auto') return 'template';
+    throw new Error(
+      'AI 生成需要配置 REPORT_AI_BASE_URL、REPORT_AI_API_KEY、REPORT_AI_MODEL；也可选择本地模板生成',
+    );
+  }
+
+  // 未显式传入 hasAiConfig 时检查 process.env（包含部分配置时防静默吞掉的校验）
   const settings = [
-    process.env.REPORT_AI_BASE_URL,
-    process.env.REPORT_AI_API_KEY,
-    process.env.REPORT_AI_MODEL,
+    process.env.REPORT_AI_BASE_URL || process.env.KIMI_BASE_URL,
+    process.env.REPORT_AI_API_KEY || process.env.KIMI_API_KEY,
+    process.env.REPORT_AI_MODEL || process.env.KIMI_MODEL,
   ];
   if (settings.every((value) => value?.trim())) return 'ai';
   if (mode === 'auto' && settings.every((value) => !value?.trim()))
@@ -309,7 +437,8 @@ export function generateTemplateReport(report: SemesterReportEntity) {
           selection.manualContent !== undefined &&
           !selection.manualContent.trim(),
       )
-    )
+    ) &&
+    !isStageSnapshot(snapshot)
   )
     throw new Error('报告缺少可追溯的课程页码依据，请重新选择课程资料生成');
   const scores = snapshot.scoreSummary ?? {};
@@ -402,18 +531,37 @@ export function generateTemplateReport(report: SemesterReportEntity) {
       text: `综合课堂评价中，“${group.label}”有 ${group.count} 次扣分记录，合计 ${Math.abs(group.delta)} 分。建议核对发生情境，并和孩子共同确定一项改进目标。`,
       sourceRefs: group.references,
     }));
-  const homeSuggestions: Entry[] = [
-    {
-      text: `可围绕老师确认的“${scope.slice(0, 150)}”，按老师安排选择课程活动进行复习，并将实际完成情况反馈给老师。`,
-      sourceRefs: courseReferences.slice(0, 3),
-    },
-  ];
-  if (records.length)
+  if (isStageSnapshot(snapshot)) {
+    const startStr = formatShanghaiDate(report.periodStart);
+    const endStr = formatShanghaiDate(new Date(report.periodEnd.getTime() - 1));
+    const stageName =
+      (snapshot.scheduledTask as { stageCustomName?: string } | undefined)
+        ?.stageCustomName ||
+      snapshot.stageCustomName ||
+      '';
+    summary = stageName
+      ? `${student}在${stageName}（${startStr} 至 ${endStr}）的成长总结。系统已整合该生在${stageName}的日常课堂常规与成长记录。`
+      : `${student}在${snapshot.scheduledTask?.name || '阶段成长汇总'}（${startStr} 至 ${endStr}）的成长总结。系统已整合该生在所选阶段的日常课堂常规与成长记录。`;
+    // 阶段时间内没有评价数据时保持为空，不伪造内容
+  }
+  const isV2OrStage =
+    snapshot.reportVersion === 'v2' || isStageSnapshot(snapshot);
+  const homeSuggestions: Entry[] = isV2OrStage
+    ? []
+    : courseReferences.length
+      ? [
+          {
+            text: `可围绕老师确认的“${scope.slice(0, 150)}”，按老师安排选择课程活动进行复习，并将实际完成情况反馈给老师。`,
+            sourceRefs: courseReferences.slice(0, 3),
+          },
+        ]
+      : [];
+  if (!isV2OrStage && records.length)
     homeSuggestions.push({
       text: '和孩子一起回顾本期综合课堂评价，肯定有记录支持的努力，并选一项课堂习惯作为接下来的关注目标。',
       sourceRefs: records.slice(0, 3).map((record) => `score:${record.id}`),
     });
-  if (hasObservation)
+  if (!isV2OrStage && hasObservation)
     homeSuggestions.push({
       text: '可围绕老师记录的观察与孩子交流，并将家庭练习中的实际情况反馈给老师。',
       sourceRefs: ['teacher-observation'],

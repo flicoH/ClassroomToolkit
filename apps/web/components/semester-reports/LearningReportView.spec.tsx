@@ -18,6 +18,60 @@ const report: LearningReportData = {
   }
 };
 it.each([false, true])(
+  "shows subject attendance and course content with a full-width performance section (image: %s)",
+  forImage => {
+    const rendered = document.createElement("div");
+    rendered.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            attendance: "late",
+            courseContent: "第一课：颜色词汇\n第二课：情景对话",
+            reportSubjects: [{ subjectId: "english", name: "英语" }],
+            classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: [] }]
+          }
+        }}
+      />
+    );
+    expect(rendered.textContent).toContain("课程出勤情况");
+    expect(rendered.textContent).toContain("迟到");
+    expect(rendered.textContent).toContain("第一课：颜色词汇\n第二课：情景对话");
+    const performance = rendered.querySelector('[aria-label="分学科学习表现"]')!;
+    expect(performance.classList.contains("grid-cols-1")).toBe(true);
+    expect(performance.classList.contains("sm:grid-cols-2")).toBe(false);
+  }
+);
+
+it.each([false, true])("shows multiple lesson attendances when provided (image: %s)", forImage => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          attendances: ["present", "late"],
+          courseContent: "第 1 节课：字母认读\n第 2 节课：拼读练习",
+          reportSubjects: [{ subjectId: "english", name: "英语" }],
+          classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: [] }]
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("课程出勤情况");
+  expect(rendered.textContent).toContain("第 1 节课：");
+  expect(rendered.textContent).toContain("出勤");
+  expect(rendered.textContent).toContain("第 2 节课：");
+  expect(rendered.textContent).toContain("迟到");
+});
+
+it.each([false, true])(
   "places v2 classroom photos with captions below the header and before performance (image: %s)",
   forImage => {
     const rendered = document.createElement("div");
@@ -30,6 +84,7 @@ it.each([false, true])(
             ...report.content,
             reportVersion: "v2",
             studentPhoto: "portrait",
+            growthAssessment: { learningReadiness: "课前准备充分" },
             classroomPhotos: ["first-photo", "second-photo"],
             classroomPhotoCaptions: ["课堂活动", "合作练习"]
           }
@@ -63,6 +118,7 @@ it("shows saved v2 subject and legacy evaluations without classroom photos in pr
               ...photos,
               reportVersion: "v2",
               studentPhoto: "portrait",
+              growthAssessment: { learningReadiness: "课前准备充分" },
               reportSubjects: [{ subjectId: "english", name: "英语" }],
               classroomPerformance: [
                 { subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] },
@@ -132,8 +188,13 @@ it.each(["english", undefined])("shows a saved evaluation without photos or a po
     />
   );
   expect(rendered.textContent).toContain("保留已填写的评价");
-  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).toContain("老师暂未填写");
-  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')?.textContent).not.toContain("保留已填写的评价");
+  // 选了数学但未评价课堂表现：数学不做显示
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')).toBeNull();
+  if (subjectId === "english") {
+    expect(rendered.querySelector('[aria-label="英语的课堂表现"]')).not.toBeNull();
+  } else {
+    expect(rendered.textContent).toContain("未分学科的原课堂表现");
+  }
 });
 it.each([
   { classroomPhoto: "data:image/png;base64,legacy" },
@@ -170,6 +231,7 @@ it("places the v2 student portrait in the header and classroom performance befor
       reportVersion: "v2" as const,
       classroomPhoto: "data:image/png;base64,classroom",
       studentPhoto: "data:image/jpeg;base64,portrait",
+      growthAssessment: { learningReadiness: "课前准备充分" },
       reportSubjects: [{ subjectId: "english", name: "英语" }],
       classroomPerformance: [{ subjectId: "english", text: "课堂参与 · 主动参与", sourceRefs: ["teacher-input"] }]
     };
@@ -327,7 +389,7 @@ describe("report pet presentation", () => {
   });
 });
 
-it("shows separate v2 classroom performance for every subject without copying legacy ratings", () => {
+it("shows separate v2 classroom performance for subjects that have ratings, hiding unrated subjects", () => {
   const content = {
     ...report.content,
     reportVersion: "v2" as const,
@@ -343,11 +405,18 @@ it("shows separate v2 classroom performance for every subject without copying le
   };
   const rendered = document.createElement("div");
   rendered.innerHTML = renderToStaticMarkup(<LearningReportView report={{ ...report, content }} />);
-  const heading = rendered.querySelector('[aria-label="数学的课堂表现"] h3');
-  expect(heading).toBeDefined();
-  expect(heading!.parentElement!.textContent).toContain("老师暂未填写");
-  expect(heading!.parentElement!.textContent).not.toContain("主动参与");
-  expect(heading!.parentElement!.textContent).not.toContain("基本完成");
+  // 选了英语且有表现：正常显示英语课堂表现
+  const englishHeading = rendered.querySelector('[aria-label="英语的课堂表现"] h3');
+  expect(englishHeading).toBeDefined();
+  expect(englishHeading!.textContent).toBe("英语");
+  expect(englishHeading!.parentElement!.textContent).toContain("主动参与");
+
+  // 选了数学但未选择对应的课堂表现：数学不做显示
+  const mathSection = rendered.querySelector('[aria-label="数学的课堂表现"]');
+  expect(mathSection).toBeNull();
+  expect(rendered.querySelector('[aria-label="分学科学习表现"]')?.textContent).not.toContain("数学");
+  expect(rendered.querySelector('[aria-label="分学科学习表现"]')?.textContent).not.toContain("老师暂未填写");
+
   expect(rendered.textContent).toContain("未分学科的原课堂表现");
 });
 
@@ -438,6 +507,8 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
           ...report.content,
           reportVersion: "v2",
           classroomPhoto: "data:image/png;base64,classroom",
+          reportSubjects: [{ subjectId: "science", name: "科学" }],
+          classroomPerformance: [{ subjectId: "science", text: "课堂表现 · 认真专注", sourceRefs: [] }],
           growthAssessment: {
             learningReadiness: observation,
             communicationCooperation: "",
@@ -453,9 +524,10 @@ it.each([false, true])("uses the same responsive columns for growth and classroo
   expect(growth.className).toBe(classroom.className);
   expect(growth.classList.contains("grid")).toBe(true);
   expect(growth.classList.contains("sm:grid-cols-2")).toBe(true);
-  expect(growth.children).toHaveLength(4);
+  expect(growth.children).toHaveLength(3);
   expect(growth.textContent).toContain(observation);
-  expect(growth.textContent).toContain("老师暂未填写。");
+  expect(growth.textContent).not.toContain("老师暂未填写。");
+  expect(growth.textContent).not.toContain("表达沟通与同伴合作");
   for (const card of growth.children) expect(card.classList.contains("min-w-0")).toBe(true);
 });
 
@@ -709,4 +781,428 @@ it.each([false, true])("omits the legacy manual suffix from original report head
   expect(rendered.textContent).not.toContain("· 教师填写");
   expect(rendered.textContent).toContain("科学");
   expect(rendered.textContent).toContain("英语 · Unit1");
+});
+
+it("does not display subjects that have no selected classroom performance even when selected in report", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          reportSubjects: [
+            { subjectId: "chinese", name: "语文" },
+            { subjectId: "math", name: "数学" },
+            { subjectId: "english", name: "英语" }
+          ],
+          classroomPerformance: [
+            { subjectId: "chinese", text: "课堂参与 · 积极发言", sourceRefs: ["teacher-review"] },
+            { subjectId: "math", text: "   ", sourceRefs: ["teacher-review"] }
+            // 英语完全未评价
+          ]
+        }
+      }}
+    />
+  );
+  // 选了语文且有评价：展示
+  expect(rendered.querySelector('[aria-label="语文的课堂表现"]')).not.toBeNull();
+  expect(rendered.textContent).toContain("积极发言");
+
+  // 选了数学与英语，但数学为空白、英语无条目：均不做显示
+  expect(rendered.querySelector('[aria-label="数学的课堂表现"]')).toBeNull();
+  expect(rendered.querySelector('[aria-label="英语的课堂表现"]')).toBeNull();
+  expect(rendered.textContent).not.toContain("老师暂未填写具体课堂表现");
+});
+
+it("renders custom stage title replacing '本阶段' in header and sections for stage reports", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        studentName: "吴杭潼",
+        className: "红龙班",
+        subject: "综合",
+        term: "2026秋季",
+        period: "stage",
+        stageCustomName: "10月份",
+        content: {
+          reportVersion: "v2",
+          stageTitle: "10月份",
+          stageCustomName: "10月份",
+          summary: "10月份学习认真，进步明显。",
+          courseOverview: "",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          growthAssessment: {
+            learningReadiness: "10月份课前准备充分，专注听讲。",
+            communicationCooperation: "积极交流。",
+            independenceRules: "遵守常规。",
+            overallUnderstanding: "习惯良好。"
+          }
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("吴杭潼 · 10月份成长报告");
+  expect(rendered.textContent).toContain("10月份学习习惯与能力成长总结");
+  expect(rendered.textContent).toContain("10月份最值肯定");
+  expect(rendered.textContent).not.toContain("本阶段学习习惯与能力成长总结");
+  expect(rendered.textContent).not.toContain("本阶段最值肯定");
+});
+
+it("renders custom stage title even when period is 'term' if isStageReport and stageCustomName are present", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        studentName: "吴杭潼",
+        className: "红龙班",
+        subject: "综合",
+        term: "2026秋季",
+        period: "term",
+        isStageReport: true,
+        stageCustomName: "10月份",
+        content: {
+          reportVersion: "v2",
+          stageTitle: "10月份",
+          stageCustomName: "10月份",
+          summary: "10月份学习认真，进步明显。",
+          courseOverview: "",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          growthAssessment: {
+            learningReadiness: "10月份课前准备充分，专注听讲。",
+            communicationCooperation: "积极交流。",
+            independenceRules: "遵守常规。",
+            overallUnderstanding: "习惯良好。"
+          }
+        }
+      }}
+    />
+  );
+  expect(rendered.textContent).toContain("吴杭潼 · 10月份成长报告");
+  expect(rendered.textContent).toContain("10月份学习习惯与能力成长总结");
+  expect(rendered.textContent).toContain("10月份最值肯定");
+  expect(rendered.textContent).not.toContain("本阶段学习习惯与能力成长总结");
+  expect(rendered.textContent).not.toContain("本阶段最值肯定");
+});
+
+it("groups course contents with their own attendance and omits empty growth assessment", () => {
+  const element = document.createElement("div");
+  element.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          courseContent: "第 1 节课 · 核心词汇：red\n第 2 节课 · 核心词汇：cat",
+          attendances: ["present", "late"],
+          // 四维完整但均为空，验证模块隐藏而非依赖缺失字段。
+          growthAssessment: {
+            learningReadiness: "  ",
+            communicationCooperation: "",
+            independenceRules: "",
+            overallUnderstanding: ""
+          }
+        }
+      }}
+    />
+  );
+  const lessons = element.querySelectorAll('[aria-label^="第 "][aria-label$=" 节课内容与出勤"]');
+  expect(lessons).toHaveLength(2);
+  expect(lessons[0]?.textContent).toContain("red");
+  expect(lessons[0]?.textContent).toContain("出勤");
+  expect(lessons[0]?.textContent).not.toContain("cat");
+  expect(lessons[1]?.textContent).toContain("cat");
+  expect(lessons[1]?.textContent).toContain("迟到");
+  expect(element.textContent).not.toContain("学习习惯与能力成长总结");
+});
+
+it.each([false, true])("shows legacy attendance on every course card (image: %s)", forImage => {
+  const element = document.createElement("div");
+  element.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      forImage={forImage}
+      report={{
+        ...report,
+        content: {
+          ...report.content,
+          reportVersion: "v2",
+          courseContent: "第 1 节课 · 核心词汇：red\n第 2 节课 · 核心词汇：cat",
+          attendance: "late",
+          attendances: ["late"]
+        }
+      }}
+    />
+  );
+  const lessons = element.querySelectorAll('[aria-label$="节课内容与出勤"]');
+  expect(lessons).toHaveLength(2);
+  for (const lesson of lessons) expect(lesson.textContent).toContain("课程出勤情况 · 迟到");
+});
+
+it.each([false, true])(
+  "places institution name in title and removes top header label for subject reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          studentName: "车奕扬",
+          period: "week",
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            reportDetails: {
+              institutionName: "WK课堂成长记录",
+              courseTheme: "探索",
+              lessonNumber: null,
+              lessonDate: null
+            }
+          }
+        }}
+      />
+    );
+    // Red box position (the top <p> tag with institution name) is removed
+    expect(element.querySelector("header p.font-semibold")).toBeNull();
+    // Yellow box position in h1 receives the institution name
+    const h1 = element.querySelector("h1");
+    expect(h1?.textContent?.replace(/\s+/g, " ").trim()).toBe("车奕扬 · WK课堂成长记录");
+    expect(element.textContent).not.toContain("每周成长报告");
+  }
+);
+
+it.each([false, true])(
+  "retains top header label and period name in title for normal semester reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          studentName: "车奕扬",
+          period: "week",
+          content: {
+            ...report.content,
+            reportDetails: {
+              institutionName: "WK课堂成长记录",
+              courseTheme: "探索",
+              lessonNumber: null,
+              lessonDate: null
+            }
+          }
+        }}
+      />
+    );
+    // Top header label exists
+    const topLabel = element.querySelector("header p.font-semibold");
+    expect(topLabel?.textContent).toBe("WK课堂成长记录");
+    // h1 title contains period name
+    const h1 = element.querySelector("h1");
+    expect(h1?.textContent?.replace(/\s+/g, " ").trim()).toBe("车奕扬 · 每周成长报告");
+  }
+);
+
+it.each([false, true])(
+  "renders courseScope and nextWeekContent when filled, and omits them when empty (image: %s)",
+  forImage => {
+    const elementWithBoth = document.createElement("div");
+    elementWithBoth.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            courseContent: "第 1 节课：认识颜色",
+            courseScope: "Unit 1 Colours 词汇复习",
+            nextWeekContent: "下周进入 Unit 2 数字表达"
+          }
+        }}
+      />
+    );
+    const scopeEl = elementWithBoth.querySelector('[aria-label="授课范围备注"]');
+    expect(scopeEl).not.toBeNull();
+    expect(scopeEl?.textContent).toContain("Unit 1 Colours 词汇复习");
+
+    const nextEl = elementWithBoth.querySelector('[aria-label="下周课堂预习内容"]');
+    expect(nextEl).not.toBeNull();
+    expect(nextEl?.textContent).toContain("下周进入 Unit 2 数字表达");
+
+    const elementEmpty = document.createElement("div");
+    elementEmpty.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            courseContent: "第 1 节课：认识颜色",
+            courseScope: "",
+            nextWeekContent: "   "
+          }
+        }}
+      />
+    );
+    expect(elementEmpty.querySelector('[aria-label="授课范围备注"]')).toBeNull();
+    expect(elementEmpty.querySelector('[aria-label="下周课堂预习内容"]')).toBeNull();
+  }
+);
+
+it.each([false, true])(
+  "renders '回家可以跟父母一起练' and omits growth assessment for subject reports (image: %s)",
+  forImage => {
+    const element = document.createElement("div");
+    element.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          isSubjectReport: true,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            areasToImprove: [{ text: "回家练习对话", sourceRefs: [] }],
+            growthAssessment: {
+              learningReadiness: "上课很专注",
+              communicationCooperation: "乐于分享",
+              independenceRules: "遵守规则",
+              overallUnderstanding: "进步明显"
+            }
+          }
+        }}
+      />
+    );
+    expect(element.textContent).toContain("回家可以跟父母一起练");
+    expect(element.textContent).not.toContain("下一步重点");
+    expect(element.textContent).toContain("回家练习对话");
+    // Growth assessment is omitted for subject reports
+    expect(element.textContent).not.toContain("学习习惯与能力成长总结");
+    expect(element.textContent).not.toContain("上课很专注");
+  }
+);
+
+it.each([false, true])(
+  "omits growth assessment in semester report when empty, whitespace-only, or undefined (image: %s)",
+  forImage => {
+    // 1. undefined
+    const renderedUndefined = document.createElement("div");
+    renderedUndefined.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2"
+          }
+        }}
+      />
+    );
+    expect(renderedUndefined.textContent).not.toContain("学习习惯与能力成长总结");
+
+    // 2. all whitespace / empty
+    const renderedEmpty = document.createElement("div");
+    renderedEmpty.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            growthAssessment: {
+              learningReadiness: "   ",
+              communicationCooperation: "",
+              independenceRules: "\n\t",
+              overallUnderstanding: ""
+            }
+          }
+        }}
+      />
+    );
+    expect(renderedEmpty.textContent).not.toContain("学习习惯与能力成长总结");
+
+    // 3. at least one non-whitespace dimension renders the section
+    const renderedFilled = document.createElement("div");
+    renderedFilled.innerHTML = renderToStaticMarkup(
+      <LearningReportView
+        forImage={forImage}
+        report={{
+          ...report,
+          content: {
+            ...report.content,
+            reportVersion: "v2",
+            growthAssessment: {
+              learningReadiness: "课前准备充分",
+              communicationCooperation: "",
+              independenceRules: "",
+              overallUnderstanding: ""
+            }
+          }
+        }}
+      />
+    );
+    expect(renderedFilled.textContent).toContain("本学期学习习惯与能力成长总结");
+    expect(renderedFilled.textContent).toContain("学习准备与课堂能力");
+    expect(renderedFilled.textContent).toContain("课前准备充分");
+    expect(renderedFilled.textContent).not.toContain("表达沟通与同伴合作");
+    expect(renderedFilled.textContent).not.toContain("生活自理与规则意识");
+    expect(renderedFilled.textContent).not.toContain("综合画像理解");
+    expect(renderedFilled.textContent).not.toContain("老师暂未填写。");
+    const growthCards = renderedFilled.querySelectorAll('[aria-label="学习习惯与能力成长总结"] > div');
+    expect(growthCards).toHaveLength(1);
+  }
+);
+
+it.each([false, true])("shows course cards only when teaching content is filled (image: %s)", forImage => {
+  for (const period of ["week", "month", "term", "stage"]) {
+    for (const isSubjectReport of [undefined, false, true]) {
+      for (const courseContent of [undefined, "", " \n ", "第 1 节课：认识颜色"]) {
+        const html = renderToStaticMarkup(
+          <LearningReportView
+            forImage={forImage}
+            report={{
+              ...report,
+              period,
+              isSubjectReport,
+              courseScope: "旧课程范围",
+              content: {
+                ...report.content,
+                courseContent,
+                courseScope: "授课范围",
+                nextWeekContent: "后续教学内容",
+                attendance: "late",
+                attendances: ["present", "late"]
+              }
+            }}
+          />
+        );
+        if (courseContent?.trim()) {
+          expect(html).toContain("课程内容");
+          expect(html).toContain("认识颜色");
+          expect(html).toContain("授课范围");
+          expect(html).toContain("后续教学内容");
+          expect(html).toContain("课程出勤情况");
+        } else {
+          expect(html).not.toContain("课程内容");
+          expect(html).not.toContain("授课范围");
+          expect(html).not.toContain("后续教学内容");
+          expect(html).not.toContain("课程出勤情况");
+        }
+        expect(html).toContain("继续加油");
+      }
+    }
+  }
 });

@@ -1,19 +1,248 @@
+import { normalizeIp } from '../common/login-ip';
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { AdminDatabase } from './admin.database';
-import { AdminQueryDto, ResetTeacherPasswordDto } from './admin.dto';
+import {
+  AdminQueryDto,
+  ResetTeacherPasswordDto,
+  ToggleTeacherAiPermissionDto,
+  ToggleTeacherLockDto,
+  UpdateReportAiPermissionDto,
+} from './admin.dto';
 import type { AdminMetadata, AdminDirectory } from './admin.types';
 import { dateRange, pageQuery, shanghaiDay } from './analytics/range';
 import { FEATURES } from '../analytics/features';
+import {
+  cleanApiKey,
+  decryptReportAiKey,
+  encryptReportAiKey,
+  envReportAiConfig,
+  readReportAiConfig,
+  resolveReportAiBalanceUrl,
+} from '../semester-reports/report-ai-config';
 /** 管理端跨教师查询与账号管理；不复用绑定 TeacherContext 的教师业务查询层。 */
 @Injectable()
 export class AdminService {
   /** 注入管理持久层，使业务校验与统计结果组装独立于具体数据库查询。 */
   constructor(private readonly database: AdminDatabase) {}
+  blockedIps() {
+    return this.database.listBlockedIps();
+  }
+  updateBlockedIp(body: { ip?: unknown }, remove = false) {
+    const ip = normalizeIp(body?.ip);
+    if (!ip) throw new BadRequestException('请输入有效的 IPv4 或 IPv6 地址');
+    return this.database.updateBlockedIp(ip, remove);
+  }
+  async reportAiSettings() {
+    const repository = this.database.reportAiSettings();
+    const stored = await repository.findOne({ where: { id: 'default' } });
+    let dbConfig: { baseUrl: string; model: string; apiKey: string } | null =
+      null;
+    if (stored) {
+      try {
+        const apiKey = decryptReportAiKey(stored.apiKeyCiphertext).trim();
+        const baseUrl = stored.baseUrl.trim().replace(/\/$/, '');
+        const model = stored.model.trim();
+        if (apiKey && baseUrl && model) {
+          dbConfig = { baseUrl, model, apiKey };
+        }
+      } catch {
+        // 优先后端数据库配置；解密失败时安全回退到 .env
+      }
+    }
+    const envConfig = envReportAiConfig();
+    const effective = dbConfig
+      ? { ...dbConfig, source: 'database' as const }
+      : envConfig;
+    return {
+      baseUrl: effective?.baseUrl ?? '',
+      model: effective?.model ?? '',
+      apiKeyMasked: effective?.apiKey
+        ? `${effective.apiKey.slice(0, 4)}••••${effective.apiKey.slice(-4)}`
+        : '',
+      configured: Boolean(effective),
+      source: effective?.source ?? 'none',
+      updatedAt: stored?.updatedAt ?? null,
+    };
+  }
+  async saveReportAiSettings(body: Record<string, unknown>) {
+    const repository = this.database.reportAiSettings();
+    const existing = await repository.findOne({ where: { id: 'default' } });
+    const baseUrl = String(body.baseUrl ?? '')
+      .trim()
+      .replace(/\/$/, '');
+    const model = String(body.model ?? '').trim();
+    const submittedKey = cleanApiKey(body.apiKey);
+    const fallbackKey = existing
+      ? cleanApiKey(decryptReportAiKey(existing.apiKeyCiphertext))
+      : envReportAiConfig()?.apiKey;
+    const apiKey = submittedKey || fallbackKey || '';
+    if (!baseUrl || !model || !apiKey)
+      throw new BadRequestException('服务地址、API Key 和模型均不能为空');
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch {
+      throw new BadRequestException('AI 服务地址格式无效');
+    }
+    if (
+      !['https:', 'http:'].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password
+    )
+      throw new BadRequestException('AI 服务地址必须是无凭据的 HTTP(S) 地址');
+    await repository.save(
+      repository.create({
+        id: 'default',
+        baseUrl,
+        model: model.slice(0, 100),
+        apiKeyCiphertext: encryptReportAiKey(apiKey),
+      }),
+    );
+    return this.reportAiSettings();
+  }
+  async deleteReportAiSettings() {
+    await this.database.reportAiSettings().delete({ id: 'default' });
+    return this.reportAiSettings();
+  }
+  async reportAiBalance() {
+    const repository = this.database.reportAiSettings();
+    const config = await readReportAiConfig(repository.manager);
+    if (!config) throw new BadRequestException('尚未配置 AI 服务');
+    const url = resolveReportAiBalanceUrl(config.baseUrl);
+    const maskedKey = `${config.apiKey.slice(0, 4)}••••${config.apiKey.slice(-4)}`;
+    console.log(
+      `[AdminService] 查询 AI Token 余额: URL=${url}, Source=${config.source}, Key=${maskedKey}`,
+    );
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      throw new ServiceUnavailableException('余额接口连接失败或超时');
+    }
+    const data = (await response.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    if (!response.ok) {
+      console.error(
+        `[AdminService] 余额接口响应错误: HTTP=${response.status}, URL=${url}, Body=${JSON.stringify(data)}`,
+      );
+      const upstreamMessage =
+        (typeof data?.error === 'object' &&
+        data.error &&
+        'message' in data.error
+          ? String((data.error as { message?: unknown }).message)
+          : '') ||
+        (typeof data?.message === 'string' ? data.message : '') ||
+        '';
+      const detail = upstreamMessage ? ` (${upstreamMessage})` : '';
+      if (response.status === 401) {
+        throw new ServiceUnavailableException(
+          `余额接口返回 HTTP 401${detail}：认证失败，请检查 API Key 是否有效、是否含有多余前缀，或在管理后台重新输入保存`,
+        );
+      }
+      if (response.status === 404) {
+        throw new ServiceUnavailableException(
+          `余额接口返回 HTTP 404${detail}：当前 AI 服务商不支持 /v1/users/me/balance 余额查询端点（该接口为 Moonshot/Kimi 专用）`,
+        );
+      }
+      throw new ServiceUnavailableException(
+        `余额接口返回 HTTP ${response.status}${detail}`,
+      );
+    }
+    return { data, source: config.source, queriedAt: new Date().toISOString() };
+  }
+  /** 查询已授权 AI 报告权限的教师列表与全部教师概览。 */
+  async reportAiPermissions() {
+    const [authorized, allTeachers] = await Promise.all([
+      this.database.listReportAiTeacherPermissions(),
+      this.database.listActiveTeachers(),
+    ]);
+    return {
+      authorizedTeachers: authorized.map((row) => ({
+        teacherId: String(row.teacherId),
+        teacherName: String(row.teacherName),
+        teacherUsername: String(row.teacherUsername),
+        createdAt: row.createdAt ? String(row.createdAt) : null,
+      })),
+      allTeachers: allTeachers.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        username: String(row.username),
+        status: String(row.status ?? 'active'),
+      })),
+    };
+  }
+  /** 管理端快捷配置/切换教师 AI 报告权限。 */
+  async updateReportAiPermission(body: UpdateReportAiPermissionDto) {
+    if (!body?.teacherId || typeof body?.enabled !== 'boolean') {
+      throw new BadRequestException('教师ID或授权状态参数无效');
+    }
+    const updated = await this.database.setReportAiTeacherPermission(
+      body.teacherId,
+      body.enabled,
+    );
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      teacherId: body.teacherId,
+      hasAiReportPermission: body.enabled,
+    };
+  }
+  /** 管理员针对指定教师切换 AI 报告授权。 */
+  async toggleTeacherAiPermission(
+    id: string,
+    body: ToggleTeacherAiPermissionDto,
+  ) {
+    if (typeof body?.enabled !== 'boolean') {
+      throw new BadRequestException('授权状态参数无效');
+    }
+    const updated = await this.database.setReportAiTeacherPermission(
+      id,
+      body.enabled,
+    );
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      id,
+      teacherId: id,
+      hasAiReportPermission: body.enabled,
+    };
+  }
+  /** 按时间范围、学生及模型状态筛选学期报告大模型调用 Token 消耗。 */
+  async reportTokenUsage(q: AdminQueryDto) {
+    const range = dateRange(q);
+    const page = pageQuery(q);
+    return this.database.findReportTokenUsage(q, range, page);
+  }
+  /** 获取指定报告在筛选时间范围内的逐次模型调用明细。 */
+  async reportTokenCalls(reportId: string, q: AdminQueryDto) {
+    if (!reportId || typeof reportId !== 'string') {
+      throw new BadRequestException('无效的报告 ID');
+    }
+    const range = dateRange(q);
+    const page = pageQuery(q);
+    const result = await this.database.findReportTokenCalls(
+      reportId,
+      q,
+      range,
+      page,
+    );
+    if (!result) {
+      throw new NotFoundException('报告不存在');
+    }
+    return result;
+  }
   /** 沿用教师登录的 PBKDF2 参数，每次重置生成新盐，不返回或记录密码。 */
   async resetTeacherPassword(id: string, body: ResetTeacherPasswordDto) {
     const password = body?.password;
@@ -31,6 +260,25 @@ export class AdminService {
     const updated = await this.database.resetTeacherPassword(id, hash, salt);
     if (!updated) throw new NotFoundException('教师不存在');
     return { reset: true };
+  }
+  /** 管理员锁定或解锁教师账号，锁定后注销该教师所有在线会话。 */
+  async toggleTeacherLock(id: string, body: ToggleTeacherLockDto) {
+    if (typeof body?.locked !== 'boolean') {
+      throw new BadRequestException('锁定状态参数无效');
+    }
+    const updated = await this.database.updateTeacherLock(id, body.locked);
+    if (!updated) throw new NotFoundException('教师不存在');
+    return {
+      id,
+      locked: body.locked,
+      status: body.locked ? 'locked' : 'active',
+    };
+  }
+  /** 管理员永久删除教师账号及名下全部关联业务数据。 */
+  async deleteTeacher(id: string) {
+    const deleted = await this.database.deleteTeacher(id);
+    if (!deleted) throw new NotFoundException('教师不存在');
+    return { deleted: true };
   }
   /** 采集起点由迁移保存，不能用第一条事件时间替代，以免将尚无使用误判为未采集。 */
   async metadata(): Promise<AdminMetadata> {
@@ -213,9 +461,12 @@ export class AdminService {
     const [profile] = await this.database.findTeacherById(id);
     if (!profile) throw new NotFoundException('教师不存在');
     const [stats] = await this.database.findTeacherStats(id);
+    const hasAiReportPermission =
+      await this.database.hasReportAiTeacherPermission(id);
     return {
       ...profile,
       ...stats,
+      hasAiReportPermission,
       logins: await this.logins({ ...q, teacherId: id }),
       features: await this.features({ ...q, teacherId: id, sort: 'uses' }),
     };

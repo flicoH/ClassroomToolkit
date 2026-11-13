@@ -67,12 +67,13 @@ sys.exit(0)
 class BackendDeploymentTests(unittest.TestCase):
     def run_deploy(self, provider, has_parser=True, stop_failure=False, config_failure=False, expected_status=0,
                    container_revision=TAG[4:], container_image_id='sha256:candidate', git_sha=TAG[4:], ci=True,
-                   streamed=False, storage_init_failure=False, storage_write_failure=False, public_url_failure=False):
+                   streamed=False, storage_init_failure=False, storage_write_failure=False, public_url_failure=False,
+                   proxy_secret='x' * 32):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / '.git').mkdir()
             (work / 'deploy').mkdir()
-            (work / 'deploy/.env.backend').write_text('# mock only\n')
+            (work / 'deploy/.env.backend').write_text('LOGIN_PROXY_SECRET=' + proxy_secret + '\n')
             release = work / 'deploy/.backend-release.env'
             release.write_text('BACKEND_IMAGE_TAG=previous-release\n')
             binary = work / 'bin'; binary.mkdir()
@@ -103,6 +104,16 @@ class BackendDeploymentTests(unittest.TestCase):
         self.assertFalse(any('pull' in e and 'docling-parser' in e for e in events))
         self.assertFalse(any('up' in e and 'docling-parser' in e for e in events))
         self.assertTrue(any('stop' in e and 'docling-parser' in e for e in events))
+
+    def test_service_health_waits_are_bounded(self):
+        events = self.run_deploy('kimi')
+        for service, seconds in [('mysql', '180'), ('backend', '300')]:
+            start = next(e for e in events if 'up' in e and service in e)
+            self.assertIn('--wait-timeout', start)
+            self.assertEqual(start[start.index('--wait-timeout') + 1], seconds)
+
+    def test_placeholder_login_proxy_secret_is_rejected(self):
+        self.run_deploy('kimi', expected_status=1, proxy_secret='CHANGE_ME_LOGIN_PROXY_SECRET')
 
     def test_explicit_docling_deploy_retains_the_parser_service(self):
         events = self.run_deploy('docling')

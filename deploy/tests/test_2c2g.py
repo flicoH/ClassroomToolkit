@@ -29,6 +29,7 @@ def environment():
         'ADMIN_INITIAL_PASSWORD': 'test-admin-password',
         'ADMIN_INITIAL_USERNAME': 'admin',
         'REPORT_GENERATION_MODE': 'template',
+        'LOGIN_PROXY_SECRET': 'login-proxy-secret-' + 'x' * 32,
         'BACKEND_IMAGE_TAG': TAG,
         'FRONTEND_IMAGE_TAG': TAG,
         'DOCLING_IMAGE_TAG': TAG,
@@ -107,6 +108,15 @@ class ValidationTests(unittest.TestCase):
                 self.rejects()
         self.config = fixture()
         self.config['services']['mysql']['environment']['MYSQL_ROOT_PASSWORD'] = 'test-app-password'
+        self.rejects()
+
+    def test_login_proxy_secret_must_be_strong_and_match_web(self):
+        for value in ['', 'short', 'CHANGE_ME_LOGIN_PROXY_SECRET']:
+            with self.subTest(value=value):
+                self.env['LOGIN_PROXY_SECRET'] = value
+                self.rejects()
+        self.config = fixture()
+        self.config['services']['web']['environment']['LOGIN_PROXY_SECRET'] = 'different-' + 'y' * 32
         self.rejects()
 
     def test_public_url_must_be_real_https_root(self):

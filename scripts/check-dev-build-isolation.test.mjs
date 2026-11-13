@@ -40,3 +40,17 @@ test("backend development polls source changes reliably on external volumes", ()
   assert.equal(dev.watchOptions.watchFile, ts.WatchFileKind.DynamicPriorityPolling);
   assert.equal(dev.watchOptions.watchDirectory, ts.WatchDirectoryKind.DynamicPriorityPolling);
 });
+
+test("web build and dev server configure memory limits and webpack for Node >= 22 compatibility", () => {
+  const webRoot = new URL("../apps/web/", import.meta.url);
+  const webPkg = JSON.parse(readFileSync(new URL("package.json", webRoot), "utf8"));
+  assert.equal(webPkg.scripts.build, "next build --webpack");
+
+  const devSh = readFileSync(new URL("dev.sh", webRoot), "utf8");
+  assert.match(devSh, /export NODE_OPTIONS=.*--max-old-space-size=\d+/);
+  assert.match(devSh, /NEXT_BUNDLER=\$\{NEXT_BUNDLER:-webpack\}/);
+  assert.match(devSh, /BUNDLER_ARG="--webpack"/);
+
+  const nextConfig = readFileSync(new URL("next.config.ts", webRoot), "utf8");
+  assert.match(nextConfig, /optimizePackageImports:\s*\[[\s\S]*"lucide-react"[\s\S]*\]/);
+});

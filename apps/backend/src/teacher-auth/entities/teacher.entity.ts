@@ -29,6 +29,12 @@ export class TeacherEntity {
   @Column({ name: 'password_salt', length: 64 })
   passwordSalt!: string;
 
+  @Column({ length: 20, default: 'active' })
+  status!: 'active' | 'locked';
+
+  @Column({ name: 'locked_at', type: 'datetime', nullable: true })
+  lockedAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

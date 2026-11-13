@@ -16,23 +16,28 @@ export function emptyGrowthAssessment(): GrowthAssessment {
 export function GrowthAssessmentFields({
   value,
   onChange,
-  studentName = ""
+  studentName = "",
+  compact = false
 }: {
-  value?: GrowthAssessment;
+  value?: Partial<GrowthAssessment>;
   onChange: (value: GrowthAssessment) => void;
   studentName?: string;
+  compact?: boolean;
 }) {
-  const current = value ?? emptyGrowthAssessment();
+  const current = { ...emptyGrowthAssessment(), ...value };
   return (
-    <section className="space-y-3 rounded-xl border bg-sky-50/30 p-3">
-      <h3 className="font-semibold">学习习惯与能力成长总结</h3>
-      <p className="text-xs text-muted-foreground">分别填写这位学生的实际观察，留空可在草稿中补充。</p>
+    <section className={`rounded-xl border bg-sky-50/30 p-3 ${compact ? "grid gap-2.5 sm:grid-cols-2" : "space-y-3"}`}>
+      <h3 className={compact ? "text-xs font-bold sm:col-span-2" : "font-semibold"}>学习习惯与能力成长总结</h3>
+      <p className="text-xs text-muted-foreground sm:col-span-2">分别填写这位学生的实际观察，留空可在草稿中补充。</p>
       {growthDimensions.map(([key, label]) => (
-        <label key={key} className="block space-y-2 text-sm font-semibold">
+        <label
+          key={key}
+          className={compact ? "block space-y-1 text-xs font-semibold" : "block space-y-2 text-sm font-semibold"}
+        >
           {label}
           <textarea
             aria-label={`${studentName ? `${studentName} ` : ""}${label}`}
-            className="min-h-24 w-full rounded-lg border bg-background p-3 font-normal"
+            className={`w-full rounded-lg border bg-background p-3 font-normal ${compact ? "min-h-16" : "min-h-24"}`}
             maxLength={800}
             value={current[key]}
             placeholder={
@@ -45,12 +50,20 @@ export function GrowthAssessmentFields({
     </section>
   );
 }
-export function GrowthAssessmentView({ value, periodTitle }: { value?: GrowthAssessment; periodTitle: string }) {
+export function GrowthAssessmentView({
+  value,
+  periodTitle
+}: {
+  value?: Partial<GrowthAssessment>;
+  periodTitle: string;
+}) {
+  const filledDimensions = growthDimensions.filter(([key]) => Boolean(value?.[key]?.trim()));
+  if (filledDimensions.length === 0) return null;
   return (
     <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
       <h2 className="mb-5 text-lg font-bold text-sky-900">{periodTitle}学习习惯与能力成长总结</h2>
       <div aria-label="学习习惯与能力成长总结" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-        {growthDimensions.map(([key, label]) => (
+        {filledDimensions.map(([key, label]) => (
           <div
             key={key}
             className={`relative min-w-0 rounded-xl py-3 pl-5 pr-3 ${key === "overallUnderstanding" ? "bg-amber-50/70" : "bg-slate-50/50"}`}
@@ -63,10 +76,8 @@ export function GrowthAssessmentView({ value, periodTitle }: { value?: GrowthAss
               {label}
             </h3>
             <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-700">
-              {key !== "overallUnderstanding" && value?.[key] && (
-                <span className="font-semibold text-sky-700">成长亮点：</span>
-              )}
-              {value?.[key] || "老师暂未填写。"}
+              {key !== "overallUnderstanding" && <span className="font-semibold text-sky-700">成长亮点：</span>}
+              {value?.[key]?.trim()}
             </p>
           </div>
         ))}

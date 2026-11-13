@@ -212,6 +212,15 @@ cp deploy/.env.backend.example deploy/.env.backend
 chmod 600 deploy/.env.frontend deploy/.env.backend
 ```
 
+生成一次登录代理密钥，并把同一个值分别写入两份环境文件。缺失或两边不一致时，Backend 只能看到 Docker 容器内网 IP：
+
+```bash
+LOGIN_PROXY_SECRET_VALUE="$(openssl rand -hex 32)"
+sed -i "s/^LOGIN_PROXY_SECRET=.*/LOGIN_PROXY_SECRET=${LOGIN_PROXY_SECRET_VALUE}/" deploy/.env.frontend
+sed -i "s/^LOGIN_PROXY_SECRET=.*/LOGIN_PROXY_SECRET=${LOGIN_PROXY_SECRET_VALUE}/" deploy/.env.backend
+unset LOGIN_PROXY_SECRET_VALUE
+```
+
 编辑 `deploy/.env.backend`，替换数据库密码并配置首次使用的管理员账号：
 
 ```dotenv
@@ -310,6 +319,16 @@ CI 显式传入 `DEPLOY_COMMIT`，在拉取镜像和迁移前核对服务器快�
 
 回归位于 `scripts/check-deployment-workflows.test.mjs` 和 `deploy/tests/test_{backend,frontend}_deploy_script.py`，覆盖读取标准输入、失败退出码和临时文件清理、旧容器伪装相同标签、权限失败、旧 CI 提交及人工回滚。测试使用本地 SSH/Git/Docker 替身，纳入两端 CI 和 `pnpm verify`；真实服务器上的迁移、网络和容器版本仍需发布后核对。此修复仅调整部署行为，无业务 API、数据结构、权限或数据库迁移变更。
 
+### 后端部署超时与历史数据
+
+运行 [42050506091](https://github.com/flicoH/ClassroomToolkit/actions/runs/42050506091/job/127340767087) 已确认停在镜像拉取：183 MB 层在约 15 分钟只下载 5.94 MB，尚未进入迁移。后端镜像改用 `pnpm --config.inject-workspace-packages=true deploy --prod` 生成独立生产依赖，不再复制整个仓库依赖。发布后运行实际 Linux 镜像验证框架、MySQL、Sharp 原生模块和 TypeORM CLI，并检查前端和开发工具未混入；失败会阻止后续部署。镜像路径和迁移命令保持兼容。精简镜像与扩大预算无法保证极慢网络恢复，仍需核对服务器访问 GHCR 的实际速度。
+
+后端部署任务预算由 15 分钟调整为 30 分钟；前端等待完整后端工作流的预算为 90 分钟，覆盖验证（20）、镜像发布（30）、部署（30）与余量。SSH 使用非交互模式，建连超时 15 秒、仅尝试一次；已建立连接每 15 秒探测一次，连续 3 次无响应退出。连接仍正常但远端命令卡住时，仍由任务总预算兜底。MySQL 健康等待上限为 180 秒，Backend（含可选 Docling）为 300 秒。
+
+Token 流水迁移 `20261104020000-add-report-token-calls.ts` 仅创建表和索引，移除部署时扫描历史 `ai_response` 并逐条插入流水的逻辑。表已存在时保留内容，已记录完成的迁移不会重跑；回滚保留流水表。历史数据不会自动补齐，独立回填不纳入本次发布，也不应因超时而手工运行回填。
+
+失败时先检查最后一条 `[backend-deploy]` 日志：区分镜像拉取、迁移和健康等待。确认服务器上迁移或拉取进程状态后，再运行当前 `main` 的工作流，避免重复部署；失败保留上一版发布标记，但不会自动恢复容器或撤销已经执行的迁移。回滚沿用固定 SHA 镜像流程，不删除数据卷。此次无 API 或权限变化，不执行线上数据修改。
+
 ### PDF 上传存储权限
 
 后端镜像以 `node`（uid/gid 1000）运行，PDF 原件保存到 `classroom_reports_data` 卷。旧版 Compose 缺少卷目录权限初始化时，上传可能在保存原件阶段因 `EACCES` 返回 500；Kimi 解析由入队后的 worker 执行，不能仅凭上传 HTTP 状态断定云端失败。
@@ -392,6 +411,8 @@ docker compose -p classroom-backend \
 
 检查 Web 登录 Cookie 与业务接口代理：
 
+宿主机 Nginx 必须使用示例配置中的 `X-Real-IP $remote_addr`。如果宿主机前面还有 CDN、负载均衡或另一层反向代理，应先在宿主机 Nginx 中仅信任该代理地址，并通过 `real_ip_header`/`set_real_ip_from` 还原 `$remote_addr`；不要信任任意客户端传入的 `X-Forwarded-For`。
+
 ```bash
 # 使用 HTTP + IP 临时访问时，必须显式关闭 Secure Cookie。
 grep AUTH_COOKIE_SECURE deploy/.env.frontend || echo 'AUTH_COOKIE_SECURE=false' >> deploy/.env.frontend
@@ -406,7 +427,13 @@ docker compose -p classroom-frontend \
   --env-file deploy/.env.frontend \
   --env-file deploy/.frontend-release.env \
   -f deploy/compose.frontend.yml \
-  exec web node -e "console.log(process.env.BACKEND_URL, process.env.AUTH_COOKIE_SECURE)"
+  exec web node -e "console.log(process.env.BACKEND_URL, process.env.AUTH_COOKIE_SECURE, Boolean(process.env.LOGIN_PROXY_SECRET))"
+
+# 两个容器必须输出相同的非空密钥摘要；摘要可比对，不打印原始密钥。
+docker inspect classroom-frontend-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^LOGIN_PROXY_SECRET=//p' | sha256sum
+docker inspect classroom-backend-backend-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^LOGIN_PROXY_SECRET=//p' | sha256sum
 ```
 
 确认每次 GitHub Actions 部署后的服务器镜像版本：
@@ -531,3 +558,39 @@ journalctl -u nginx --since '30 minutes ago'
 接口为 `POST /admin/teachers/:id/reset-password`，请求体为 `{ "password": "新密码" }`；沿用管理端 Cookie 认证和 `X-Admin-Request: 1` 请求头。普通教师账号不能调用此接口。密码使用现有教师登录的加盐哈希规则保存，不返回明文或哈希；密码更新与撤销该教师已有会话在同一数据库事务内完成，教师需重新登录。此功能不需要新增数据库迁移。
 
 发布时先完成 `Deploy Backend`，再完成 `Deploy Frontend`。仅更新前端会导致重置接口返回 404。
+
+### 2026 年 10 月两份阶段报告积分专项修复
+
+`deploy/repair-october-stage-reports.py` 将两份 MySQL 备份的归属核对、清单生成、指纹预览、应用与回滚封装为单机 Docker 部署命令。适用于已核对的生产 MySQL 实例，以及庄坤翔和林郅宸的两份原阶段报告。分别恢复 43 条和 38 条评价的报告积分展示。早到按原始加分记录计数。修复范围是指定报告的积分展示快照。清单省略宠物字段，使用原报告已有的宠物快照。
+
+前置条件为服务器使用 Python 3.6 以上、已发布包含 `repair-stage-report-evidence.js` 的 Backend 镜像、运行用户可使用 Docker 并能读两份备份。用 UID 1000 的部署账号运行，以便该账号与容器都能访问私有工作目录和 0600 清单。准备前核对数据库备份可恢复。
+
+```bash
+cd /opt/classroom-toolkit
+sudo install -d -m 0700 -o 1000 -g 1000 /var/backups/classroom-stage-repair
+
+./deploy/repair-october-stage-reports.py zhuang prepare \
+  backup-20261101-002154.sql backup-20261103-033211.sql
+./deploy/repair-october-stage-reports.py lin prepare \
+  backup-20261101-002154.sql backup-20261103-033211.sql
+```
+
+`prepare` 只读查询线上数据并比对 SQL 备份，无需导入备份。两份备份须对 81 个线上评价 ID 给出一致归属。成功后分别生成受保护的清单并预览。单独复查可执行 `./deploy/repair-october-stage-reports.py lin preview`，庄坤翔用 `zhuang preview`。同名清单已有不同内容时停止，先核对并归档原文件再准备。
+
+确认报告 ID 和评价笔数。若 `affected: 1`，分别用该学生本次预览的完整指纹执行。若 `affected: 0`，展示快照已符合预期，无需写入。
+
+```bash
+./deploy/repair-october-stage-reports.py zhuang apply '<庄坤翔的预览指纹>'
+./deploy/repair-october-stage-reports.py lin apply '<林郅宸的预览指纹>'
+```
+
+两次应用各自使用独立事务，在工作目录分别保存 `october-2026-zhuang-scores-before.json`、`october-2026-lin-scores-before.json`，脚本写入后会再次预览。最终应显示 `affected: 0`，并可在原草稿中看到恢复后的积分。生产实例、归属、周期、数量或指纹不符时停止。应用失败后保留已写出的备份，先重新预览。若需重试且已有同名备份，为新操作指定 `--backup-name october-2026-lin-scores-before-retry1.json`。
+
+```bash
+./deploy/repair-october-stage-reports.py zhuang restore
+./deploy/repair-october-stage-reports.py lin restore
+```
+
+回滚按实际应用时使用的备份执行；使用自定义备份名时，回滚也传同一个 `--backup-name`。自定义名须保留目标学生的 `october-2026-<学生>-scores-before` 前缀。原修复后的快照若有后续编辑，底层脚本会拒绝回滚。可在本地用 `python3 -m unittest discover -s deploy/tests -p test_repair_october_stage_reports.py` 跑脱敏备份与模拟部署回归。
+
+专项入口也在独立 MySQL 实例使用脱敏的 81 条评价和两份归属备份实测。两份报告均通过只读准备、写入、重复执行和快照回滚。该演练直接调用编译后的 Backend 修复脚本，服务器上的 Compose 路径以实际 `prepare` 结果验收。

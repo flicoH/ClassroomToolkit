@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClassroomEntity } from './entities/classroom.entity';
 import { StudentGroupEntity } from './entities/student-group.entity';
 import { StudentEntity } from './entities/student.entity';
+import { PetStudentEntity } from '../pet-points/entities/pet-student.entity';
 import { Classroom, Student } from './students.types';
 import { TeacherContext } from '../auth/teacher-context';
 
@@ -93,6 +95,146 @@ export class StudentsDatabase {
           });
         }),
       );
+
+      // 同步名册至宠物积分系统，确保学期报告与 AI 汇总任务能立即获取到新增或修改的学生
+      try {
+        const petStudents = manager.getRepository(PetStudentEntity);
+        if (petStudents && typeof petStudents.find === 'function') {
+          const existingPets = await petStudents.find({
+            where: { teacherId, classId: classroom.id },
+          });
+          const existingById = new Map<string, PetStudentEntity>();
+          for (const pet of existingPets) {
+            existingById.set(pet.id, pet);
+            if (pet.id.startsWith(`${teacherId}:`)) {
+              existingById.set(pet.id.slice(teacherId.length + 1), pet);
+            }
+            if (pet.logicalId) {
+              existingById.set(pet.logicalId, pet);
+              if (pet.logicalId.startsWith(`${teacherId}:`)) {
+                existingById.set(
+                  pet.logicalId.slice(teacherId.length + 1),
+                  pet,
+                );
+              }
+            }
+            if (pet.studentNo) {
+              existingById.set(pet.studentNo, pet);
+              existingById.set(`${classroom.id}:${pet.studentNo}`, pet);
+            }
+          }
+          const activeIds = new Set<string>();
+
+          for (const student of classroom.students) {
+            const sid = this.studentStorageId(classroom.id, student.id);
+            const storageId = `${teacherId}:${sid}`.slice(0, 64);
+            activeIds.add(sid);
+            activeIds.add(student.id);
+            activeIds.add(storageId);
+            const current =
+              existingById.get(storageId) ??
+              existingById.get(sid) ??
+              existingById.get(student.id) ??
+              (student.studentNo
+                ? existingById.get(`${classroom.id}:${student.studentNo}`)
+                : undefined) ??
+              (student.studentNo
+                ? existingById.get(student.studentNo)
+                : undefined);
+
+            if (current) {
+              current.name = student.name;
+              current.studentNo = student.studentNo;
+              current.group = student.group ?? '';
+              current.className = classroom.name;
+              current.classId = classroom.id;
+              current.logicalId = sid;
+              current.rosterActive = true;
+              await petStudents.save(current);
+              // 登记已激活的实体 ID 与逻辑 ID，防止同班同学号更新时被后续清理逻辑误判为已离班
+              activeIds.add(current.id);
+              if (current.logicalId) activeIds.add(current.logicalId);
+            } else {
+              // 防御：在尝试新建 score 为 0 的档案前，先检查 DB 中是否已存在以 storageId 为主键的档案
+              const existingInDb = await petStudents.findOne({
+                where: { id: storageId },
+              });
+              if (existingInDb) {
+                existingInDb.name = student.name;
+                existingInDb.studentNo = student.studentNo;
+                existingInDb.group = student.group ?? '';
+                existingInDb.className = classroom.name;
+                existingInDb.classId = classroom.id;
+                existingInDb.logicalId = sid;
+                existingInDb.rosterActive = true;
+                await petStudents.save(existingInDb);
+                activeIds.add(existingInDb.id);
+                if (existingInDb.logicalId)
+                  activeIds.add(existingInDb.logicalId);
+                existingById.set(existingInDb.id, existingInDb);
+                continue;
+              }
+
+              const newPet = petStudents.create({
+                id: storageId,
+                logicalId: sid,
+                teacherId,
+                classId: classroom.id,
+                className: classroom.name,
+                name: student.name,
+                studentNo: student.studentNo,
+                group: student.group ?? '',
+                score: 0,
+                maxScore: 30,
+                trophies: 0,
+                level: 1,
+                stage: '初始形态',
+                petProgress: 0,
+                petExperience: 0,
+                petHatched: false,
+                absent: false,
+                completedPets: 0,
+                cycleId: randomUUID(),
+                revision: 0,
+                completionPending: false,
+                cycleRulesVersion: 1,
+                rosterActive: true,
+              });
+              await petStudents.save(newPet);
+              existingById.set(newPet.id, newPet);
+              existingById.set(sid, newPet);
+              existingById.set(storageId, newPet);
+              if (student.studentNo) {
+                existingById.set(student.studentNo, newPet);
+                existingById.set(
+                  `${classroom.id}:${student.studentNo}`,
+                  newPet,
+                );
+              }
+              activeIds.add(newPet.id);
+              activeIds.add(sid);
+            }
+          }
+
+          for (const pet of existingPets) {
+            const pid = pet.logicalId || pet.id;
+            // 排除活跃名册中的实体 ID、逻辑 ID 及学号，仅注销真正已被移出班级的冗余档案
+            if (
+              !activeIds.has(pid) &&
+              !activeIds.has(pet.studentNo) &&
+              !activeIds.has(pet.id) &&
+              !activeIds.has(`${classroom.id}:${pet.studentNo}`)
+            ) {
+              if (pet.rosterActive) {
+                pet.rosterActive = false;
+                await petStudents.save(pet);
+              }
+            }
+          }
+        }
+      } catch {
+        // 容错处理：不因宠物积分同步异常破坏班级花名册保存主流程
+      }
     });
     return (await this.findClassroom(classroom.id))!;
   }
@@ -123,13 +265,23 @@ export class StudentsDatabase {
     });
   }
 
-  /** 删除当前教师名下的班级。 */
+  /** 删除当前教师名下的班级及包含的分组与学生档案。 */
   async deleteClassroom(id: string) {
-    const result = await this.classrooms.delete({
-      id,
-      teacherId: this.teacherContext.teacherId,
+    const teacherId = this.teacherContext.teacherId;
+    return this.classrooms.manager.transaction(async (manager) => {
+      const classrooms = manager.getRepository(ClassroomEntity);
+      const students = manager.getRepository(StudentEntity);
+      const groups = manager.getRepository(StudentGroupEntity);
+      const existing = await classrooms.findOne({
+        where: { id, teacherId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!existing) return false;
+      await groups.delete({ classroomId: id, teacherId });
+      await students.delete({ classroomId: id, teacherId });
+      const result = await classrooms.delete({ id, teacherId });
+      return Boolean(result.affected);
     });
-    return Boolean(result.affected);
   }
 
   /** 将 TypeORM 班级实体转换为前端使用的班级结构。 */

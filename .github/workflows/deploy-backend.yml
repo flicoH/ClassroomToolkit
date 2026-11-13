@@ -127,12 +127,13 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/docker/backend.Dockerfile
           target: runner
           push: true
+          load: true
           tags: |
             ${{ steps.image.outputs.namespace }}-backend:latest
             ${{ steps.image.outputs.namespace }}-backend:sha-${{ github.sha }}
@@ -142,10 +143,26 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
+      - name: Smoke test backend runtime dependencies
+        # Exercise the Linux native module and migration CLI from the actual image.
+        run: |
+          docker run --rm --entrypoint node \
+            "${{ steps.image.outputs.namespace }}-backend:sha-${{ github.sha }}" -e '
+            for (const name of ["@nestjs/core", "@nestjs/typeorm", "mysql2", "sharp", "pdf-lib"]) require(name);
+            require.resolve("typeorm/cli.js");
+            for (const name of ["next", "vue", "eslint", "typescript", "jest"]) {
+              try { require.resolve(name); } catch (error) {
+                if (error.code === "MODULE_NOT_FOUND") continue;
+                throw error;
+              }
+              throw new Error("Unexpected runtime dependency: " + name);
+            }
+            '
+
       - name: Build and push Docling parser image
         # Kimi needs only the Node image; optional OCR must be explicitly enabled.
         if: ${{ vars.SEMESTER_REPORT_PARSER_PROVIDER == 'docling' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/docker/backend.Dockerfile
@@ -165,7 +182,8 @@ jobs:
     name: Deploy backend
     needs: publish
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Image downloads and optional OCR startup can exceed the old 15-minute budget.
+    timeout-minutes: 30
     environment: production
     concurrency:
       group: classroom-production-server
@@ -200,7 +218,7 @@ jobs:
 
       - name: Test SSH connection
         run: |
-          ssh -v -i ~/.ssh/ssh_key -p "${SERVER_PORT:-22}" -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "echo 'SSH success'"
+          ssh -v -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -i ~/.ssh/ssh_key -p "${SERVER_PORT:-22}" -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "echo 'SSH success'"
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -216,6 +234,8 @@ jobs:
           IMAGE_NAMESPACE="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           # Save the whole script before running it: migration containers can read stdin.
           cat deploy/backend-deploy.sh | ssh -i ~/.ssh/ssh_key \
+            -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
             -p "${SERVER_PORT:-22}" \
             "$SERVER_USER@$SERVER_HOST" \
             "set -eu

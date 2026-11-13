@@ -13,21 +13,32 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 
 ## 功能模块
 
-| 模块       | 路由前缀            | 说明                                          |
-| ---------- | ------------------- | --------------------------------------------- |
-| 教师认证   | `/auth/teacher`     | 注册、登录、当前教师、退出登录                |
-| 班级与学生 | `/classes`          | 班级、学生、分组与批量导入                    |
-| 任务统计   | `/task-stats`       | 任务及学生完成状态                            |
-| 座位表     | `/seating-charts`   | 座位表、座位分配与随机打乱                    |
-| 随机点名   | `/random-picker`    | 班级数据、抽取与历史记录                      |
-| 倒计时     | `/countdown`        | 教师独立的倒计时状态                          |
-| 便签       | `/sticky-notes`     | 便签新增、编辑、置顶与删除                    |
-| 宠物积分   | `/pet-points`       | 积分调整、宠物、规则、奖励与兑换              |
-| 扭蛋奖励   | `/gacha-machine`    | 奖励 CRUD、抽奖与抽奖记录                     |
-| 学期报告   | `/semester-reports` | 学期/学科、课程资料解析、报告流程、分享与历史 |
-| 意见反馈   | `/feedback`         | 校验并保存当前教师的意见反馈                  |
-| 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                    |
-| 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置        |
+| 模块       | 路由前缀            | 说明                                                   |
+| ---------- | ------------------- | ------------------------------------------------------ |
+| 教师认证   | `/auth/teacher`     | 注册、登录、当前教师、退出登录                         |
+| 班级与学生 | `/classes`          | 班级、学生、分组与批量导入                             |
+| 任务统计   | `/task-stats`       | 任务及学生完成状态                                     |
+| 座位表     | `/seating-charts`   | 座位表、座位分配与随机打乱                             |
+| 随机点名   | `/random-picker`    | 班级数据、抽取与历史记录                               |
+| 倒计时     | `/countdown`        | 教师独立的倒计时状态                                   |
+| 便签       | `/sticky-notes`     | 便签新增、编辑、置顶与删除                             |
+| 宠物积分   | `/pet-points`       | 积分调整、宠物、规则、奖励与兑换                       |
+| 扭蛋奖励   | `/gacha-machine`    | 奖励 CRUD、抽奖与抽奖记录                              |
+| 学期报告   | `/semester-reports` | 学期/学科、课程资料解析、报告流程、分享与历史          |
+| 学科报告   | `/subject-reports`  | 独立学科报告主表、独立分享与事件流水，单学科报告全流程 |
+| 意见反馈   | `/feedback`         | 校验并保存当前教师的意见反馈                           |
+| 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                             |
+| 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置                 |
+
+学科报告生成可在 `studentFeedback[].attendances`（数组）或兼容字段 `studentFeedback[].attendance` 提交各课次出勤状态（`present`、`excused` 或 `late`，默认 `present`）。草稿编辑通过 `content.attendances` 及 `content.attendance` 修改。报告正文的 `attendances` 记录每次课程出勤，`courseContent` 初始来自生成时确认的教学内容，历史报告可从已有快照读取。草稿编辑可提交 `content.courseContent` 更新正文，省略时保留原文，空字符串清空，非字符串返回 400。生成学科报告复用学期报告的学生身份匹配、头像与周期截止宠物快照口径，积分流水使用匹配后的学生 ID 查询，避免旧 ID 导致数据缺失。草稿编辑保留这些服务端展示数据。头像匹配优先使用学生逻辑身份，并限定同一教师和班级。已有学科报告缺少头像时，列表、详情和公开页补充读取当前头像用于展示。此次变更使用既有 JSON 字段，无额外迁移。
+
+学科报告与学期报告工作台的学科设置相互独立：学科报告在 `subject_report_subjects` 表中独立维护学科、停用状态与课堂表现评价配置。教师在学科报告中新增、停用或配置学科，仅作用于学科报告工作台，不影响学期报告工作台；停用后该学科从学科报告新建选项中移除，已有学科报告和已上传 PDF 保留。已有学科报告草稿使用 `POST /subject-reports/reports/:id/course-documents/preview-scope`，由服务端按当前教师名下草稿的原学期和学科读取已确认资料，即使学科已停用。学期基础设置与课程资料继续共用。
+
+学科报告的 `GET /subject-reports/reports/:id/events` 返回当前教师报告的流程记录及中文操作名称。列表复制缺失链接时使用现有创建分享接口。
+
+学科报告分享默认复用学期报告的 `REPORT_SHARE_ENCRYPTION_KEY`（32 字节 base64）。已有 `SEMESTER_REPORT_SHARE_SECRET` 配置时继续优先使用旧学科密钥，以兼容已有链接。缺少有效密钥时发布失败并保留草稿状态。
+
+学科报告部署前应执行常规结构迁移（`pnpm --filter ClassRoomToolkitBackend migration:run`）。该迁移创建五张学科报告表（`subject_reports`、`subject_report_shares`、`subject_report_events`、`subject_report_token_calls`、`subject_report_subjects`），后端亦在模块初始化时具备自动建表与自愈能力，保留已有业务数据。如果开发环境的四个列表接口同时返回 `Cannot GET`，检查 Nest 编译日志并确认监听进程已重载当前分支。未登录访问受保护接口应返回 401。
 
 教师业务接口经过全局教师鉴权，查询和写入按 `teacher_id` 限定当前教师。`/admin/*` 使用独立管理员身份域，可查询全平台数据，但教师令牌不能访问；`/analytics/events` 仍要求教师身份，仅接收功能打开事件。
 
@@ -79,22 +90,59 @@ curl http://127.0.0.1:3000/
 
 学期报告与课程解析配置：
 
-| 变量                              | 默认值 / 用途                                                             |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `SEMESTER_REPORT_PARSER_PROVIDER` | `kimi`；可设为 `docling`                                                  |
-| `KIMI_API_KEY`                    | Kimi 文件解析密钥；使用默认解析器时必填                                   |
-| `KIMI_BASE_URL`                   | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
-| `SEMESTER_REPORT_PARSER_URL`      | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
-| `SEMESTER_REPORT_PARSER_API_KEY`  | 可选的 Docling Bearer 密钥                                                |
-| `SEMESTER_REPORT_STORAGE_DIR`     | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
-| `REPORT_GENERATION_MODE`          | `auto`；可设 `template` 或 `ai`                                           |
-| `REPORT_AI_BASE_URL`              | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
-| `REPORT_AI_API_KEY`               | AI 报告生成服务密钥                                                       |
-| `REPORT_AI_MODEL`                 | AI 报告生成模型名                                                         |
-| `REPORT_PUBLIC_BASE_URL`          | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
-| `REPORT_SHARE_ENCRYPTION_KEY`     | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
+| 变量                                | 默认值 / 用途                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `SEMESTER_REPORT_PARSER_PROVIDER`   | `kimi`；可设为 `docling`                                                  |
+| `KIMI_API_KEY`                      | Kimi 文件解析密钥；使用默认解析器时必填                                   |
+| `KIMI_BASE_URL`                     | `https://api.moonshot.cn/v1`；必须是无凭据和查询参数的 HTTPS `/v1` 地址   |
+| `SEMESTER_REPORT_PARSER_URL`        | Docling 解析地址；仅 `SEMESTER_REPORT_PARSER_PROVIDER=docling` 时使用     |
+| `SEMESTER_REPORT_PARSER_API_KEY`    | 可选的 Docling Bearer 密钥                                                |
+| `SEMESTER_REPORT_STORAGE_DIR`       | 原始课程 PDF 临时存储目录；默认 `<后端工作目录>/data/semester-reports`    |
+| `REPORT_GENERATION_MODE`            | `auto`；可设 `template` 或 `ai`                                           |
+| `REPORT_AI_BASE_URL`                | AI 报告生成服务地址；AI 模式与 API Key、模型名同时配置                    |
+| `REPORT_AI_API_KEY`                 | AI 报告生成服务密钥                                                       |
+| `REPORT_AI_MODEL`                   | AI 报告生成模型名                                                         |
+| `REPORT_AI_TIMEOUT_MS`              | AI 报告请求超时毫秒；允许 90000～600000，默认 300000                      |
+| `REPORT_AI_SETTINGS_ENCRYPTION_KEY` | 32 字节 Base64；加密 Admin 保存的 AI Key，未设置时回退分享加密密钥        |
+| `REPORT_PUBLIC_BASE_URL`            | 家长可访问的 Web 根地址；生产环境不能使用 localhost 或示例域名            |
+| `REPORT_SHARE_ENCRYPTION_KEY`       | 32 字节 Base64 密钥，用于加密公开分享快照中的敏感字段；发布报告前必须配置 |
 
 `REPORT_GENERATION_MODE=auto` 在三项 AI 配置全部为空时使用本地模板，全部配置时使用 AI；只配置一部分会拒绝生成。课程解析和报告生成由后端 Worker 异步执行，部署时需保证存储目录可写，且不能在解析完成前删除课程文件。
+
+管理员可通过 `/admin/report-ai-settings` 管理报告 AI 配置。AI 配置优先采用后端数据库存储的配置，未配置、解密失败或字段残缺时自动回退读取 `.env` 环境变量配置；删除数据库配置后同样自动回退 `.env`。API Key 加密保存且接口仅返回掩码。余额接口由后端代理请求 `/v1/users/me/balance`（Base URL 未包含 `/v1` 时自动补全），仅 Moonshot/Kimi 原生服务支持该端点。
+
+AI 阶段汇总在配置报告 AI 服务后，会把该学生在所选阶段内冻结的评价记录、课堂表现、课程范围与教师输入交给配置模型综合生成四维成长文字，不再填充固定套话。需要使用 Kimi K2.6 时将 `REPORT_AI_MODEL`（或兼容变量 `KIMI_MODEL`）设为 `kimi-k2.6`；后端会原样传递模型名。教师已填写的非空维度优先保留，空白维度采用 AI 结果。
+
+周报生成与大模型解耦：教师手动填写的周报（`period = 'week'`）不需要调用 AI 生成，强制走本地模板确定性生成，不请求大模型，不消耗 API Token，未授权 AI 报告权限的教师也能正常使用周报功能；只有走 AI 阶段汇总（阶段报告）或学期总结任务时才调用大模型请求 AI。
+
+报告生成的数据源隔离与分级汇总口径：
+
+- **阶段报告**：四维成长评价文字只读取所选时间段内的**周报**（`period_type = 'week'` 且排除 `stage` 汇总报告本身），交给模型分维度汇总；
+- **学期报告**：生成学期报告时，只读取该学期时间段内的**阶段汇总报告**（`reportKind = 'stage'`）作为分析输入源，提炼整个学期的成长轨迹；
+  积分、加减分记录、课程内容和宠物状态不参与四维文案分析；某个维度没有来源文字时必须保留“资料不足”语义，不从积分推断表现。
+
+四维文案直接描述学生表现，不显示“教师观察显示”“教师观察表明”“根据教师观察”等证据来源提示语；后端在保存前会再次清洗这些措辞。
+
+“下一步重点”采用独立的积分证据口径：Kimi 根据阶段内加分、扣分、评价标签和备注生成婉转而明白的改进目标。针对扣分项或薄弱表现，采用婉转而明白的语气，严禁提及具体时间、日期（如“X月X日”）或生硬说出“扣分”等字眼，避免流水账罗列；通过深入提炼扣分原因，客观温和地反映出学生背后的真实问题与行为短板，并配套提供温和、可行、能落地的改进方法与行动指引；重复扣分和改进类记录优先，加分记录可用于说明需要继续保持的行为；没有扣分或改进证据时保持为空，不凭空制造问题，也不把积分直接解释为能力或品格。
+
+Kimi 原始响应独立保存在 `semester_reports.ai_response`，不会随教师编辑报告正文而丢失。阶段任务等待每位学生的 Kimi 请求结束后才创建草稿；请求失败或超时时终止该学生的 AI 流程，以本地默认数据生成可编辑草稿，并在报告事件中记录 `generation-fallback`。任务查询接口同时返回学生总数、完成数、处理中数、失败数与进度百分比。
+
+### AI 报告 Token 追踪
+
+Worker 在每次向大模型发出请求前生成本地调用 ID，在 `semester_report_token_calls` 表中记录独立调用流水（包含调用时间、响应时间、模型名、提供方、状态、输入/输出/总 Token 及供应商响应 ID）。
+
+- **采集时机**：在收到模型响应后、校验报告正文前落库记录 Token 用量。若大模型有用量但后续正文解析或校验失败，已消耗的 Token 仍累计为已知用量；调用结果与报告生成结果分开表示。
+- **未知用量与容错**：超时、网络中断、HTTP 错误、响应体无法解析或缺失有效 usage 时，用量记为空（前端展示为未知）。流水写入失败时仅告警并继续原生成流程，严禁为补记流水重发模型请求。
+- **管理查询接口**：
+  - `GET /admin/report-token-usage`：按学生、调用时间范围（北京时间）、模型和状态筛选分页报告汇总、已知用量、未知次数及统计范围；仅加载使用大模型生成的报告，排除纯模板生成的非 AI 报告。
+  - `GET /admin/report-token-usage/:reportId/calls`：在相同筛选条件下分页返回单份报告的逐次调用明细。
+  - 接口受 `@AdminAccess()` 保护，响应排除 API Key、Prompt 消息、报告正文及原生错误响应等敏感字段。
+
+阶段任务以创建时选择的学生档案 ID 锁定身份，报告姓名与头像从同一份学生档案成对冻结；宠物积分学生记录仅用于积分、宠物等附加数据，不能分别决定姓名或头像，避免历史 ID 兼容映射造成错配。
+
+阶段报告按完整学生标识读取评价，修改名册学号不会将其他学生的历史评价计入报告。已有草稿打开后按当前口径显示积分。若 AI 正文使用了旧证据，可在具备 AI 报告权限时调用 `POST /semester-reports/reports/:id/regenerate` 排队生成新的阶段报告。宠物形态使用该学生在报告截止前的历史快照，缺少历史时显示对应提示。更新 Backend 及报告 Worker 即可使用。
+
+线上单份报告的积分展示和宠物快照可用[独立修复脚本](../../docs/deployment-2c2g.md#线上阶段报告证据修复)处理。脚本按线上报告 ID 预览、备份并应用已核对的证据。 单机 Docker 部署可用[10 月两份报告积分专项入口](../../docs/single-server-docker-deployment.md#2026-年-10-月两份阶段报告积分专项修复)自动核对历史备份、生成清单及执行修复。
 
 管理员相关配置：
 
@@ -197,39 +245,45 @@ Web 前端不应在浏览器 JavaScript 中保存 Token。`apps/web` 已通过�
 
 ## 常用接口
 
-| 方法             | 路径                                        | 说明                                 |
-| ---------------- | ------------------------------------------- | ------------------------------------ |
-| `POST`           | `/auth/teacher/register`                    | 注册教师                             |
-| `POST`           | `/auth/teacher/login`                       | 登录并创建会话                       |
-| `GET`            | `/auth/teacher/me`                          | 获取当前教师                         |
-| `POST`           | `/auth/teacher/logout`                      | 注销当前会话                         |
-| `GET / POST`     | `/classes`                                  | 查询或创建班级                       |
-| `POST`           | `/classes/:classroomId/students`            | 新增学生                             |
-| `PATCH / DELETE` | `/classes/:classroomId/students/:studentId` | 编辑或删除学生                       |
-| `GET / POST`     | `/task-stats`                               | 查询或创建任务                       |
-| `GET / POST`     | `/seating-charts`                           | 查询或创建座位表                     |
-| `POST`           | `/random-picker/pick`                       | 执行随机点名                         |
-| `GET / PATCH`    | `/countdown`                                | 读取或更新倒计时                     |
-| `GET / POST`     | `/sticky-notes`                             | 查询或创建便签                       |
-| `GET`            | `/pet-points`                               | 获取宠物积分完整状态（含学生与规则） |
-| `POST`           | `/pet-points/scores/adjust`                 | 调整学生积分                         |
-| `GET`            | `/gacha-machine`                            | 获取扭蛋机奖励与记录                 |
-| `POST`           | `/gacha-machine/draw`                       | 执行抽奖                             |
-| `POST`           | `/gacha-machine/rewards`                    | 新增奖励                             |
-| `PATCH / DELETE` | `/gacha-machine/rewards/:rewardId`          | 编辑或删除奖励                       |
-| `POST`           | `/feedback`                                 | 提交教师意见反馈                     |
-| `GET / POST`     | `/semester-reports/report-terms`            | 查询或创建报告学期                   |
-| `GET / POST`     | `/semester-reports/report-subjects`         | 查询或创建报告学科                   |
-| `GET / POST`     | `/semester-reports/course-documents`        | 查询或上传课程资料                   |
-| `POST`           | `/semester-reports/reports/generate`        | 生成学生报告                         |
-| `GET`            | `/semester-reports/reports`                 | 筛选和分页查询报告                   |
-| `PATCH`          | `/semester-reports/reports/:id/draft`       | 编辑报告草稿                         |
-| `POST`           | `/semester-reports/reports/:id/publish`     | 发布报告并创建分享                   |
-| `GET`            | `/semester-reports/public/reports/:token`   | 获取公开报告快照                     |
+| 方法                   | 路径                                            | 说明                                                                                                |
+| ---------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `POST`                 | `/auth/teacher/register`                        | 注册教师                                                                                            |
+| `POST`                 | `/auth/teacher/login`                           | 登录并创建会话                                                                                      |
+| `GET`                  | `/auth/teacher/me`                              | 获取当前教师                                                                                        |
+| `POST`                 | `/auth/teacher/logout`                          | 注销当前会话                                                                                        |
+| `GET / POST`           | `/classes`                                      | 查询或创建班级                                                                                      |
+| `GET / PATCH / DELETE` | `/classes/:classroomId`                         | 查询详情、编辑或删除班级（至少保留一个班级，级联清理学生与分组）                                    |
+| `POST`                 | `/classes/:classroomId/students`                | 新增学生                                                                                            |
+| `PATCH / DELETE`       | `/classes/:classroomId/students/:studentId`     | 编辑或删除学生                                                                                      |
+| `GET / POST`           | `/task-stats`                                   | 查询或创建任务                                                                                      |
+| `GET / POST`           | `/seating-charts`                               | 查询或创建座位表                                                                                    |
+| `POST`                 | `/random-picker/pick`                           | 执行随机点名                                                                                        |
+| `GET / PATCH`          | `/countdown`                                    | 读取或更新倒计时                                                                                    |
+| `GET / POST`           | `/sticky-notes`                                 | 查询或创建便签                                                                                      |
+| `GET`                  | `/pet-points`                                   | 获取宠物积分完整状态（含学生、规则、四系共 27 只宠物模板）                                          |
+| `POST`                 | `/pet-points/scores/adjust`                     | 调整学生积分                                                                                        |
+| `GET`                  | `/gacha-machine`                                | 获取扭蛋机奖励与记录                                                                                |
+| `POST`                 | `/gacha-machine/draw`                           | 执行抽奖                                                                                            |
+| `POST`                 | `/gacha-machine/rewards`                        | 新增奖励                                                                                            |
+| `PATCH / DELETE`       | `/gacha-machine/rewards/:rewardId`              | 编辑或删除奖励                                                                                      |
+| `POST`                 | `/feedback`                                     | 提交教师意见反馈                                                                                    |
+| `GET / POST`           | `/semester-reports/report-terms`                | 查询或创建报告学期                                                                                  |
+| `GET / POST`           | `/semester-reports/report-subjects`             | 查询或创建报告学科                                                                                  |
+| `GET / POST`           | `/semester-reports/course-documents`            | 查询或上传课程资料                                                                                  |
+| `POST`                 | `/semester-reports/reports/generate`            | 生成学生报告                                                                                        |
+| `GET`                  | `/semester-reports/reports`                     | 筛选和分页查询报告                                                                                  |
+| `GET / POST`           | `/semester-reports/scheduled-tasks`             | 查询或创建 AI 阶段报告云端离线定时汇总任务（支持 repeatType 与 stageCustomName 自定义替换“本阶段”） |
+| `GET` (SSE)            | `/semester-reports/scheduled-tasks/stream`      | 服务端 Server-Sent Events (SSE) 推送定时任务状态与进度快照，替代前端轮询                            |
+| `POST`                 | `/semester-reports/scheduled-tasks/:id/execute` | 立即执行指定阶段汇总定时任务                                                                        |
+| `DELETE`               | `/semester-reports/scheduled-tasks/:id`         | 取消或移除指定阶段汇总定时任务                                                                      |
+| `PATCH`                | `/semester-reports/reports/:id/draft`           | 编辑报告草稿                                                                                        |
+| `POST`                 | `/semester-reports/reports/:id/publish`         | 发布报告并创建分享                                                                                  |
+| `GET`                  | `/semester-reports/public/reports/:token`       | 获取公开报告快照                                                                                    |
+| `POST`                 | `/admin/teachers/:id/reset-password`            | 管理员重置教师密码并强制失效该教师已有登录会话                                                      |
+| `POST`                 | `/admin/teachers/:id/toggle-lock`               | 管理员锁定或解锁教师账号；锁定后即刻注销所有有效会话，并拦截后续登录（403 TEACHER_ACCOUNT_LOCKED）  |
+| `POST`                 | `/admin/teachers/:id/delete`                    | 管理员永久删除教师账号及名下全部班级、学生、报告等业务数据与会话                                    |
 
-宠物领养接口 `PATCH /pet-points/students/:studentId/pet` 已支持四系共 39 只星灵模板。新增可用 `petId` 为 `vine-snake`、`ember-monkey`、`wave-elephant` 和 `starlight-mouse`。领养仍按当前教师的数据范围校验学生，并校验操作编号、学生版本和待归档状态。请先部署 Backend，再部署包含新立绘的 Web。无需数据库迁移。
-
-具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；公开报告仅通过高熵分享 Token 访问。
+具体请求体以对应模块的 `*.dto.ts` 和服务层校验为准。学期报告还支持报告事件查询/恢复、课程学科增删、课堂照片、重新生成、失败重试、撤销发布、独立分享链接和软删除；AI 阶段定时报告支持周期循环调度（每周/每月自动顺延）与大模型故障时草稿模版自动兜底保障，公开报告仅通过高熵分享 Token 访问；班级学生管理、宠物积分与学期报告具备实时双向同步与自动补齐机制，新增入班学生即时同步至宠物积分与报告生成花名册中，且支持完整存储及逻辑学生标识关联检索周期加分明细与最值肯定统计，防止 0 分空实体覆盖已有积分。
 
 ## 测试与质量检查
 
@@ -321,3 +375,72 @@ apps/backend/
 ### 端口被占用
 
 修改 `.env` 中的 `PORT`，并同步更新 Web 服务的 `BACKEND_URL`。
+
+### 登录 IP 限制
+
+先执行 `pnpm --filter ClassRoomToolkitBackend migration:run`，新增封禁表与登录来源字段。管理接口为 `GET/POST /admin/login-ip-blocks` 和 `POST /admin/login-ip-blocks/remove`（写入 JSON `{ "ip": "192.0.2.1" }`），沿用管理员认证与 CSRF 防护。封禁教师新登录返回 403。
+
+代理部署时，Backend 与 Web 必须配置相同且至少 32 字符的 `LOGIN_PROXY_SECRET`，入口 Nginx 覆盖 `X-Real-IP`，Web 端口仅允许可信入口访问。Docker Compose 和部署脚本会拒绝缺失或不一致的密钥，避免把容器连接地址误记为用户 IP。所在地通过 HTTPS ipwho.is 查询，服务商会收到 IP，查询超时或失败显示未知，不阻断登录。历史数据不回填。
+
+IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时撤销当前令牌并清除 Cookie；空闲页面和切回标签页不主动校验。退出后只显示“禁止账号登录，请联系管理员解封”。管理员认证不受影响，网络故障不会误判为封禁。
+
+### AI 报告权限与配置控制
+
+管理端通过 `admin_report_ai_teacher_permissions` 表（`teacher_id` 主键，外键级联删除）管控教师使用 AI 汇总报告的权限名单：
+
+- 管理接口：`GET /admin/report-ai-permissions` 查询已授权名单与候选教师；`POST /admin/report-ai-permissions` 更新指定教师授权；`POST /admin/teachers/:id/toggle-ai-permission` 切换单人权限。
+- 教师端接口：`GET /semester-reports/ai-permission` 供教师端前端感知并显示权限提示卡片及控制按键状态。
+- 服务端拦截：教师端创建定时任务（`POST /semester-reports/scheduled-tasks`）、立即执行定时任务（`POST /semester-reports/scheduled-tasks/:id/execute`）以及请求 AI 阶段汇总生成（`POST /semester-reports/reports/generate`）时强制核验授权，未授权返回 `403 Forbidden` (`code: 'AI_REPORT_PERMISSION_DENIED'`)。
+- 异步 Worker 保护：后台 Worker 执行阶段任务前再次校验权限，若授权被中途撤销则将报告标记为 `failed`，避免继续消耗 AI Token。
+
+### 阶段汇总报告任务队列 SSE 实时通信
+
+为杜绝前端短轮询对服务器造成的频繁打点开销，学期报告模块引入了基于 Server-Sent Events 的流式事件通道：
+
+- 后端事件中枢：通过 `ScheduledTasksEventsService` 建立基于教师 ID 的专属事件广播通道。
+- SSE 端点：`GET /semester-reports/scheduled-tasks/stream`。教师端建立长连接后，首先接收 `tasks_sync` 初始完整任务列表快照；随后无论是前端手动创建/执行/删除任务，还是后台 `SemesterReportWorker` 异步推进处理进度、成功生成或发生降级，均以毫秒级时延将最新的状态快照与进度推送至客户端。
+- 链路保活：内置 25 秒心跳机制（`:keep-alive`），兼容各类反向代理中间件与网关长连接超时配置。
+
+### 历史 AI 报告 Token 用量与独立回填脚本
+
+在 `semester_report_token_calls` 独立采集表上线前，部分 AI 学期与阶段报告已成功生成并将供应商原生响应落库于 `semester_reports.ai_response`。结构迁移与历史回填分别执行：
+
+- **部署只执行结构迁移**：`20261104020000-add-report-token-calls.ts` 仅幂等创建调用流水表，不扫描或回填历史报告。已有流水保留，已执行过该迁移的数据库不会重跑；历史 Token 统计不会因本次部署自动补齐。独立回填脚本不属于发布流程，生产执行前须满足环境和范围限制、可恢复备份、预览与隔离验证等项目保障要求。
+- **独立回填脚本（手动执行/演练）**：
+  - 预览模式（统计预计影响行数与 Token 增量，不写入数据）：
+    ```bash
+    pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls:dry-run
+    ```
+  - 正式执行回填（幂等插入，安全续跑）：
+    ```bash
+    pnpm --filter ClassRoomToolkitBackend db:backfill-token-calls
+    ```
+- **动态降级**：后台查询逻辑已具备动态兼容能力，未执行回填时也能直接解析 `ai_response` 中的 `usage` 并展示在列表及详情中。
+
+### 后端部署超时
+
+后端 Actions 部署任务预算为 30 分钟；SSH 建连最多等待 15 秒，断连检测使用 15 秒间隔、连续 3 次无响应退出。MySQL 和应用健康等待上限分别为 180 秒、300 秒。前端等待完整后端工作流的预算为 90 分钟。镜像拉取、数据库迁移仍可能耗时，需结合最后一条部署日志排查；超时不会自动回滚，失败不更新发布标记。详见 [部署说明](../../docs/single-server-docker-deployment.md)。
+
+后端 Docker 运行镜像通过 `pnpm --config.inject-workspace-packages=true deploy --prod` 仅打包后端生产依赖，避免携带前端框架和开发工具。容器工作目录和启动/迁移命令保持兼容；发布任务加载实际 Linux 镜像，检查生产依赖、Sharp 原生模块及迁移 CLI 可用，并拒绝混入 Next.js、Vue、ESLint、TypeScript 或 Jest。此次失败日志显示 183 MB 镜像层在约 15 分钟内仅下载 5.94 MB，尚未进入迁移；精简镜像减少下载量，但服务器到 GHCR 的网络瓶颈仍需实际部署确认。
+
+学科报告设置支持按学科新增、编辑、删除课程内容标题，点击「保存课程内容标题」后用于新建报告。最多 12 项，每项 1–40 字，不得重复或包含冒号、换行；可删除全部标题，历史报告正文保留。接口 `PATCH /subject-reports/report-subjects/:id/course-content-titles` 接收 `courseContentTitles: string[]`，仅操作当前教师的启用学科。部署先运行常规结构迁移以新增可空 JSON 列，不回填或改写已有业务数据。
+
+学科报告「学期学科设置与课程资料」提供学期删除按钮，确认后仅停用共享学期，两个报告工作台的新建学期选项同步移除；已有报告、公开分享、草稿编辑与发布、课程资料均保留。删除失败时保留选项供重试。`DELETE /subject-reports/report-terms/:id`（及学期报告同名接口）仅允许操作当前教师的学期，无权访问或不存在返回 404，重复删除成功。部署前运行常规结构迁移，新增 `semester_report_terms.enabled`，默认启用；不执行数据回填，回滚代码保留停用状态列。
+
+学期报告工作台的学科设置、学期设置分卡显示，各项旁均可删除并通过项目弹窗确认。学科删除仅作用于学期报告工作台，`DELETE /semester-reports/report-subjects/:id` 按当前教师停用学科（不存在或无权访问返回 404）；学期删除共用既有停用接口。删除保留报告、分享与课程资料，失败保留选项；新增设置使用服务端返回的真实 ID，成功返回空列表时不再自动补示例项。无额外结构迁移或业务数据回填。
+
+功能使用统计已独立注册「学科报告」（`subject-reports`）。教师打开学科报告工作台记录打开事件；新版学期报告入口 `semesterReportStudio` 与旧版入口统一计入「学期报告」。Admin「功能使用」按功能分别显示打开教师数、使用教师数、成功操作次数及每日趋势，零事件时仍显示功能。使用次数仅由成功的服务端已标记业务操作产生（如生成、保存、发布和分享），客户端不能伪造 use 事件；后台刷新及家长查看不计入。仅补齐统计映射，无数据库迁移或历史事件回填；已有合法操作事件会自然进入查询范围，漏记的历史打开事件无法补算。
+
+学期报告与学科报告工作台支持学科与学期绑定：
+
+- **数据结构与迁移**：`semester_report_subjects` 与 `subject_report_subjects` 表新增可空外键关联字段 `term_id VARCHAR(64) NULL` 与联合索引 `(teacher_id, term_id, enabled)`。部署前执行常规结构迁移 `20261108000000-add-subject-term-binding.ts`（`pnpm --filter ClassRoomToolkitBackend migration:run`）。迁移具备幂等性，不修改、不删除存量业务数据；历史无 `term_id` 的学科保持为 `NULL`，作为全局兼容学科在所有学期中可见。
+- **接口变更**：
+  - `GET /semester-reports/report-subjects` 与 `GET /subject-reports/report-subjects` 支持 `?termId=...` 查询参数；若指定 `termId`，则返回当前教师名下绑定该学期的学科以及存量无学期绑定的学科（`termId IS NULL`）。
+  - `POST /semester-reports/report-subjects` 与 `POST /subject-reports/report-subjects` 支持接收 `termId`；当前教师名下存在启用学期时，新增学科必须传入有效的 `termId`，不存在学期时允许为空以维持向下兼容。
+
+学科报告草稿支持上传与删除课堂照片（每份报告最多 2 张，支持 slot 0 和 slot 1）：
+
+- **接口定义**：
+  - `POST /subject-reports/reports/:id/classroom-photo?slot=0|1`：使用 `multipart/form-data` 接收图片文件（`file` 字段），文件大小限制为 2MB。上传成功后将照片转为 Base64 Data URL 存入草稿快照与内容中，并记录审计日志。
+  - `DELETE /subject-reports/reports/:id/classroom-photo?slot=0|1`：清空草稿指定槽位的课堂照片。
+- **校验与权限**：接口仅允许操作属于当前教师且状态为 `draft` 的学科报告；非草稿状态抛出 400，报告不存在或跨教师访问抛出 404，非法槽位抛出 400。

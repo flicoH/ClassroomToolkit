@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PetCompletedEntity } from './entities/pet-completed.entity';
 import { PetOperationEntity } from './entities/pet-operation.entity';
 import { ClassroomEntity } from '../students/entities/classroom.entity';
@@ -208,13 +208,230 @@ export class PetPointsDatabase {
     return { maxLevel, finalEnergy, version, completionBadges };
   }
 
-  /** 查询当前教师的宠物积分学生列表。 */
+  /** 查询当前教师的宠物积分学生列表，自动同步班级管理中最新名册并防御性去重。 */
   async findStudents() {
+    await this.syncRosterFromClassrooms();
     const rows = await this.students.find({
       where: { teacherId: this.teacherContext.teacherId, rosterActive: true },
       order: { score: 'DESC', studentNo: 'ASC' },
     });
-    return rows.map((row) => this.toStudent(row));
+    const seen = new Set<string>();
+    const deduplicated: PetStudentEntity[] = [];
+    for (const row of rows) {
+      const key = `${row.classId}:${row.studentNo}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduplicated.push(row);
+    }
+    return deduplicated.map((row) => this.toStudent(row));
+  }
+
+  /** 确保当前教师名下班级的所有学生都同步至宠物积分名册，并防重防覆盖。 */
+  private async syncRosterFromClassrooms() {
+    const teacherId = this.teacherContext.teacherId;
+    const manager = this.transactionManager ?? this.students.manager;
+    if (!manager) return;
+    try {
+      const classroomRepo = manager.getRepository(ClassroomEntity);
+      if (!classroomRepo || typeof classroomRepo.find !== 'function') return;
+
+      const classrooms = await classroomRepo.find({
+        where: { teacherId },
+        relations: { students: true },
+      });
+      if (!classrooms || !classrooms.length) return;
+
+      const existingRows = await this.students.find({
+        where: { teacherId },
+      });
+
+      // 针对已有数据中可能存在的同班级同学号重复记录先进行整理归并
+      const grouped = new Map<string, PetStudentEntity[]>();
+      for (const row of existingRows) {
+        if (row.classId && row.studentNo) {
+          const key = `${row.classId}:${row.studentNo}`;
+          const list = grouped.get(key) ?? [];
+          list.push(row);
+          grouped.set(key, list);
+        }
+      }
+      for (const [, rows] of grouped.entries()) {
+        if (rows.length > 1) {
+          // 优先保留积分最高、已有认领宠物或处于激活状态的主档案，多余的重复记录置为非激活以保护历史数据
+          rows.sort(
+            (a, b) =>
+              b.score - a.score ||
+              Number(Boolean(b.petId)) - Number(Boolean(a.petId)) ||
+              Number(b.rosterActive) - Number(a.rosterActive),
+          );
+          const [, ...redundant] = rows;
+          for (const extra of redundant) {
+            if (extra.rosterActive) {
+              extra.rosterActive = false;
+              await this.students.save(extra);
+            }
+          }
+        }
+      }
+
+      const existingById = new Map<string, PetStudentEntity>();
+      for (const row of existingRows) {
+        if (
+          !row.rosterActive &&
+          grouped
+            .get(`${row.classId}:${row.studentNo}`)
+            ?.some((r) => r.rosterActive && r.id !== row.id)
+        ) {
+          // 跳过已被标记为非激活的重复记录
+          continue;
+        }
+        existingById.set(row.id, row);
+        if (row.logicalId) existingById.set(row.logicalId, row);
+        existingById.set(
+          row.id.startsWith(`${teacherId}:`)
+            ? row.id.slice(teacherId.length + 1)
+            : row.id,
+          row,
+        );
+        if (row.classId && row.studentNo) {
+          existingById.set(`${row.classId}:${row.studentNo}`, row);
+        }
+      }
+
+      const activeStudentIds = new Set<string>();
+      const activeStudentNos = new Set<string>();
+      const matchedPetIds = new Set<string>();
+      const rules = await this.getSettings();
+
+      for (const cls of classrooms) {
+        for (const stu of cls.students ?? []) {
+          activeStudentIds.add(stu.id);
+          activeStudentNos.add(`${cls.id}:${stu.studentNo}`);
+          let current =
+            existingById.get(stu.id) ??
+            existingById.get(`${cls.id}:${stu.studentNo}`);
+
+          if (current && matchedPetIds.has(current.id)) {
+            // 已被同班其他学生占用的实体不复用，避免产生同名覆盖
+            current = undefined;
+          }
+
+          if (current) {
+            matchedPetIds.add(current.id);
+            activeStudentIds.add(current.id);
+            if (current.logicalId) activeStudentIds.add(current.logicalId);
+            let changed = false;
+            if (current.name !== stu.name) {
+              current.name = stu.name;
+              changed = true;
+            }
+            if (current.className !== cls.name) {
+              current.className = cls.name;
+              changed = true;
+            }
+            if (current.classId !== cls.id) {
+              current.classId = cls.id;
+              changed = true;
+            }
+            if (current.studentNo !== stu.studentNo) {
+              current.studentNo = stu.studentNo;
+              changed = true;
+            }
+            if (current.group !== (stu.groupName ?? '')) {
+              current.group = stu.groupName ?? '';
+              changed = true;
+            }
+            if (current.logicalId !== stu.id) {
+              current.logicalId = stu.id;
+              changed = true;
+            }
+            if (!current.rosterActive) {
+              current.rosterActive = true;
+              changed = true;
+            }
+            if (changed) {
+              await this.students.save(current);
+            }
+          } else {
+            const studentId = stu.id;
+            const storageId = this.studentStorageId(studentId);
+            const existingInDb = await this.students.findOne({
+              where: { id: storageId },
+            });
+            if (existingInDb) {
+              existingInDb.name = stu.name;
+              existingInDb.studentNo = stu.studentNo;
+              existingInDb.group = stu.groupName ?? '';
+              existingInDb.className = cls.name;
+              existingInDb.classId = cls.id;
+              existingInDb.rosterActive = true;
+              await this.students.save(existingInDb);
+              existingById.set(existingInDb.id, existingInDb);
+              existingById.set(studentId, existingInDb);
+              if (stu.studentNo) {
+                existingById.set(`${cls.id}:${stu.studentNo}`, existingInDb);
+              }
+              activeStudentIds.add(existingInDb.id);
+              activeStudentIds.add(studentId);
+              matchedPetIds.add(existingInDb.id);
+              continue;
+            }
+
+            const newPet = this.students.create({
+              id: storageId,
+              logicalId: studentId,
+              teacherId,
+              classId: cls.id,
+              className: cls.name,
+              name: stu.name,
+              studentNo: stu.studentNo,
+              group: stu.groupName ?? '',
+              score: 0,
+              maxScore: 30,
+              trophies: 0,
+              level: 1,
+              stage: '初始形态',
+              petProgress: 0,
+              petExperience: 0,
+              petHatched: false,
+              absent: false,
+              completedPets: 0,
+              cycleId: randomUUID(),
+              revision: 0,
+              completionPending: false,
+              cycleRulesVersion: rules.version,
+              rewardGrants: [],
+              rewardProtection: [],
+              rosterActive: true,
+            });
+            await this.students.save(newPet);
+            existingById.set(newPet.id, newPet);
+            existingById.set(studentId, newPet);
+            existingById.set(`${cls.id}:${stu.studentNo}`, newPet);
+            activeStudentIds.add(newPet.id);
+            activeStudentIds.add(studentId);
+            matchedPetIds.add(newPet.id);
+          }
+        }
+      }
+
+      for (const row of existingRows) {
+        if (row.classId && classrooms.some((c) => c.id === row.classId)) {
+          if (
+            !activeStudentIds.has(row.logicalId || '') &&
+            !activeStudentIds.has(row.id) &&
+            !activeStudentNos.has(`${row.classId}:${row.studentNo}`)
+          ) {
+            if (row.rosterActive) {
+              row.rosterActive = false;
+              await this.students.save(row);
+            }
+          }
+        }
+      }
+    } catch {
+      // 容错处理：若外键或数据库表暂不可用则跳过同步，避免阻塞主流程
+    }
   }
 
   /** 保存或更新宠物积分学生，兼容旧主键和教师隔离主键。 */
@@ -223,12 +440,82 @@ export class PetPointsDatabase {
     return this.run(async (manager) => {
       const students = manager.getRepository(PetStudentEntity);
       const current = await students.findOne({
-        where: this.studentWhere(student.id),
+        where: this.studentWhere(
+          student.id,
+          student.classId,
+          student.studentNo,
+        ),
+        order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
         lock: { mode: 'pessimistic_write' },
       });
+      // 防御：若当前库中存在旧记录且包含积分或进度，而传入对象为未初始化的空白数据，
+      // 则保留原有积分、成就和宠物形态，避免同步名册时因 ID 错配覆盖已有成果
+      const isIncomingBlank =
+        student.score === 0 &&
+        student.petExperience === 0 &&
+        student.completedPets === 0 &&
+        student.trophies === 0 &&
+        student.level === 1 &&
+        student.stage === '初始形态' &&
+        !student.petId;
+
+      const safeScore =
+        isIncomingBlank && current && (current.score ?? 0) > 0
+          ? current.score
+          : student.score;
+      const safeExp =
+        isIncomingBlank && current && (current.petExperience ?? 0) > 0
+          ? current.petExperience
+          : student.petExperience;
+      const safeCompleted =
+        isIncomingBlank && current && (current.completedPets ?? 0) > 0
+          ? current.completedPets
+          : student.completedPets;
+      const safeTrophies =
+        isIncomingBlank && current && (current.trophies ?? 0) > 0
+          ? current.trophies
+          : student.trophies;
+      const safeLevel =
+        isIncomingBlank && current && (current.level ?? 1) > 1
+          ? current.level
+          : student.level;
+      const safeStage =
+        isIncomingBlank &&
+        current &&
+        current.stage &&
+        current.stage !== '初始形态'
+          ? current.stage
+          : student.stage;
+      const safePetId =
+        isIncomingBlank && current && current.petId
+          ? current.petId
+          : student.petId;
+      const safePetName =
+        isIncomingBlank && current && current.petName
+          ? current.petName
+          : student.petName;
+      const safeProgress =
+        isIncomingBlank && current && (current.petProgress ?? 0) > 0
+          ? current.petProgress
+          : student.petProgress;
+      const safeHatched =
+        isIncomingBlank && current && Boolean(current.petHatched)
+          ? current.petHatched
+          : student.petHatched;
+
       const saved = await students.save(
         students.create({
           ...student,
+          score: safeScore,
+          petExperience: safeExp,
+          completedPets: safeCompleted,
+          trophies: safeTrophies,
+          level: safeLevel,
+          stage: safeStage,
+          petId: safePetId,
+          petName: safePetName,
+          petProgress: safeProgress,
+          petHatched: safeHatched,
           rosterActive: true,
           logicalId: student.id,
           id: current?.id ?? this.studentStorageId(student.id),
@@ -244,6 +531,7 @@ export class PetPointsDatabase {
   async findStudentById(studentId: string) {
     const row = await this.students.findOne({
       where: this.studentWhere(studentId),
+      order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
       ...(this.transactionManager
         ? { lock: { mode: 'pessimistic_write' as const } }
         : {}),
@@ -266,6 +554,7 @@ export class PetPointsDatabase {
           studentNo,
         },
       ],
+      order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
     });
     return row ? this.toStudent(row) : undefined;
   }
@@ -309,6 +598,7 @@ export class PetPointsDatabase {
       const students = manager.getRepository(PetStudentEntity);
       const current = await students.findOne({
         where: this.studentWhere(studentId),
+        order: { score: 'DESC', trophies: 'DESC', rosterActive: 'DESC' },
         lock: { mode: 'pessimistic_write' },
       });
       if (!current) return undefined;
@@ -627,14 +917,23 @@ export class PetPointsDatabase {
       : `pet-${createHash('sha256').update(qualified).digest('hex').slice(0, 60)}`;
   }
 
-  /** 同时兼容新旧两种学生主键查询条件。 */
-  private studentWhere(studentId: string) {
+  /** 同时兼容新旧两种学生主键以及同班学号查询条件。 */
+  private studentWhere(
+    studentId: string,
+    classId?: string,
+    studentNo?: string,
+  ) {
     const teacherId = this.teacherContext.teacherId;
-    return [
+    const conditions: Record<string, unknown>[] = [
       { id: this.studentStorageId(studentId), teacherId },
       { id: studentId, teacherId },
       { logicalId: studentId, teacherId },
     ];
+    // 兼容历史数据通过同班同学号关联的情况，防止主键或前缀格式不一致导致查询落空
+    if (classId && studentNo) {
+      conditions.push({ teacherId, classId, studentNo });
+    }
+    return conditions;
   }
 
   /** 把带教师前缀的存储 ID 转回前端使用的逻辑学生 ID。 */

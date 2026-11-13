@@ -1,3 +1,4 @@
+import { attendanceLabels, type CourseAttendanceStatus } from "./CourseAttendance";
 import { GrowthAssessmentView, type GrowthAssessment } from "./GrowthAssessmentFields";
 import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
@@ -14,7 +15,7 @@ export type LearningContent = ReportEntry & {
 export type LearningReportContent = {
   reportVersion?: "v2";
   studentPhoto?: string | null;
-  growthAssessment?: GrowthAssessment;
+  growthAssessment?: Partial<GrowthAssessment>;
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
   petAsOf?: string;
@@ -24,6 +25,11 @@ export type LearningReportContent = {
   classroomPhotoCaptions?: string[];
   summary: string;
   courseOverview: string;
+  courseContent?: string;
+  courseScope?: string | null;
+  nextWeekContent?: string | null;
+  attendance?: CourseAttendanceStatus;
+  attendances?: CourseAttendanceStatus[];
   strengths: ReportEntry[];
   areasToImprove: ReportEntry[];
   homeSuggestions: ReportEntry[];
@@ -31,6 +37,8 @@ export type LearningReportContent = {
   learningContents?: LearningContent[];
   classroomPerformance?: ReportEntry[];
   scoreDetails?: ScoreDetails;
+  stageTitle?: string;
+  stageCustomName?: string;
   reportDetails?: {
     institutionName: string;
     courseTheme: string;
@@ -39,11 +47,16 @@ export type LearningReportContent = {
   };
 };
 export type LearningReportData = {
+  id?: string;
   studentName: string;
   className: string;
   subject: string;
   term: string;
   period: string;
+  isStageReport?: boolean;
+  isSubjectReport?: boolean;
+  status?: string;
+  stageCustomName?: string;
   start?: string;
   end?: string;
   courseScope?: string | null;
@@ -74,8 +87,13 @@ const masteryColors = {
   practicing: "bg-blue-50 text-blue-700",
   needs_support: "bg-violet-100 text-violet-700"
 };
-const periodNames: Record<string, string> = { week: "每周成长报告", month: "每月成长报告", term: "学期成长报告" };
-const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
+const periodNames: Record<string, string> = {
+  week: "每周成长报告",
+  month: "每月成长报告",
+  term: "学期成长报告",
+  stage: "阶段成长报告"
+};
+const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期", stage: "本阶段" };
 function dateText(value?: string, exclusive = false) {
   if (!value) return "";
   const date = new Date(new Date(value).getTime() - (exclusive ? 1 : 0));
@@ -116,6 +134,7 @@ export function learningSectionTitle(section: string) {
 export function LearningReportView({ report }: { report: LearningReportData; forImage?: boolean }) {
   const { content } = report;
   const details = content.reportDetails;
+  const isSubjectReport = Boolean(report.isSubjectReport || (report as { subjectReport?: boolean }).subjectReport);
   const classroomPhotos = reportClassroomPhotos(content);
   const photoCount = classroomPhotos.filter(Boolean).length;
   const sections = new Map<string, LearningContent[]>();
@@ -126,11 +145,25 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     sections.set(section, items);
   }
   const isV2 = content.reportVersion === "v2";
-  const showClassroomPerformance =
-    photoCount > 0 || Boolean(content.classroomPerformance?.some(item => item.text.trim()));
+  const validPerformanceEntries = (content.classroomPerformance ?? []).filter(item => item.text.trim());
+  const classroomPerformanceSubjects = (content.reportSubjects ?? []).filter(subject =>
+    validPerformanceEntries.some(item => item.subjectId === subject.subjectId)
+  );
+  const unassignedPerformanceEntries = validPerformanceEntries.filter(item => !item.subjectId);
+  const showClassroomPerformance = photoCount > 0 || validPerformanceEntries.length > 0;
   const showTeacherMessage = !isV2 || Boolean(content.summary.trim());
   const focusEntries = isV2 ? content.areasToImprove.filter(entry => entry.text.trim()) : content.areasToImprove;
   const showNextFocus = !isV2 || focusEntries.length > 0;
+  const customStageTitle =
+    content.stageTitle?.trim() || content.stageCustomName?.trim() || report.stageCustomName?.trim();
+  const isStage =
+    report.period === "stage" ||
+    report.isStageReport ||
+    Boolean(report.stageCustomName) ||
+    Boolean(content.stageTitle) ||
+    Boolean(content.stageCustomName);
+  const periodTitle =
+    isStage && customStageTitle ? customStageTitle : isStage ? "本阶段" : (periodTitles[report.period] ?? "本期");
   const teacherMessage = (
     <section className="min-w-0 rounded-2xl bg-slate-50/80 p-3 sm:p-6">
       <h2 className="mb-4 text-lg font-bold">老师想对你说</h2>
@@ -170,10 +203,22 @@ export function LearningReportView({ report }: { report: LearningReportData; for
     <article className="mx-auto w-full min-w-0 max-w-4xl [overflow-wrap:anywhere] overflow-hidden rounded-3xl bg-white text-slate-900 shadow-xl shadow-violet-900/5">
       <header className="flex items-center justify-between gap-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 px-4 py-7 text-white sm:px-10 sm:py-12">
         <div className="min-w-0 flex-1">
-          <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
+          {!isSubjectReport && (
+            <p className="mb-4 text-sm font-semibold text-indigo-100">{details?.institutionName || "课堂成长记录"}</p>
+          )}
           <h1 className="text-2xl font-bold leading-snug sm:text-4xl">
             {report.studentName} ·{" "}
-            {details?.lessonNumber ? `第${details.lessonNumber}次课` : (periodNames[report.period] ?? "成长报告")}
+            {isSubjectReport
+              ? details?.institutionName || "课堂成长记录"
+              : details?.lessonNumber
+                ? `第${details.lessonNumber}次课`
+                : isStage && customStageTitle
+                  ? customStageTitle.endsWith("报告")
+                    ? customStageTitle
+                    : `${customStageTitle}成长报告`
+                  : isStage
+                    ? "阶段成长报告"
+                    : (periodNames[report.period] ?? "成长报告")}
           </h1>
           <p className="mt-3 text-sm text-indigo-100 sm:text-base">
             {details?.lessonDate
@@ -195,11 +240,88 @@ export function LearningReportView({ report }: { report: LearningReportData; for
       </header>
       <div className="space-y-4 p-3 sm:space-y-8 sm:p-9">
         {isV2 && classroomPhotoSection}
+        {/* 课次前缀沿用已有正文格式，无前缀的历史内容归入第一课。 */}
+        {(() => {
+          // 出勤和范围备注不能单独撑起课程板块，未填写教学正文时隐藏。
+          if (!content.courseContent?.trim()) return null;
+          const effectiveCourseScope =
+            content.courseScope?.trim() ||
+            (report.courseScope && report.courseScope !== "教学内容" && report.courseScope !== content.courseContent
+              ? report.courseScope.trim()
+              : "");
+          const nextWeekContent = content.nextWeekContent?.trim();
+          const groups = new Map<number, string[]>();
+          for (const line of (content.courseContent ?? "").split("\n")) {
+            if (!line.trim()) continue;
+            const match = /^第\s*(\d+)\s*节课\s*[·：:]?\s*/.exec(line);
+            const lesson = match ? Number(match[1]) : 1;
+            const lines = groups.get(lesson) ?? [];
+            lines.push(match ? line.slice(match[0].length) : line);
+            groups.set(lesson, lines);
+          }
+          const count = Math.max(content.attendances?.length ?? (content.attendance ? 1 : 0), ...groups.keys());
+          return (
+            <section className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3 sm:p-6">
+              <h2 className="flex items-center gap-2 text-lg font-bold">
+                <BookOpenText className="h-5 w-5 text-indigo-600" />
+                课程内容
+              </h2>
+              {effectiveCourseScope && (
+                <div
+                  aria-label="授课范围备注"
+                  className="rounded-xl border border-indigo-100 bg-white p-3 sm:p-4 text-xs sm:text-sm text-slate-700"
+                >
+                  <span className="font-semibold text-indigo-950">授课范围备注：</span>
+                  <span className="whitespace-pre-wrap">{effectiveCourseScope}</span>
+                </div>
+              )}
+              {Array.from({ length: count }, (_, index) => {
+                // 兼容旧报告的单一出勤值，后续课次也显示出勤徽章。
+                const status = content.attendances?.[index] ?? content.attendance ?? content.attendances?.[0];
+                return (
+                  <section
+                    key={index}
+                    aria-label={`第 ${index + 1} 节课内容与出勤`}
+                    className="space-y-2 rounded-xl border border-slate-100 bg-white p-3 sm:p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold text-indigo-950">第 {index + 1} 节课：</h3>
+                      {status && (
+                        <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-800">
+                          课程出勤情况 · {attendanceLabels[status] ?? status}
+                        </span>
+                      )}
+                    </div>
+                    {groups.get(index + 1)?.length ? (
+                      <p className="whitespace-pre-wrap break-words leading-7 text-slate-700">
+                        {groups.get(index + 1)!.join("\n")}
+                      </p>
+                    ) : null}
+                  </section>
+                );
+              })}
+              {nextWeekContent && (
+                <div aria-label="下周课堂预习内容" className="rounded-xl border border-indigo-100 bg-white p-3 sm:p-4">
+                  <h3 className="mb-1 text-sm font-semibold text-indigo-950">
+                    {report.period === "month"
+                      ? "下月课堂预习内容"
+                      : report.period === "term"
+                        ? "下学期课堂预习内容"
+                        : "下周课堂预习内容"}
+                  </h3>
+                  <p className="whitespace-pre-wrap break-words text-xs sm:text-sm leading-6 text-slate-700">
+                    {nextWeekContent}
+                  </p>
+                </div>
+              )}
+            </section>
+          );
+        })()}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
             <h2 className="mb-5 flex items-center gap-2 text-lg font-bold">
               <BookOpenText className="h-5 w-5 text-indigo-600" />
-              {periodTitles[report.period]}学习内容
+              {periodTitle}学习内容
               {!content.learningContents?.length || content.learningContents.some(showsLearningMastery) ? "与掌握" : ""}
             </h2>
             <div className="space-y-4">
@@ -230,71 +352,68 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         )}
         {content.reportVersion === "v2" && (
           <>
-            {/* 已填写的学科评价不能因缺少照片而隐藏；无照片且无评价时继续省略空区块。 */}
+            {/* 已填写的学科评价不能因缺少照片而隐藏；无照片且无评价时继续省略空区块；选了课程但未选择对应课堂表现时该课程不做显示。 */}
             {showClassroomPerformance && (
               <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
                 <h2 className="mb-4 text-lg font-bold text-sky-900">课堂表现</h2>
-                <div aria-label="分学科学习表现" className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                  {(content.reportSubjects ?? []).map(subject => (
-                    <section
-                      key={subject.subjectId}
-                      aria-label={`${subject.name}的课堂表现`}
-                      className="min-w-0 border-b border-slate-100 py-4"
-                    >
-                      <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
-                      {(content.classroomPerformance ?? [])
-                        .filter(item => item.subjectId === subject.subjectId)
-                        .map((item, index) => {
-                          const separator = item.text.indexOf(" · ");
-                          return (
-                            <p
-                              key={index}
-                              className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
-                            >
-                              {separator >= 0 ? (
-                                <>
-                                  <span className="mr-2 font-semibold text-teal-700">
-                                    {item.text.slice(0, separator)}：
-                                  </span>
-                                  {item.text.slice(separator + 3)}
-                                </>
-                              ) : (
-                                item.text
-                              )}
-                            </p>
-                          );
-                        })}
-                      {!content.classroomPerformance?.some(item => item.subjectId === subject.subjectId) && (
-                        <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
-                      )}
-                    </section>
-                  ))}
-                </div>
-                {content.classroomPerformance?.some(item => !item.subjectId) && (
+                {classroomPerformanceSubjects.length > 0 && (
+                  <div
+                    aria-label="分学科学习表现"
+                    className={`grid gap-x-6 gap-y-3 ${content.courseContent !== undefined || content.attendance || (content.attendances && content.attendances.length > 0) ? "grid-cols-1" : "sm:grid-cols-2"}`}
+                  >
+                    {classroomPerformanceSubjects.map(subject => {
+                      const subjectEntries = validPerformanceEntries.filter(
+                        item => item.subjectId === subject.subjectId
+                      );
+                      return (
+                        <section
+                          key={subject.subjectId}
+                          aria-label={`${subject.name}的课堂表现`}
+                          className="min-w-0 border-b border-slate-100 py-4"
+                        >
+                          <h3 className="text-base font-bold text-slate-900">{subject.name}</h3>
+                          {subjectEntries.map((item, index) => {
+                            const separator = item.text.indexOf(" · ");
+                            return (
+                              <p
+                                key={index}
+                                className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600"
+                              >
+                                {separator >= 0 ? (
+                                  <>
+                                    <span className="mr-2 font-semibold text-teal-700">
+                                      {item.text.slice(0, separator)}：
+                                    </span>
+                                    {item.text.slice(separator + 3)}
+                                  </>
+                                ) : (
+                                  item.text
+                                )}
+                              </p>
+                            );
+                          })}
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
+                {unassignedPerformanceEntries.length > 0 && (
                   <section className="mt-4 border-t border-slate-100 pt-4">
                     <h3 className="mb-3 font-bold">未分学科的原课堂表现</h3>
-                    <Entries
-                      entries={content.classroomPerformance.filter(item => !item.subjectId)}
-                      empty="老师暂未填写具体课堂表现。"
-                    />
+                    <Entries entries={unassignedPerformanceEntries} empty="老师暂未填写具体课堂表现。" />
                   </section>
-                )}
-                {!content.reportSubjects?.length && !content.classroomPerformance?.length && (
-                  <p className="text-sm text-slate-500">老师暂未填写具体课堂表现。</p>
                 )}
               </section>
             )}
-            <GrowthAssessmentView
-              value={content.growthAssessment}
-              periodTitle={periodTitles[report.period] ?? "本期"}
-            />
+            {!isSubjectReport &&
+              Boolean(Object.values(content.growthAssessment ?? {}).some(value => value?.trim())) && (
+                <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
+              )}
           </>
         )}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">
-            {content.reportVersion !== "v2" && (
-              <h2 className="mb-4 text-lg font-bold">{periodTitles[report.period]}的课堂表现</h2>
-            )}
+            {content.reportVersion !== "v2" && <h2 className="mb-4 text-lg font-bold">{periodTitle}的课堂表现</h2>}
             {content.classroomPerformance?.length ? (
               <div className="flex flex-wrap gap-2">
                 {content.classroomPerformance
@@ -337,7 +456,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
           </section>
           {content.reportVersion === "v2" && (
             <section className="flex min-w-0 flex-col rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-6">
-              <h2 className="mb-4 text-lg font-bold text-amber-900">{periodTitles[report.period]}最值肯定</h2>
+              <h2 className="mb-4 text-lg font-bold text-amber-900">{periodTitle}最值肯定</h2>
               <div className="my-auto flex flex-1 flex-col justify-center">
                 <PeriodScoreChart details={content.scoreDetails} />
               </div>
@@ -353,7 +472,13 @@ export function LearningReportView({ report }: { report: LearningReportData; for
         {content.reportVersion !== "v2" && teacherMessage}
         {(!isV2 || showTeacherMessage || showNextFocus) && (
           <div
-            aria-label={content.reportVersion === "v2" ? "老师寄语与下一步重点" : undefined}
+            aria-label={
+              content.reportVersion === "v2"
+                ? isSubjectReport
+                  ? "老师寄语与回家练习"
+                  : "老师寄语与下一步重点"
+                : undefined
+            }
             className={
               isV2
                 ? `grid grid-cols-1 ${showTeacherMessage && showNextFocus ? "sm:grid-cols-2" : ""} gap-3 sm:gap-4`
@@ -365,7 +490,7 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               <section className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3 sm:p-5">
                 <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-800">
                   <Sparkles className="h-4 w-4" />
-                  {periodTitles[report.period]}最值得肯定
+                  {periodTitle}最值得肯定
                 </h2>
                 <Entries entries={content.strengths} empty="等待老师补充值得肯定的具体表现。" />
               </section>
@@ -374,9 +499,14 @@ export function LearningReportView({ report }: { report: LearningReportData; for
               <section className="min-w-0 rounded-2xl border border-violet-100 bg-violet-50/70 p-3 sm:p-5">
                 <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-violet-800">
                   <Target className="h-4 w-4" />
-                  下一步重点
+                  {isSubjectReport ? "回家可以跟父母一起练" : "下一步重点"}
                 </h2>
-                <Entries entries={focusEntries} empty="等待老师补充下一阶段的练习重点。" />
+                <Entries
+                  entries={focusEntries}
+                  empty={
+                    isSubjectReport ? "等待老师补充回家可以跟父母一起练习的内容。" : "等待老师补充下一阶段的练习重点。"
+                  }
+                />
               </section>
             )}
           </div>

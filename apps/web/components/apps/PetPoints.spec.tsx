@@ -544,4 +544,106 @@ describe("PetPoints persisted workflows", () => {
     await click(button("确认评分"));
     expect(document.body.textContent).toContain("已为 1 名学生完成评分，跳过 1 名请假学生");
   });
+
+  it("deduplicates students with the same student number in the same class", async () => {
+    const original = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      if (typeof args === "string" && args === "/api/pet-points") {
+        const overview = await original(args);
+        return {
+          ...overview,
+          students: [
+            { ...student, id: "one", studentNo: "2026001", name: "林俊杰", score: 10 },
+            { ...student, id: "legacy-one", studentNo: "2026001", name: "周杰伦", score: 0 }
+          ]
+        };
+      }
+      return original(args);
+    });
+    await mount();
+    const cards = document.querySelectorAll("[data-student-card]");
+    expect(cards).toHaveLength(1);
+    expect(document.body.textContent).toContain("林俊杰");
+    expect(document.body.textContent).toContain("#2026001");
+  });
+
+  it("preserves available points when pet reaches max level and provides direct reward redemption for that student", async () => {
+    const original = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      if (typeof args === "string" && args === "/api/classes") {
+        return [
+          {
+            id: "class",
+            name: "测试班",
+            groups: ["一组"],
+            students: [
+              { id: "zero-student", name: "零分同学", studentNo: "1", group: "一组" },
+              { id: "max-student", name: "满级小明", studentNo: "2", group: "一组" }
+            ]
+          }
+        ];
+      }
+      if (typeof args === "string" && args === "/api/pet-points") {
+        const overview = await original(args);
+        return {
+          ...overview,
+          students: [
+            {
+              ...student,
+              id: "zero-student",
+              name: "零分同学",
+              studentNo: "1",
+              score: 0,
+              petExperience: 0,
+              completionPending: false
+            },
+            {
+              ...student,
+              id: "max-student",
+              name: "满级小明",
+              studentNo: "2",
+              score: 200,
+              petExperience: 100,
+              petProgress: 100,
+              level: 10,
+              completionPending: true
+            }
+          ]
+        };
+      }
+      return original(args);
+    });
+    await mount();
+
+    // 满级学生卡片上应有直达兑换按钮
+    const redeemBtn = document.querySelector('[aria-label="为满级小明兑换奖品"]');
+    expect(redeemBtn).not.toBeNull();
+    await click(redeemBtn as HTMLElement);
+
+    const dialog = document.querySelector('[aria-label="积分兑换站"]')!;
+    expect(dialog).not.toBeNull();
+    // 兑换站必须选中满级小明，且展示可用积分为 200
+    expect(dialog.querySelector("select")?.value).toBe("max-student");
+    expect(dialog.querySelector(".bg-amber-100")?.textContent).toContain("可用积分 200");
+
+    // 关闭兑换站
+    await click(document.querySelector('[aria-label="关闭兑换站"]') as HTMLElement);
+
+    // 打开满级小明的满级成就与成长徽章弹窗
+    const historyBtn = Array.from(document.querySelectorAll("button")).find(b =>
+      b.textContent?.includes("领取满级纪念")
+    );
+    expect(historyBtn).toBeDefined();
+    await click(historyBtn!);
+
+    // 满级弹窗中也有去兑换按钮，并携带可用积分
+    const modalRedeemBtn = Array.from(document.querySelectorAll("button")).find(
+      b => b.textContent?.includes("去兑换") || b.textContent?.includes("积分兑换")
+    );
+    expect(modalRedeemBtn).toBeDefined();
+    await click(modalRedeemBtn!);
+
+    const modalDialog = document.querySelector('[aria-label="积分兑换站"]')!;
+    expect(modalDialog.textContent).toContain("可用积分 200");
+  });
 });

@@ -4,6 +4,7 @@
  *  Rights Reserved.
  * **********************************************************************************************
  */
+import { loginIpHeaders } from "../login-ip";
 import { NextResponse } from "next/server";
 import { getBackendUrl } from "../backend-url";
 import { setAuthCookie } from "../auth-cookie";
@@ -14,7 +15,7 @@ export async function POST(request: Request) {
     const { username, password, name, email } = await request.json();
     const response = await fetch(`${getBackendUrl()}/auth/teacher/register`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...loginIpHeaders(request) },
       body: JSON.stringify({ username, password, name, email })
     });
 

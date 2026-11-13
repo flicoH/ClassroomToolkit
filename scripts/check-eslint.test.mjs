@@ -59,3 +59,13 @@ test("CommonJS configuration remains compatible without suppressing lint errors"
   });
   assert.equal(result.errorCount, 0);
 });
+
+// 根检查与 Web 检查使用同一个 Hooks 插件，定向注释不能变成未知规则错误。
+test("root lint recognizes Web Hooks rule annotations", async () => {
+  const results = await eslint.lintText(
+    "/* eslint-disable react-hooks/set-state-in-effect */\nexport const value = 1;\n",
+    { filePath: "apps/web/components/hooks-rule-check.tsx" }
+  );
+  assert.equal(results[0].errorCount, 0);
+  assert.ok(results[0].messages.every(message => !message.message.includes("was not found")));
+});

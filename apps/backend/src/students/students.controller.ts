@@ -91,6 +91,13 @@ export class StudentsController {
     return this.studentsService.updateClassroom(classroomId, dto);
   }
 
+  /** 删除指定班级，并级联清理班级内学生与分组；名下至少保留一个班级。 */
+  @Delete(':classroomId')
+  @TrackFeature('students', 'classroom')
+  deleteClassroom(@Param('classroomId') classroomId: string) {
+    return this.studentsService.deleteClassroom(classroomId);
+  }
+
   /** 批量导入学生文本数据，并返回成功和跳过明细。 */
   @Post(':classroomId/students/import')
   @TrackFeature('students', 'import')

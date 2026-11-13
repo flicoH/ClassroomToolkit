@@ -102,6 +102,20 @@ export class StudentsService {
     return this.database.saveClassroom(classroom);
   }
 
+  /** 删除班级，并级联清理班级内学生与分组；当前教师名下至少保留一个班级。 */
+  async deleteClassroom(classroomId: string) {
+    const classrooms = await this.database.findClassrooms();
+    if (classrooms.length <= 1) {
+      throw new BadRequestException('至少保留一个班级，无法删除');
+    }
+    const exists = classrooms.some((item) => item.id === classroomId);
+    if (!exists) {
+      throw new NotFoundException('班级不存在');
+    }
+    await this.database.deleteClassroom(classroomId);
+    return { deleted: true };
+  }
+
   /** 新增学生，并在未传学号时自动生成不重复学号。 */
   async addStudent(classroomId: string, dto: CreateStudentDto) {
     const classroom = await this.getClassroomOrThrow(classroomId);

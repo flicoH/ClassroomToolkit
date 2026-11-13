@@ -8,6 +8,7 @@
  * @LastEditors: flicoH
  * @LastEditTime: 2026-04-19 00:30:00
  */
+import { loginIpHeaders } from "../login-ip";
 import { NextResponse } from "next/server";
 import { getBackendUrl } from "../backend-url";
 import { setAuthCookie } from "../auth-cookie";
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
     const { username, password } = await request.json();
     const response = await fetch(`${getBackendUrl()}/auth/teacher/login`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...loginIpHeaders(request) },
       body: JSON.stringify({ username, password })
     });
 

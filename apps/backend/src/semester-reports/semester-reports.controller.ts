@@ -9,9 +9,12 @@ import {
   Post,
   Query,
   Header,
+  Sse,
   UploadedFile,
   UseInterceptors,
+  type MessageEvent,
 } from '@nestjs/common';
+import { type Observable } from 'rxjs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Public } from '../auth/public.decorator';
 import { SemesterReportsService } from './semester-reports.service';
@@ -24,11 +27,21 @@ export class SemesterReportsController {
   @Get('report-terms') listTerms() {
     return this.reports.listTerms();
   }
+  /** 停用当前教师的共享学期，不级联删除历史报告与资料。 */
+  @Delete('report-terms/:id')
+  deleteTerm(@Param('id') id: string) {
+    return this.reports.deleteTerm(id);
+  }
   @Post('report-terms') createTerm(@Body() body: Record<string, string>) {
     return this.reports.createTerm(body);
   }
-  @Get('report-subjects') listSubjects() {
-    return this.reports.listSubjects();
+  @Get('report-subjects') listSubjects(@Query('termId') termId?: string) {
+    return this.reports.listSubjects({ termId });
+  }
+  /** 仅停用本工作台所属的学科；另一工作台的独立学科不受影响。 */
+  @Delete('report-subjects/:id')
+  deleteSubject(@Param('id') id: string) {
+    return this.reports.deleteSubject(id);
   }
   @Post('report-subjects') createSubject(@Body() body: Record<string, string>) {
     return this.reports.createSubject(body);
@@ -95,6 +108,29 @@ export class SemesterReportsController {
   @TrackFeature('semester-reports', 'generate')
   generate(@Body() body: Record<string, unknown>) {
     return this.reports.generate(body);
+  }
+  @Get('ai-permission') getAiReportPermission() {
+    return this.reports.aiReportPermission();
+  }
+  @Get('scheduled-tasks') listScheduledTasks() {
+    return this.reports.listScheduledTasks();
+  }
+  @Sse('scheduled-tasks/stream')
+  streamScheduledTasks(): Observable<MessageEvent> {
+    return this.reports.streamScheduledTasks();
+  }
+  @Post('scheduled-tasks')
+  @TrackFeature('semester-reports', 'schedule-stage-report')
+  createScheduledTask(@Body() body: Record<string, unknown>) {
+    return this.reports.createScheduledTask(body);
+  }
+  @Post('scheduled-tasks/:id/execute')
+  @TrackFeature('semester-reports', 'execute-stage-report')
+  executeScheduledTask(@Param('id') id: string) {
+    return this.reports.executeScheduledTask(id);
+  }
+  @Delete('scheduled-tasks/:id') deleteScheduledTask(@Param('id') id: string) {
+    return this.reports.deleteScheduledTask(id);
   }
   @Get('reports') listReports(@Query() filters: Record<string, unknown>) {
     return this.reports.listReports(filters);

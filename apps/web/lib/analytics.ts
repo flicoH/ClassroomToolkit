@@ -11,6 +11,9 @@ const features: Record<string, string> = {
   gachaMachine: "gacha-machine",
   semesterReports: "semester-reports",
   semesterReportsV2: "semester-reports",
+  // 新工作台沿用学期报告统计，学科报告单独计量。
+  semesterReportStudio: "semester-reports",
+  subjectReports: "subject-reports",
   stickyNotes: "sticky-notes",
   stickyNotesList: "sticky-notes"
 };

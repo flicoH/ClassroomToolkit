@@ -7,6 +7,8 @@ export type EventKind =
   | 'open'
   | 'use';
 export interface AnalyticsEvent {
+  loginIp?: string | null;
+  ipLocation?: string | null;
   id: string;
   teacherId: string | null;
   kind: EventKind;

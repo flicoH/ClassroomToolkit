@@ -4,6 +4,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, daysAgo, today, formatTime, type Trend, type Page, type Person } from '../lib/api'
 import { trendChart } from '../lib/charts'
+import IpRestrictions from '../components/IpRestrictions.vue'
 import BaseChart from '../components/BaseChart.vue'
 import DateRange from '../components/DateRange.vue'
 import PaginationBar from '../components/PaginationBar.vue'
@@ -84,7 +85,9 @@ function searchRecords() {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">{{ registration ? 'GROWTH' : 'ENGAGEMENT' }}</p>
+      <p class="eyebrow">
+        {{ registration ? 'GROWTH' : 'ENGAGEMENT' }}
+      </p>
       <h1>{{ registration ? '教师注册分析' : '教师登录分析' }}</h1>
       <p class="muted">
         {{
@@ -95,18 +98,38 @@ function searchRecords() {
       </p>
     </div>
   </div>
+  <IpRestrictions v-if="!registration" />
   <DateRange @change="changeRange" />
-  <p v-if="error" role="alert" class="error">{{ error }} <button @click="load">重试</button></p>
-  <p v-if="loading" role="status" class="muted">正在更新数据…</p>
-  <template v-if="data"
-    ><p v-if="data.hasCoverage === false" class="empty">所选日期早于数据采集时间，暂无统计数据。</p>
+  <p
+    v-if="error"
+    role="alert"
+    class="error"
+  >
+    {{ error }} <button @click="load">
+      重试
+    </button>
+  </p>
+  <p
+    v-if="loading"
+    role="status"
+    class="muted"
+  >
+    正在更新数据…
+  </p>
+  <template v-if="data">
+    <p
+      v-if="data.hasCoverage === false"
+      class="empty"
+    >
+      所选日期早于数据采集时间，暂无统计数据。
+    </p>
     <section class="panel">
       <div class="summary-strip">
         <div v-if="registration">
           <span>期间新增教师</span><strong>{{ data.total }}</strong>
         </div>
-        <template v-else
-          ><div
+        <template v-else>
+          <div
             v-for="(label, key) in {
               logins: '成功登录次数',
               teachers: '登录教师数（期间去重）',
@@ -116,19 +139,24 @@ function searchRecords() {
             }"
             :key="key"
           >
-            <span>{{ label }}</span
-            ><strong>{{ data.hasCoverage === false ? '—' : data.totals?.[key] }}</strong>
-          </div></template
-        >
+            <span>{{ label }}</span><strong>{{ data.hasCoverage === false ? '—' : data.totals?.[key] }}</strong>
+          </div>
+        </template>
       </div>
       <BaseChart
         :option="chart"
         :label="registration ? '每日新增教师趋势' : '登录次数、登录教师数与活跃教师数趋势'"
       />
     </section>
-    <section v-if="registration" class="panel">
+    <section
+      v-if="registration"
+      class="panel"
+    >
       <h2>累计注册教师</h2>
-      <BaseChart :option="cumulative" label="现存教师账号的累计注册趋势" />
+      <BaseChart
+        :option="cumulative"
+        label="现存教师账号的累计注册趋势"
+      />
     </section>
     <p class="muted footnote">
       {{
@@ -139,17 +167,24 @@ function searchRecords() {
       登录与功能数据采集自
       {{ formatTime(data.startedAt) }}，采集前为空白，首日数据可能不完整。更新于
       {{ formatTime(data.updatedAt) }}。
-    </p></template
-  >
+    </p>
+  </template>
   <section class="panel">
     <div class="toolbar">
-      <h2 style="margin: 0">{{ registration ? '注册明细' : '登录记录' }}</h2>
-      <label v-if="!registration"
-        >记录类型<select v-model="kind" @change="searchRecords">
-          <option value="">全部</option>
-          <option v-for="(label, value) in labels" :key="value" :value="value">{{ label }}</option>
-        </select></label
+      <h2 style="margin: 0">
+        {{ registration ? '注册明细' : '登录记录' }}
+      </h2>
+      <label v-if="!registration">记录类型<select
+        v-model="kind"
+        @change="searchRecords"
       >
+        <option value="">全部</option>
+        <option
+          v-for="(label, value) in labels"
+          :key="value"
+          :value="value"
+        >{{ label }}</option>
+      </select></label>
     </div>
     <div class="table-scroll">
       <table>
@@ -157,20 +192,36 @@ function searchRecords() {
           <tr>
             <th>教师</th>
             <th>账号</th>
+            <th v-if="!registration">
+              登录 IP
+            </th>
+            <th v-if="!registration">
+              IP 所在地
+            </th>
             <th>{{ registration ? '注册时间' : '登录时间' }}</th>
             <th>{{ registration ? '学生 / 班级' : '结果' }}</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in records?.items" :key="item.id">
+          <tr
+            v-for="item in records?.items"
+            :key="item.id"
+          >
             <td>
               <RouterLink
                 v-if="registration || item.teacherId"
                 :to="`/teachers/${registration ? item.id : item.teacherId}`"
-                >{{ item.name || '已删除教师' }}</RouterLink
-              ><span v-else>未识别账号</span>
+              >
+                {{ item.name || '已删除教师' }}
+              </RouterLink><span v-else>未识别账号</span>
             </td>
             <td>{{ item.username || '—' }}</td>
+            <td v-if="!registration">
+              {{ item.loginIp || '—' }}
+            </td>
+            <td v-if="!registration">
+              {{ item.ipLocation || '未知' }}
+            </td>
             <td>{{ formatTime(item.createdAt) }}</td>
             <td>
               {{ registration ? `${item.students} / ${item.classrooms}` : labels[item.kind || ''] }}
@@ -178,7 +229,12 @@ function searchRecords() {
           </tr>
         </tbody>
       </table>
-      <p v-if="!records?.items.length && !loading" class="empty">暂无符合条件的记录</p>
+      <p
+        v-if="!records?.items.length && !loading"
+        class="empty"
+      >
+        暂无符合条件的记录
+      </p>
     </div>
     <PaginationBar
       v-if="records"

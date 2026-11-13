@@ -227,6 +227,70 @@ describe('report generation input', () => {
     return { service, internals, reports };
   }
 
+  it('reads a public subject report portrait using its verified owner without a login session', async () => {
+    const { service } = setup();
+    const internals = service as unknown as {
+      teacher: { teacherId: string };
+      students: { find: jest.Mock };
+      studentProfiles: { findOne: jest.Mock };
+    };
+    Object.defineProperty(internals.teacher, 'teacherId', {
+      get: () => {
+        throw new Error('未登录');
+      },
+      configurable: true,
+    });
+    internals.students.find = jest.fn().mockResolvedValue([
+      {
+        id: 'teacher:old',
+        logicalId: 'teacher:roster',
+        classId: 'class',
+        studentNo: '',
+      },
+    ]);
+    internals.studentProfiles.findOne.mockImplementation(async ({ where }) =>
+      where.teacherId === 'teacher' &&
+      where.classroomId === 'class' &&
+      where.id === 'roster'
+        ? { photo: 'public-portrait' }
+        : null,
+    );
+    await expect(
+      service.subjectReportStudent('roster', 'teacher'),
+    ).resolves.toMatchObject({ studentPhoto: 'public-portrait' });
+    expect(internals.students.find).toHaveBeenCalledWith({
+      where: { teacherId: 'teacher' },
+    });
+  });
+
+  it('uses the logical roster identity for a subject report portrait without a school number', async () => {
+    const { service, internals } = setup();
+    internals.findStudents.mockResolvedValue([
+      {
+        id: 'teacher:old-pet-id',
+        logicalId: 'teacher:roster-id',
+        name: '学生一',
+        studentNo: '',
+        classId: 'class',
+      },
+    ]);
+    const profiles = (
+      service as unknown as { studentProfiles: { findOne: jest.Mock } }
+    ).studentProfiles;
+    profiles.findOne.mockImplementation(async ({ where }) =>
+      where.id === 'roster-id' &&
+      where.teacherId === 'teacher' &&
+      where.classroomId === 'class'
+        ? { photo: 'data:image/jpeg;base64,portrait' }
+        : null,
+    );
+    const result = await service.subjectReportPresentation(
+      'roster-id',
+      new Date('2026-09-27T16:00:00Z'),
+    );
+    expect(result.studentPhoto).toBe('data:image/jpeg;base64,portrait');
+  });
+
   it('snapshots each owned student portrait and preserves it on regeneration, including absence', async () => {
     const { service, internals, reports } = setup();
     internals.findStudents.mockResolvedValue([
@@ -442,6 +506,29 @@ describe('report generation input', () => {
     expect(reports.save).not.toHaveBeenCalled();
   });
 
+  it('allows previewing with skipSubjectValidation even when subject is not in semester repo', async () => {
+    const { service, internals } = setup();
+    internals.requireSubject.mockRejectedValue(new Error('学科不存在'));
+    const input = {
+      ...request,
+      reportVersion: 'v1',
+      subjectId: 'external-subject',
+      courseSelections: [
+        {
+          subjectId: 'external-subject',
+          courseScope: '',
+          manualContent: '实际内容',
+        },
+      ],
+    };
+    await expect(service.preview(input)).rejects.toThrow('学科不存在');
+    const result = await service.preview(input, {
+      skipSubjectValidation: true,
+    });
+    expect(result.scoreSummaries).toBeDefined();
+    expect(result.petPreviews).toBeDefined();
+  });
+
   describe.each(['v1', 'v2'])('%s future report end', (reportVersion) => {
     it.each([
       ['week', '2026-09-21', '2026-09-25', '2026-09-25T16:00:00.000Z'],
@@ -549,8 +636,8 @@ describe('report generation input', () => {
       teacherId: 'teacher',
     });
     expect(query.andWhere).toHaveBeenCalledWith(
-      'record.student_id = :studentId',
-      { studentId: 'teacher:one' },
+      'record.student_id IN (:...candidateIds)',
+      { candidateIds: ['teacher:one', 'one'] },
     );
     expect(query.andWhere).toHaveBeenCalledWith(
       'record.created_at >= :start AND record.created_at < :end',
@@ -564,6 +651,51 @@ describe('report generation input', () => {
       positiveItems: [{ label: '参与', count: 1 }],
     });
   });
+  it('does not count class-wide or bare school-number evaluations as student events', async () => {
+    const { internals } = setup();
+    internals.scoreSummary.mockRestore();
+    const rows = [
+      ...Array.from({ length: 39 }, () => ({ studentId: 'class-one' })),
+      { studentId: '16' },
+      ...Array.from({ length: 40 }, () => ({
+        studentId: 'teacher:class-one:16',
+      })),
+      { studentId: 'teacher:class-one:18' },
+      { studentId: 'profile-one' },
+    ];
+    let candidateIds: string[] = [];
+    const query = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn((_sql, parameters: { candidateIds?: string[] }) => {
+        candidateIds = parameters.candidateIds ?? candidateIds;
+        return query;
+      }),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () =>
+        rows
+          .filter((row) => candidateIds.includes(row.studentId))
+          .map((row, id) => ({
+            ...row,
+            id: String(id),
+            label: '早到',
+            delta: 1,
+          })),
+      ),
+    };
+    internals.records.createQueryBuilder = jest.fn().mockReturnValue(query);
+    const result = await internals.scoreSummary(
+      {
+        id: 'teacher:class-one:18',
+        logicalId: 'profile-one',
+        classId: 'class-one',
+        studentNo: '16',
+      },
+      new Date('2026-10-01'),
+      new Date('2026-11-01'),
+    );
+    expect(result.positiveItems).toEqual([{ label: '早到', count: 2 }]);
+  });
+
   it('counts all positive items before retaining only 80 evaluation details', async () => {
     const { internals } = setup();
     internals.scoreSummary.mockRestore();
@@ -1010,6 +1142,57 @@ describe('report generation input', () => {
       reports.save.mock.calls.at(-1)![0].snapshot.courseSelections,
     ).toEqual(input.courseSelections);
   });
+  it('regenerates a stage draft with fresh evidence and keeps it outside the old schedule', async () => {
+    const { service, internals, reports } = setup();
+    internals.findStudents.mockResolvedValue([
+      { id: 'one', name: '学生一', className: '一班' },
+    ]);
+    jest
+      .spyOn(
+        service as unknown as { assertAiReportPermission: () => Promise<void> },
+        'assertAiReportPermission',
+      )
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(
+        service as unknown as {
+          stageGrowthAssessmentSources: () => Promise<unknown[]>;
+        },
+        'stageGrowthAssessmentSources',
+      )
+      .mockResolvedValue([]);
+    await service.generate({
+      ...request,
+      reportVersion: 'v2',
+      reportKind: 'stage',
+      stageCustomName: '十月回顾',
+      studentFeedback: [],
+      studentIds: ['one'],
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '学习内容' },
+      ],
+    });
+    const old = reports.save.mock.calls[0]![0];
+    expect(old.snapshot.reportKind).toBe('stage');
+    old.snapshot.scheduledTask = { id: 'old-task' };
+    jest.spyOn(internals, 'findReport').mockResolvedValue(old);
+    internals.scoreSummary.mockResolvedValue({ records: [], count: 0 });
+    await service.regenerate(old.id);
+    const regenerated = reports.save.mock.calls[1]![0];
+    expect(regenerated.status).toBe('queued');
+    expect(regenerated.snapshot).toMatchObject({
+      reportKind: 'stage',
+      stageCustomName: '十月回顾',
+      scoreSummary: { records: [], count: 0 },
+      petHistoryStatus: 'unavailable',
+    });
+    expect(regenerated.snapshot.scheduledTask).toBeUndefined();
+    expect(internals.petForPeriod).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'one' }),
+      old.periodEnd,
+    );
+  });
+
   it('v2 selects explicitly chosen subjects and snapshots each student pet with both courses', async () => {
     const { service, internals, reports } = setup();
     internals.findUsableDocuments.mockResolvedValue([
@@ -1171,6 +1354,41 @@ describe('report generation input', () => {
       validateGeneratedReportContent(content, report.snapshot),
     ).not.toThrow();
   });
+  it('keeps the requested student and pet-history identity when roster numbers are swapped', async () => {
+    const { service, internals, reports } = setup();
+    internals.findStudents.mockRestore();
+    const selected = {
+      id: 'teacher:class-one:18',
+      logicalId: 'class-one:18',
+      studentNo: '16',
+      classId: 'class-one',
+      name: '学生一',
+    };
+    internals.students.find = jest.fn().mockResolvedValue([
+      selected,
+      {
+        ...selected,
+        id: 'teacher:class-one:16',
+        logicalId: 'class-one:16',
+        studentNo: '18',
+        name: '学生二',
+      },
+    ]);
+    await service.generate({
+      ...request,
+      studentIds: ['class-one:18'],
+      studentFeedback: [],
+    });
+    expect(reports.save.mock.calls[0]![0].studentId).toBe(selected.id);
+    expect(internals.petForPeriod).toHaveBeenCalledWith(
+      selected,
+      expect.any(Date),
+    );
+    await expect(
+      service.generate({ ...request, studentIds: ['different-class:18'] }),
+    ).rejects.toThrow('学生不存在');
+  });
+
   it('matches client student IDs to stored IDs without dropping or mixing classroom feedback', async () => {
     const { service, internals, reports } = setup();
     internals.findStudents.mockRestore();
@@ -1351,5 +1569,81 @@ describe('report generation input', () => {
     } finally {
       process.env = previous;
     }
+  });
+
+  it('allows scheduled tasks to queue more than 30 students (up to 200) for entire class', async () => {
+    const { service, internals, reports } = setup();
+    const qb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    reports.createQueryBuilder = jest.fn().mockReturnValue(qb);
+    const students35 = Array.from({ length: 35 }, (_, idx) => ({
+      id: `stu-${idx + 1}`,
+      name: `学生${idx + 1}`,
+      className: '一班',
+    }));
+    internals.findStudents.mockResolvedValue(students35);
+    (
+      service as unknown as { assertAiReportPermission: jest.Mock }
+    ).assertAiReportPermission = jest.fn().mockResolvedValue(true);
+
+    const scheduledTask = await service.createScheduledTask({
+      name: '全班阶段汇总',
+      termId: 'term',
+      generationMode: 'template',
+      studentIds: students35.map((s) => s.id),
+      startDate: '2026-09-01',
+      endDate: '2026-09-30',
+      executeAt: new Date(Date.now() + 60000).toISOString(),
+      courseSelections: [
+        { subjectId: 'subject', courseScope: '', manualContent: '内容' },
+      ],
+    });
+
+    expect(scheduledTask.studentIds).toHaveLength(35);
+    expect(reports.save).toHaveBeenCalledTimes(35);
+  });
+
+  it('rejects regular synchronous generate with > 30 students', async () => {
+    const { service, internals } = setup();
+    const students35 = Array.from({ length: 35 }, (_, idx) => `stu-${idx + 1}`);
+    internals.findStudents.mockResolvedValue(
+      students35.map((id) => ({ id, name: id, className: '一班' })),
+    );
+    await expect(
+      service.generate({
+        ...request,
+        studentIds: students35,
+      }),
+    ).rejects.toThrow('请选择学期、学科及 1 至 30 名学生');
+  });
+
+  it('rejects scheduled tasks exceeding 200 students', async () => {
+    const { service } = setup();
+    (
+      service as unknown as { assertAiReportPermission: jest.Mock }
+    ).assertAiReportPermission = jest.fn().mockResolvedValue(true);
+    const students201 = Array.from(
+      { length: 201 },
+      (_, idx) => `stu-${idx + 1}`,
+    );
+    await expect(
+      service.createScheduledTask({
+        name: '超额阶段汇总',
+        termId: 'term',
+        studentIds: students201,
+        startDate: '2026-09-01',
+        endDate: '2026-09-30',
+        executeAt: new Date(Date.now() + 60000).toISOString(),
+        courseSelections: [
+          { subjectId: 'subject', courseScope: '', manualContent: '内容' },
+        ],
+      }),
+    ).rejects.toThrow('请选择学期、学科及 1 至 200 名学生');
   });
 });

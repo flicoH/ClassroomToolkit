@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PetSprite, petOptions } from "./ReportPetView";
+import { PetSprite, petOptions, ReportPetView } from "./ReportPetView";
 
 describe("PetSprite", () => {
   it.each([
@@ -121,5 +121,28 @@ describe("PetSprite", () => {
         .filter(file => file.endsWith(".png"))
         .sort()
     ).toEqual([...usedAssets].sort());
+  });
+
+  it("handles pet identification by Chinese name or custom name without showing '暂未领养宠物'", () => {
+    // 1. 中文名称作为 petId
+    const htmlByChineseId = renderToStaticMarkup(
+      <ReportPetView pet={{ petId: "芽团兽", petName: "我的芽团", level: 3, stage: "成长形态", petHatched: true }} />
+    );
+    expect(htmlByChineseId).not.toContain("暂未领养宠物");
+    expect(htmlByChineseId).toContain("我的芽团");
+    expect(htmlByChineseId).toContain("sprout-puff");
+
+    // 2. 只有 petName 且 petId 为空
+    const htmlByPetNameOnly = renderToStaticMarkup(
+      <ReportPetView pet={{ petId: null, petName: "炭尾狐", level: 2, stage: "成长形态", petHatched: true }} />
+    );
+    expect(htmlByPetNameOnly).not.toContain("暂未领养宠物");
+    expect(htmlByPetNameOnly).toContain("炭尾狐");
+
+    // 3. 确实没有领养宠物的学生
+    const htmlUnadopted = renderToStaticMarkup(
+      <ReportPetView pet={{ petId: null, petName: null, level: 1, stage: "初始形态", petHatched: false }} />
+    );
+    expect(htmlUnadopted).toContain("暂未领养宠物");
   });
 });

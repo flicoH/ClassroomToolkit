@@ -148,6 +148,36 @@ describe("published report image", () => {
     await act(async () => button("重新生成").click());
     expect(document.body.querySelector("img")).not.toBeNull();
   });
+  it("automatically refreshes valid share link when reportId is provided and current share link is invalid", async () => {
+    const onShareUpdated = vi.fn();
+    fetchReport.mockImplementation(async (url: string) => {
+      if (url.includes("/shares")) {
+        return { ok: true, json: async () => ({ url: `https://reports.example.test/r/${token}` }) };
+      }
+      return { ok: true, json: async () => report };
+    });
+    await act(async () =>
+      root.render(
+        <ReportImageDialog
+          studentName="示例学生"
+          shareUrl="https://reports.example.test/r/invalid-old-link"
+          reportId="rep-1"
+          onClose={close}
+          onShareUpdated={onShareUpdated}
+        />
+      )
+    );
+    expect(fetchReport).toHaveBeenCalledWith(
+      "/api/semester-reports/reports/rep-1/shares",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchReport).toHaveBeenCalledWith(
+      `/api/public-reports/${token}`,
+      expect.objectContaining({ cache: "no-store" })
+    );
+    expect(onShareUpdated).toHaveBeenCalledWith(`https://reports.example.test/r/${token}`);
+    expect(document.body.querySelector("img")).not.toBeNull();
+  });
   it("rejects unrelated URLs without fetching external pages", async () => {
     await render("https://other.example.test/private");
     expect(fetchReport).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { BlockedIpEntity } from '../teacher-auth/entities/blocked-ip.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { StudentEntity } from '../students/entities/student.entity';
@@ -10,6 +11,12 @@ import { AdminDatabase } from './admin.database';
 import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { FeedbackEntity } from '../feedback/entities/feedback.entity';
+import { ReportAiSettingEntity } from './entities/report-ai-setting.entity';
+import { ReportAiTeacherPermissionEntity } from './entities/report-ai-teacher-permission.entity';
+import {
+  SemesterReportEntity,
+  SemesterReportTokenCallEntity,
+} from '../semester-reports/semester-report.entity';
 /** 管理接口遵循 Controller / Service / Database 分层，认证模块独立注册。 */
 @Module({
   imports: [
@@ -21,6 +28,11 @@ import { FeedbackEntity } from '../feedback/entities/feedback.entity';
       AnalyticsEventEntity,
       AnalyticsSettingEntity,
       FeedbackEntity,
+      BlockedIpEntity,
+      ReportAiSettingEntity,
+      ReportAiTeacherPermissionEntity,
+      SemesterReportEntity,
+      SemesterReportTokenCallEntity,
     ]),
   ],
   controllers: [AdminController],

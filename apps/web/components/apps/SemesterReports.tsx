@@ -56,7 +56,12 @@ import {
 } from "@/components/semester-reports/StudentFeedbackForm";
 
 type Term = { id: string; name: string; startDate: string; endDate: string };
-type Subject = { id: string; name: string; performanceConfig?: PerformanceField[] | null };
+type Subject = {
+  id: string;
+  name: string;
+  termId?: string | null;
+  performanceConfig?: PerformanceField[] | null;
+};
 /** 报告选择器读取宠物积分学生 ID，头像则由后端匹配学生管理资料后写入报告快照。 */
 type Student = ReportPet & { id: string; name: string; classId: string; className: string; score: number };
 /** 列表响应只提供摘要；打开编辑时再取详情，避免轮询携带照片和完整报告正文。 */
@@ -189,7 +194,12 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
   const [mobileSection, setMobileSection] = useState<"courses" | "compose" | "reports">("courses");
   function showSection(section: typeof mobileSection) {
     setMobileSection(section);
-    if (scrollRef.current && window.matchMedia?.("(max-width: 767px)").matches) scrollRef.current.scrollTop = 0;
+    // 手机端切换面板后从顶部开始，桌面旧版保留同页区块导航。
+    if (window.matchMedia?.("(max-width: 767px)").matches) {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    } else if (!isV2) {
+      document.getElementById(`${sectionId}-${section}`)?.scrollIntoView?.({ block: "start" });
+    }
   }
   const [terms, setTerms] = useState<Term[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -389,7 +399,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
     null
   );
   const [documentRefreshFailed, setDocumentRefreshFailed] = useState(false);
-  const [imageReport, setImageReport] = useState<{ studentName: string; url: string } | null>(null);
+  const [imageReport, setImageReport] = useState<{ studentName: string; url: string; reportId?: string } | null>(null);
   const periodTitles: Record<string, string> = { week: "本周", month: "本月", term: "本学期" };
   // Historical reports can have a different period from the current creation form.
   const editingPeriodTitle = periodTitles[editing?.period ?? ""] ?? "本期";
@@ -1017,6 +1027,32 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       setPublishingReports(false);
     }
   }
+  async function handleOpenImageReport(report: Report) {
+    if (!report.share) return;
+    let url = report.share.url;
+    const isValidTokenUrl = (u: string) => {
+      try {
+        const path = new URL(u, window.location.origin).pathname.replace(/\/+$/, "");
+        return /^\/r\/[A-Za-z0-9_-]{40,50}$/.test(path);
+      } catch {
+        return false;
+      }
+    };
+    if (!isValidTokenUrl(url)) {
+      try {
+        const result = await request.post<{ url: string; shareId: string }, { url: string; shareId: string }>(
+          `${base}/reports/${report.id}/shares`
+        );
+        url = localReportShareUrl(result.url, window.location.origin);
+        setReports(old =>
+          old.map(row => (row.id === report.id ? { ...row, share: { id: result.shareId, url } } : row))
+        );
+      } catch {
+        // 请求失败仍传递原 url 以便弹窗给出提示
+      }
+    }
+    setImageReport({ studentName: report.studentName, url, reportId: report.id });
+  }
   async function confirmDelete() {
     const target = deleteTarget;
     if (!target) return;
@@ -1257,7 +1293,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
       </header>
       <nav
         aria-label={`${reportTitle}导航`}
-        className="sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md md:hidden"
+        className={`sticky top-0 z-10 mb-4 grid grid-cols-3 gap-1 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur-md ${isV2 ? "md:hidden" : "md:static"}`}
       >
         {(
           [
@@ -2351,7 +2387,7 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
                     size="sm"
                     variant="outline"
                     disabled={!!actingReportId || !!loadingReportId || publishingReports}
-                    onClick={() => setImageReport({ studentName: report.studentName, url: report.share!.url })}
+                    onClick={() => void handleOpenImageReport(report)}
                   >
                     <ImageIcon />
                     生成报告图片
@@ -2423,7 +2459,20 @@ export function SemesterReports({ version = "v1" }: { version?: "v1" | "v2" }) {
         <ReportImageDialog
           studentName={imageReport.studentName}
           shareUrl={imageReport.url}
+          reportId={imageReport.reportId}
           onClose={() => setImageReport(null)}
+          onShareUpdated={newUrl => {
+            if (imageReport.reportId) {
+              const localUrl = localReportShareUrl(newUrl, window.location.origin);
+              setReports(old =>
+                old.map(row =>
+                  row.id === imageReport.reportId
+                    ? { ...row, share: row.share ? { ...row.share, url: localUrl } : { id: "share", url: localUrl } }
+                    : row
+                )
+              );
+            }
+          }}
         />
       )}
       {editing &&

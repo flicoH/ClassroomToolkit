@@ -40,4 +40,123 @@ describe('report student identity compatibility', () => {
       t.service['findStudents'](['unowned-identity']),
     ).rejects.toThrow('学生不存在');
   });
+
+  it('provisions newly added student from studentProfiles when missing from pet students', async () => {
+    const t = setup();
+    const newStudentProfile = {
+      id: 'new-stu-uuid',
+      classroomId: 'cls-1',
+      name: '新学生',
+      studentNo: '202601',
+      groupName: '第一组',
+      teacherId: 'teacher',
+    };
+    const mockClassroom = {
+      id: 'cls-1',
+      name: '二年级三班',
+      teacherId: 'teacher',
+    };
+    const studentProfiles = {
+      findOne: jest.fn().mockResolvedValue(newStudentProfile),
+      manager: {
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(mockClassroom),
+        }),
+      },
+    };
+    const createMock = jest.fn((props) => ({ ...props }));
+    const saveMock = jest.fn((props) => Promise.resolve({ ...props }));
+    Object.assign(t.service, {
+      studentProfiles,
+      students: {
+        find: t.find,
+        create: createMock,
+        save: saveMock,
+      },
+    });
+
+    const result = await t.service['findStudents'](['new-stu-uuid']);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('新学生');
+    expect(result[0].className).toBe('二年级三班');
+    expect(result[0].rosterActive).toBe(true);
+    expect(saveMock).toHaveBeenCalled();
+  });
+
+  it('reuses existing pet student with score and avoids duplicate creation when student profile matches class and studentNo/name', async () => {
+    const existingPet = {
+      id: 'teacher:cls-1:202602',
+      logicalId: 'cls-1:202602',
+      teacherId: 'teacher',
+      classId: 'cls-1',
+      studentNo: '202602',
+      name: '已有学生',
+      score: 25,
+      rosterActive: true,
+    } as PetStudentEntity;
+
+    const find = jest.fn().mockResolvedValue([existingPet]);
+    const service = Object.assign(
+      Object.create(SemesterReportsService.prototype) as SemesterReportsService,
+      { teacher: { teacherId: 'teacher' } },
+    );
+
+    const profile = {
+      id: 'profile-uuid-2',
+      classroomId: 'cls-1',
+      name: '已有学生',
+      studentNo: '202602',
+      teacherId: 'teacher',
+    };
+
+    const studentProfiles = {
+      findOne: jest.fn().mockResolvedValue(profile),
+      manager: {
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest
+            .fn()
+            .mockResolvedValue({ id: 'cls-1', name: '二年级三班' }),
+        }),
+      },
+    };
+    const createMock = jest.fn();
+    const saveMock = jest.fn();
+    Object.assign(service, {
+      studentProfiles,
+      students: {
+        find,
+        create: createMock,
+        save: saveMock,
+      },
+    });
+
+    const result = await service['findStudents'](['profile-uuid-2']);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('teacher:cls-1:202602');
+    expect(result[0].score).toBe(25);
+    expect(result[0].name).toBe('已有学生');
+    expect(createMock).not.toHaveBeenCalled();
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps full persisted IDs and excludes inferred roster aliases from evaluation records', async () => {
+    const service = Object.assign(
+      Object.create(SemesterReportsService.prototype) as SemesterReportsService,
+      { teacher: { teacherId: 'teacher' } },
+    );
+
+    const student = {
+      id: 'teacher:cls-1:uuid-99',
+      logicalId: 'uuid-99',
+      classId: 'cls-1',
+      studentNo: '10',
+    };
+    const candidates = service['getStudentCandidateIds'](student);
+
+    expect(candidates).toContain('teacher:cls-1:uuid-99');
+    expect(candidates).toContain('cls-1:uuid-99');
+    expect(candidates).toContain('uuid-99');
+    expect(candidates).toContain('teacher:uuid-99');
+    expect(candidates).toHaveLength(4);
+  });
 });

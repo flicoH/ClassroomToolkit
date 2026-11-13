@@ -1,7 +1,9 @@
+import { ipLocation } from '../common/ip-location';
 import { Optional } from '@nestjs/common';
 import { AnalyticsService } from '../analytics/analytics.service';
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   Injectable,
   UnauthorizedException,
@@ -34,6 +36,7 @@ export class TeacherAuthService {
 
   /** 注册教师账号，创建会话并记录注册与自动登录事件。 */
   async register(dto: RegisterTeacherDto, clientKey = 'unknown') {
+    await this.checkIp(clientKey);
     const { username, password, name, email, avatar } =
       this.validateRegisterInput(dto);
     this.consumeAttempt(
@@ -53,18 +56,29 @@ export class TeacherAuthService {
       avatar,
       passwordHash: await this.hashPassword(password, salt),
       passwordSalt: salt,
+      status: 'active',
+      lockedAt: null,
       createdAt: new Date().toISOString(),
     };
 
     await this.database.saveTeacher(teacher);
     const result = await this.createAuthResult(teacher);
     await this.analytics?.record(teacher.id, 'register');
-    await this.analytics?.record(teacher.id, 'auto_login');
+    await this.analytics?.record(
+      teacher.id,
+      'auto_login',
+      undefined,
+      undefined,
+      undefined,
+      clientKey,
+      await ipLocation(clientKey),
+    );
     return result;
   }
 
   /** 校验教师账号密码，登录成功后创建会话。 */
   async login(dto: LoginTeacherDto, clientKey = 'unknown') {
+    await this.checkIp(clientKey);
     const { username, password } = this.validateLoginInput(dto);
     // BFF 部署下多个教师可能共享代理地址，账号维度避免一人失败锁住全部用户。
     const attemptKey = `login:${clientKey}:${username}`;
@@ -75,13 +89,47 @@ export class TeacherAuthService {
       ? await this.verifyPassword(password, teacher)
       : await this.verifyUnknownPassword(password);
     if (!teacher || !valid) {
-      await this.analytics?.record(teacher?.id ?? null, 'login_failed');
+      await this.analytics?.record(
+        teacher?.id ?? null,
+        'login_failed',
+        undefined,
+        undefined,
+        undefined,
+        clientKey,
+        await ipLocation(clientKey),
+      );
       throw new UnauthorizedException('用户名或密码错误');
+    }
+    if (teacher.status === 'locked') {
+      throw new ForbiddenException({
+        code: 'TEACHER_ACCOUNT_LOCKED',
+        message: '该教师账号已被锁定，无法登录，请联系管理员处理',
+      });
     }
     this.attempts.delete(attemptKey);
     const result = await this.createAuthResult(teacher);
-    await this.analytics?.record(teacher.id, 'login');
+    await this.analytics?.record(
+      teacher.id,
+      'login',
+      undefined,
+      undefined,
+      undefined,
+      clientKey,
+      await ipLocation(clientKey),
+    );
     return result;
+  }
+
+  /** 仅教师登录和注册自动登录受限；管理员使用独立认证服务。 */
+  private async checkIp(ip: string, token?: string) {
+    if (await this.database.isIpBlocked(ip)) {
+      // 撤销当前令牌，防止切换网络或解封后复用已强制退出的会话。
+      if (token) await this.logout({ token });
+      throw new ForbiddenException({
+        code: 'IP_LOGIN_BLOCKED',
+        message: '禁止账号登录，请联系管理员解封',
+      });
+    }
   }
 
   /** 复用认证逻辑返回当前教师资料。 */
@@ -90,7 +138,8 @@ export class TeacherAuthService {
   }
 
   /** 通过会话令牌认证教师身份。 */
-  async authenticate(token: string) {
+  async authenticate(token: string, ip?: string) {
+    if (ip) await this.checkIp(ip, token);
     const teacher = await this.getTeacherByToken(token);
     return this.toProfile(teacher);
   }
@@ -134,6 +183,10 @@ export class TeacherAuthService {
     }
     const teacher = await this.database.findTeacherById(session.teacherId);
     if (!teacher) throw new UnauthorizedException('教师账号不存在');
+    if (teacher.status === 'locked') {
+      await this.database.deleteSession(session.id);
+      throw new UnauthorizedException('该教师账号已被锁定，登录已失效');
+    }
     return teacher;
   }
 
@@ -242,6 +295,7 @@ export class TeacherAuthService {
       name: teacher.name,
       email: teacher.email,
       avatar: teacher.avatar,
+      status: teacher.status ?? 'active',
     };
   }
 }

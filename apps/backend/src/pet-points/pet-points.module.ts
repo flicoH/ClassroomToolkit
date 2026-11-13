@@ -1,3 +1,5 @@
+import { ClassroomEntity } from '../students/entities/classroom.entity';
+import { StudentEntity } from '../students/entities/student.entity';
 import { PetCompletedEntity } from './entities/pet-completed.entity';
 import { PetOperationEntity } from './entities/pet-operation.entity';
 import { Module } from '@nestjs/common';
@@ -16,6 +18,8 @@ import { PetPointsService } from './pet-points.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      ClassroomEntity,
+      StudentEntity,
       PetStudentEntity,
       PetCompletedEntity,
       PetOperationEntity,

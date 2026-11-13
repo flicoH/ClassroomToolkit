@@ -7,7 +7,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, MoreVertical, Pencil, Plus, Search, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
+import { ArrowDownUp, Pencil, Plus, Search, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -166,6 +166,7 @@ export function StudentManagement() {
   const modalRef = useRef<HTMLDivElement>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [groupDeleteTarget, setGroupDeleteTarget] = useState<string | null>(null);
+  const [classDeleteTarget, setClassDeleteTarget] = useState<ClassRoom | null>(null);
 
   // 默认班级只用于空白/加载界面的展示；所有写入都必须绑定实际从后端读取的班级。
   const displayClasses = classes.length ? classes : defaultClasses;
@@ -371,6 +372,29 @@ export function StudentManagement() {
     closeModal();
   };
 
+  /** 打开班级删除确认弹窗；至少保留一个班级。 */
+  const openDeleteClass = (classRoom: ClassRoom) => {
+    if (classes.length <= 1) return;
+    setClassDeleteTarget(classRoom);
+  };
+
+  /** 删除班级，并自动切换当前高亮班级至首个剩余班级；至少保留一个班级。 */
+  const confirmRemoveClass = async (classId: string) => {
+    if (classes.length <= 1) return;
+    try {
+      await request({
+        url: `/api/classes/${encodeURIComponent(classId)}`,
+        method: "DELETE"
+      });
+      const nextClasses = classes.filter(item => item.id !== classId);
+      setClasses(nextClasses);
+      setActiveClassId(current => (current === classId ? (nextClasses[0]?.id ?? "") : current));
+      setClassDeleteTarget(null);
+    } catch {
+      setErrorMessage("删除班级失败，请稍后重试");
+    }
+  };
+
   /** 批量导入学生；重复行会留在文本框里供继续修正。 */
   const importStudents = async () => {
     if (!activeBackendClass || parseImportRows(importText).length === 0) return;
@@ -513,16 +537,29 @@ export function StudentManagement() {
                       {classRoom.students.length} 名学生
                     </div>
                   </button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="编辑班级名称"
-                    disabled={loading || !classes.some(item => item.id === classRoom.id)}
-                    onClick={() => openEditClass(classRoom)}
-                    className="h-8 w-8 shrink-0 text-slate-400 hover:bg-white/70 hover:text-blue-600 dark:hover:bg-slate-800"
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`编辑班级 ${classRoom.name}`}
+                      disabled={loading || !classes.some(item => item.id === classRoom.id)}
+                      onClick={() => openEditClass(classRoom)}
+                      className="h-8 w-8 text-slate-400 hover:bg-white/70 hover:text-blue-600 dark:hover:bg-slate-800"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`删除班级 ${classRoom.name}`}
+                      disabled={loading || classes.length <= 1 || !classes.some(item => item.id === classRoom.id)}
+                      onClick={() => openDeleteClass(classRoom)}
+                      title={classes.length <= 1 ? "最少保留一个班级" : "删除班级"}
+                      className="h-8 w-8 text-slate-400 hover:bg-white/70 hover:text-rose-600 dark:hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -733,6 +770,13 @@ export function StudentManagement() {
                   onChange={setClassName}
                   onClose={closeModal}
                   onConfirm={updateClass}
+                  canDelete={classes.length > 1}
+                  onDelete={() => {
+                    const target = classes.find(item => item.id === editingClassId);
+                    if (!target || classes.length <= 1) return;
+                    closeModal();
+                    setClassDeleteTarget(target);
+                  }}
                 />
               )}
               {modal === "groups" && activeClass && (
@@ -767,6 +811,14 @@ export function StudentManagement() {
         confirmText="删除"
         onConfirm={() => groupDeleteTarget && void deleteGroup(groupDeleteTarget)}
         onCancel={() => setGroupDeleteTarget(null)}
+      />
+      <ConfirmDialog
+        open={Boolean(classDeleteTarget)}
+        title="删除班级"
+        description={`确定删除班级「${classDeleteTarget?.name ?? ""}」吗？班级内的学生档案将一并被清理，删除后不可恢复。`}
+        confirmText="删除"
+        onConfirm={() => classDeleteTarget && void confirmRemoveClass(classDeleteTarget.id)}
+        onCancel={() => setClassDeleteTarget(null)}
       />
     </>
   );
@@ -893,22 +945,46 @@ function ClassModal({
   value,
   onChange,
   onClose,
-  onConfirm
+  onConfirm,
+  onDelete,
+  canDelete = true
 }: {
   title?: string;
   value: string;
   onChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
+  onDelete?: () => void;
+  canDelete?: boolean;
 }) {
   return (
     <>
       <ModalHeader title={title} onClose={onClose} />
-      <div className="p-5 sm:p-7">
+      <div className="space-y-4 p-5 sm:p-7">
         <label className="block space-y-2">
           <span className="text-sm font-bold">班级名称</span>
           <Input value={value} onChange={event => onChange(event.target.value)} placeholder="请输入班级名称" />
         </label>
+        {onDelete && (
+          <div className="flex items-center justify-between rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 dark:border-rose-950 dark:bg-rose-950/30">
+            <div>
+              <p className="text-sm font-bold text-rose-600 dark:text-rose-300">删除当前班级</p>
+              <p className="text-xs font-medium text-rose-400">
+                {canDelete ? "班级内学生档案将一并被清理" : "最少保留一个班级，无法删除"}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!canDelete}
+              className="text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950 disabled:opacity-40"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-4 w-4" />
+              <span className="ml-1">删除</span>
+            </Button>
+          </div>
+        )}
       </div>
       <ModalFooter onClose={onClose} onConfirm={onConfirm} confirmText="确定" disabled={!value.trim()} />
     </>

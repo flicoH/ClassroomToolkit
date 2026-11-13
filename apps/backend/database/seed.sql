@@ -18,9 +18,9 @@ INSERT INTO student_groups (teacher_id, id, classroom_id, name) VALUES
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO student_students (teacher_id, id, classroom_id, name, student_no, gender, group_name) VALUES
-  (@seed_teacher_id, '2026001', 'grade-1', '周杰伦', '2026001', '男', '第一组'),
+  (@seed_teacher_id, '2026001', 'grade-1', '林俊杰', '2026001', '男', '第一组'),
   (@seed_teacher_id, '2026002', 'grade-1', '周杰伦', '2026002', '男', '第一组'),
-  (@seed_teacher_id, '2026003', 'grade-1', '周杰伦', '2026003', '男', '第二组'),
+  (@seed_teacher_id, '2026003', 'grade-1', '陈奕迅', '2026003', '男', '第二组'),
   (@seed_teacher_id, '2026101', 'grade-2', '孙燕姿', '2026101', '女', 'A 组'),
   (@seed_teacher_id, '2026102', 'grade-2', '林俊杰', '2026102', '男', 'A 组')
 ON DUPLICATE KEY UPDATE name = VALUES(name), gender = VALUES(gender), group_name = VALUES(group_name);
@@ -34,9 +34,9 @@ INSERT INTO task_stats_tasks (teacher_id, id, title, class_name, task_type, stat
 ON DUPLICATE KEY UPDATE title = VALUES(title);
 
 INSERT INTO task_stats_students (teacher_id, id, task_id, student_id, name, student_no, status) VALUES
-  (@seed_teacher_id, 'homework-check-2026001', 'homework-check', '2026001', '周杰伦', '2026001', '未完成'),
+  (@seed_teacher_id, 'homework-check-2026001', 'homework-check', '2026001', '林俊杰', '2026001', '未完成'),
   (@seed_teacher_id, 'homework-check-2026002', 'homework-check', '2026002', '周杰伦', '2026002', '未完成'),
-  (@seed_teacher_id, 'homework-check-2026003', 'homework-check', '2026003', '周杰伦', '2026003', '未完成')
+  (@seed_teacher_id, 'homework-check-2026003', 'homework-check', '2026003', '陈奕迅', '2026003', '未完成')
 ON DUPLICATE KEY UPDATE status = VALUES(status);
 
 -- ==============================================================================================
