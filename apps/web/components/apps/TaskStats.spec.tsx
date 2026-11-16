@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deriveStatusFromSubItems, statusStyles, TaskStats, type TaskItem } from "./TaskStats";
+import { statusStyles, TaskStats, type TaskItem } from "./TaskStats";
 
 const demoTasks: TaskItem[] = [
   {
@@ -9,7 +9,7 @@ const demoTasks: TaskItem[] = [
     title: "数学第一单元随堂练习与订正",
     className: "高一(1)班",
     type: "status",
-    statusCount: 3,
+    statusCount: 4,
     createdAt: "2026-11-16",
     items: [
       { id: "sub-1", title: "订正第 1 题集合错题" },
@@ -29,7 +29,7 @@ const demoTasks: TaskItem[] = [
         id: "s2",
         name: "林晓雨",
         studentNo: "02",
-        status: "待改正",
+        status: "待提交",
         checkedItemIds: ["sub-1"],
         photo: null
       },
@@ -37,7 +37,7 @@ const demoTasks: TaskItem[] = [
         id: "s3",
         name: "张伟",
         studentNo: "03",
-        status: "待改正",
+        status: "待提交",
         checkedItemIds: ["sub-1", "sub-2"],
         photo: null
       },
@@ -69,7 +69,7 @@ const demoTasks: TaskItem[] = [
         id: "s7",
         name: "赵敏",
         studentNo: "07",
-        status: "待改正",
+        status: "待提交",
         checkedItemIds: ["sub-2"],
         photo: null
       },
@@ -104,25 +104,6 @@ const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("@/lib/request", () => ({ default: mocks.request }));
 
 describe("TaskStats Subitems & 三态 Logic", () => {
-  it("derives status correctly from subitems checklist", () => {
-    const items = [
-      { id: "item-1", title: "订正第 1 题" },
-      { id: "item-2", title: "完成阅读记录" },
-      { id: "item-3", title: "提交思考题" }
-    ];
-
-    // 全部没勾选为未完成
-    expect(deriveStatusFromSubItems(items, [])).toBe("未完成");
-    // 只勾选一部分显示待改正
-    expect(deriveStatusFromSubItems(items, ["item-1"])).toBe("待改正");
-    expect(deriveStatusFromSubItems(items, ["item-1", "item-2"])).toBe("待改正");
-    // 全部勾选为已完成
-    expect(deriveStatusFromSubItems(items, ["item-1", "item-2", "item-3"])).toBe("已完成");
-    // 空子项默认为未完成
-    expect(deriveStatusFromSubItems([], [])).toBe("未完成");
-    expect(deriveStatusFromSubItems(undefined, [])).toBe("未完成");
-  });
-
   it("defines status styles with correct colors and labels", () => {
     expect(statusStyles["已完成"].label).toContain("已完成（绿色）");
     expect(statusStyles["已完成"].bar).toContain("bg-emerald-500");
@@ -156,7 +137,7 @@ describe("TaskStats UI Component", () => {
         return {
           id: student.id,
           checkedItemIds: previous,
-          status: deriveStatusFromSubItems(demoTasks[0]!.items, previous)
+          status: previous.length === 3 ? "已完成" : "待提交"
         };
       }
       return [];
@@ -221,12 +202,12 @@ describe("TaskStats UI Component", () => {
       taskCard?.click();
     });
 
-    // 查找林晓雨卡片（初始勾选了 1 项，状态为「待改正」）
+    // 查找林晓雨卡片（初始勾选了 1 项，状态为「待提交」）
     const studentCard = [...container.querySelectorAll("main > div")].find(
       el => el.textContent?.includes("林晓雨") && el.textContent?.includes("#02")
     );
     expect(studentCard).toBeDefined();
-    expect(studentCard?.textContent).toContain("待改正");
+    expect(studentCard?.textContent).toContain("待提交");
 
     // 勾选未勾选的第 2 项子项
     const checkboxes = studentCard?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
@@ -283,7 +264,7 @@ describe("TaskStats UI Component", () => {
     await act(async () => {
       root.render(<TaskStats />);
     });
-    expect(container.querySelector("article")?.textContent).toContain("待改正 3");
+    expect(container.querySelector("article")?.textContent).toContain("待提交 3");
     await act(async () => {
       [...container.querySelectorAll("button")].find(button => button.textContent === "统计")?.click();
     });
@@ -305,7 +286,7 @@ describe("TaskStats UI Component", () => {
     const student = [...container.querySelectorAll("details")].find(row =>
       row.querySelector("summary")?.textContent?.includes("林晓雨")
     );
-    expect(student?.querySelector("summary")?.textContent).toContain("待改正 1");
+    expect(student?.querySelector("summary")?.textContent).toContain("待提交 1");
     await act(async () => {
       student?.querySelector("summary")?.click();
     });
@@ -349,6 +330,116 @@ describe("TaskStats UI Component", () => {
     expect(container.querySelector('[role="status"]')?.textContent).toContain("没有任务");
   });
 
+  it("marks a checked student for correction and completes all subitems on review", async () => {
+    await act(async () => {
+      root.render(<TaskStats />);
+    });
+    await act(async () => {
+      container.querySelector("article")?.click();
+    });
+    const cards = [...container.querySelectorAll("main > div")];
+    const partial = cards.find(card => card.textContent?.includes("#02"));
+    const zero = cards.find(card => card.textContent?.includes("#04"));
+    const button = partial?.querySelector("button");
+    expect(zero?.querySelector("button")).toBeNull();
+    expect(button?.textContent).toBe("待改正");
+    mocks.request.mockResolvedValueOnce({
+      id: "s2",
+      status: "待改正",
+      checkedItemIds: ["sub-1"],
+      needsCorrection: true
+    });
+    await act(async () => {
+      button?.click();
+    });
+    expect(mocks.request).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        url: "/api/task-stats/demo-task-1/students/s2/review",
+        data: { action: "requestCorrection" }
+      })
+    );
+    expect(button?.textContent).toBe("已完成");
+    expect(partial?.textContent).toContain("1/3 完成");
+    mocks.request.mockResolvedValueOnce({
+      id: "s2",
+      status: "已完成",
+      checkedItemIds: ["sub-1", "sub-2", "sub-3"],
+      needsCorrection: false
+    });
+    await act(async () => {
+      button?.click();
+    });
+    expect(button?.textContent).toBe("待改正");
+    expect(partial?.textContent).toContain("3/3 完成");
+  });
+
+  it("ranks single-task progress with ties and switches to remaining subitems", async () => {
+    // jsdom does not implement the native dialog methods.
+    if (!HTMLDialogElement.prototype.showModal) {
+      HTMLDialogElement.prototype.showModal = function () {
+        this.open = true;
+      };
+      HTMLDialogElement.prototype.close = function () {
+        this.open = false;
+      };
+    }
+    await act(async () => {
+      root.render(<TaskStats />);
+    });
+    await act(async () => {
+      container.querySelector("article")?.click();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find(button => button.textContent === "排名")?.click();
+    });
+    const dialog = container.querySelector("dialog");
+    expect(dialog?.open).toBe(true);
+    expect(dialog?.querySelector("h2")?.textContent).toBe("完成排行榜");
+    const modes = dialog?.querySelector('[role="group"][aria-label="榜单类型"]');
+    expect(modes?.querySelector('[aria-pressed="true"]')?.textContent).toBe("完成任务");
+    expect(dialog?.textContent).toContain("已完成子项 / 总数");
+    expect(
+      [...dialog!.querySelectorAll("li [aria-label]")].slice(0, 4).map(rank => rank.getAttribute("aria-label"))
+    ).toEqual(["第 1 名", "第 1 名", "第 1 名", "第 4 名"]);
+    await act(async () => {
+      [...dialog!.querySelectorAll("button")].find(button => button.textContent === "未完成任务")?.click();
+    });
+    expect(dialog?.querySelector("h2")?.textContent).toBe("未完成排行榜");
+    expect(modes?.querySelector('[aria-pressed="true"]')?.textContent).toBe("未完成任务");
+    expect(dialog?.textContent).toContain("未完成子项 / 总数");
+    expect(dialog?.querySelector("li")?.textContent).toContain("王芳");
+    await act(async () => {
+      dialog?.dispatchEvent(new Event("cancel", { cancelable: true }));
+    });
+    expect(container.querySelector("dialog")).toBeNull();
+  });
+
+  it("uses final statuses in the filtered cross-task leaderboard", async () => {
+    await act(async () => {
+      root.render(<TaskStats />);
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find(button => button.textContent === "排行榜")?.click();
+    });
+    expect(container.querySelector("h2")?.textContent).toBe("完成排行榜");
+    expect(container.querySelector("ol li")?.textContent).toContain("陈小明");
+    const classroom = container.querySelector<HTMLSelectElement>("#task-report-class")!;
+    await act(async () => {
+      classroom.value = "高一(1)班";
+      classroom.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find(button => button.textContent === "未完成任务")?.click();
+    });
+    expect(classroom.value).toBe("高一(1)班");
+    expect(container.textContent).toContain("高一(1)班 · 1 项任务");
+    expect(container.textContent).toContain("未完成任务 / 总数");
+    const names = container.querySelector("ol")?.textContent;
+    expect(names).toContain("王芳");
+    expect(names).toContain("刘强");
+    expect(names).not.toContain("林晓雨");
+  });
+
   it("returns from the create form to the task list", async () => {
     await act(async () => {
       root.render(<TaskStats />);
@@ -377,8 +468,7 @@ describe("TaskStats UI Component", () => {
       addSubItemBtn?.click();
     });
 
-    expect(container.textContent).toContain("3 种任务状态");
-    expect(container.textContent).not.toContain("4 种状态");
+    expect(container.textContent).toContain("4 种任务状态");
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="返回任务列表"]')?.click();
     });

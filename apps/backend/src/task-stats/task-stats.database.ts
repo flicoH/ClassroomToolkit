@@ -1,9 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskStudentEntity } from './entities/task-student.entity';
 import { TaskEntity } from './entities/task.entity';
-import { StudentStatus, TaskItem } from './task-stats.types';
+import {
+  Checklist,
+  ReviewAction,
+  StudentStatus,
+  TaskItem,
+} from './task-stats.types';
 import { createEntityId } from '../common/id';
 import { ClassroomEntity } from '../students/entities/classroom.entity';
 import { TeacherContext } from '../auth/teacher-context';
@@ -82,7 +87,12 @@ export class TaskStatsDatabase {
             studentId: student.id,
             name: student.name,
             studentNo: student.studentNo,
-            status: student.status === '待改正' ? '需订正' : student.status,
+            status:
+              student.status === '待改正'
+                ? '需订正'
+                : student.status === '待提交'
+                  ? '未完成'
+                  : student.status,
             score: student.score === undefined ? null : String(student.score),
           })),
         );
@@ -112,6 +122,52 @@ export class TaskStatsDatabase {
     itemId: string,
     checked: boolean,
   ) {
+    return this.updateChecklist(
+      taskId,
+      studentId,
+      ({ checkedItemIds, needsCorrection }) => {
+        const ids = new Set(checkedItemIds);
+        if (checked) ids.add(itemId);
+        else ids.delete(itemId);
+        return {
+          checkedItemIds: [...ids],
+          needsCorrection: ids.size > 0 && needsCorrection,
+        };
+      },
+    );
+  }
+
+  async review(
+    taskId: string,
+    studentId: string,
+    itemIds: string[],
+    action: ReviewAction,
+  ) {
+    return this.updateChecklist(taskId, studentId, (checklist) => {
+      if (action === 'complete') {
+        if (
+          !checklist.needsCorrection &&
+          !itemIds.every((id) => checklist.checkedItemIds.includes(id))
+        ) {
+          throw new ConflictException('当前学生未被标记待改正');
+        }
+        return { checkedItemIds: itemIds, needsCorrection: false };
+      }
+      const checkedItemIds = checklist.checkedItemIds.filter((id) =>
+        itemIds.includes(id),
+      );
+      if (!checkedItemIds.length)
+        throw new ConflictException('至少勾选一个子项才能标记待改正');
+      return { checkedItemIds, needsCorrection: true };
+    });
+  }
+
+  /** 勾选和审核共用行锁，原子更新勾选与待改正标记。 */
+  private async updateChecklist(
+    taskId: string,
+    studentId: string,
+    update: (checklist: Checklist) => Checklist,
+  ) {
     const where = {
       taskId,
       teacherId: this.teacherContext.teacherId,
@@ -123,16 +179,12 @@ export class TaskStatsDatabase {
         lock: { mode: 'pessimistic_write' },
       });
       if (!row) return undefined;
-      const ids = new Set(row.checkedItemIds ?? []);
-      if (checked) ids.add(itemId);
-      else ids.delete(itemId);
-      const checkedItemIds = [...ids];
-      await manager.update(
-        TaskStudentEntity,
-        { ...where, id: row.id },
-        { checkedItemIds },
-      );
-      return checkedItemIds;
+      const next = update({
+        checkedItemIds: row.checkedItemIds ?? [],
+        needsCorrection: Boolean(row.needsCorrection),
+      });
+      await manager.update(TaskStudentEntity, { ...where, id: row.id }, next);
+      return next;
     });
   }
 
@@ -141,6 +193,7 @@ export class TaskStatsDatabase {
       { taskId, teacherId: this.teacherContext.teacherId },
       {
         checkedItemIds: null,
+        needsCorrection: null,
         status: '未完成',
       },
     );
@@ -160,7 +213,12 @@ export class TaskStatsDatabase {
         studentId,
       },
       {
-        status: status === '待改正' ? '需订正' : status,
+        status:
+          status === '待改正'
+            ? '需订正'
+            : status === '待提交'
+              ? '未完成'
+              : status,
         score: score === undefined ? undefined : String(score),
       },
     );
@@ -217,6 +275,7 @@ export class TaskStatsDatabase {
           studentNo: student.studentNo,
           status: student.status,
           checkedItemIds: student.checkedItemIds ?? [],
+          needsCorrection: Boolean(student.needsCorrection),
           score: student.score === null ? undefined : Number(student.score),
         })),
     };

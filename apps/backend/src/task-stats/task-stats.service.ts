@@ -11,7 +11,12 @@ import {
   UpdateTaskStudentStatusDto,
 } from './task-stats.dto';
 import { TaskStatsDatabase } from './task-stats.database';
-import { StudentStatus, TaskItem } from './task-stats.types';
+import {
+  Checklist,
+  ReviewAction,
+  StudentStatus,
+  TaskItem,
+} from './task-stats.types';
 
 const statusOrder: StudentStatus[] = ['已完成', '待改正', '未完成'];
 
@@ -107,18 +112,44 @@ export class TaskStatsService {
     const task = await this.getTaskOrThrow(taskId);
     if (!task.items?.some((item) => item.id === itemId))
       throw new NotFoundException('任务子项不存在');
-    const checkedItemIds = await this.database.setChecked(
+    const checklist = await this.database.setChecked(
       taskId,
       studentId,
       itemId,
       checked,
     );
-    if (!checkedItemIds) throw new NotFoundException('任务学生不存在');
-    // 只返回被修改的学生，避免并行请求把其他学生的状态覆盖回旧值。
+    return this.savedChecklist(task, studentId, checklist);
+  }
+
+  async review(taskId: string, studentId: string, action: ReviewAction) {
+    if (action !== 'requestCorrection' && action !== 'complete')
+      throw new BadRequestException('审核操作无效');
+    const task = await this.getTaskOrThrow(taskId);
+    if (!task.items?.length) throw new ConflictException('任务没有子项');
+    const checklist = await this.database.review(
+      taskId,
+      studentId,
+      task.items.map((item) => item.id),
+      action,
+    );
+    return this.savedChecklist(task, studentId, checklist);
+  }
+
+  private savedChecklist(
+    task: TaskItem,
+    studentId: string,
+    checklist: Checklist | undefined,
+  ) {
+    if (!checklist) throw new NotFoundException('任务学生不存在');
+    // 只返回被修改的学生，避免覆盖并行保存的其他学生。
     return {
       id: studentId,
-      checkedItemIds,
-      status: this.deriveStatus(task, checkedItemIds),
+      ...checklist,
+      status: this.deriveStatus(
+        task,
+        checklist.checkedItemIds,
+        checklist.needsCorrection,
+      ),
     };
   }
 
@@ -176,16 +207,15 @@ export class TaskStatsService {
   private deriveStatus(
     task: TaskItem,
     checkedItemIds: string[],
+    needsCorrection = false,
   ): StudentStatus {
     const items = task.items ?? [];
     const count = items.filter((item) =>
       checkedItemIds.includes(item.id),
     ).length;
-    return count === 0
-      ? '未完成'
-      : count === items.length
-        ? '已完成'
-        : '待改正';
+    if (count === 0) return '未完成';
+    if (needsCorrection) return '待改正';
+    return count === items.length ? '已完成' : '待提交';
   }
 
   /** 任务列表和详情都需要相同统计，统一在服务层计算。 */
@@ -193,7 +223,11 @@ export class TaskStatsService {
     const students = task.students.map((student) => ({
       ...student,
       status: task.items?.length
-        ? this.deriveStatus(task, student.checkedItemIds ?? [])
+        ? this.deriveStatus(
+            task,
+            student.checkedItemIds ?? [],
+            student.needsCorrection,
+          )
         : student.status === '需订正'
           ? '待改正'
           : student.status,
@@ -203,7 +237,10 @@ export class TaskStatsService {
       (student) => student.status === '已完成',
     ).length;
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-    const statusPercents = statusOrder.map((status) => {
+    const availableStatuses: StudentStatus[] = task.items?.length
+      ? [...statusOrder, '待提交']
+      : statusOrder;
+    const statusPercents = availableStatuses.map((status) => {
       const count = students.filter(
         (student) => student.status === status,
       ).length;
@@ -215,7 +252,7 @@ export class TaskStatsService {
     });
     return {
       ...task,
-      statusCount: 3,
+      statusCount: availableStatuses.length,
       students,
       summary: { total, done, percent, statusPercents },
     };

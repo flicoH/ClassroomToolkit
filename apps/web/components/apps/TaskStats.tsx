@@ -24,7 +24,8 @@ import {
   Search,
   Settings,
   Trash2,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import { StudentAvatar } from "@/components/students/StudentAvatar";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +36,9 @@ import request from "@/lib/request";
 import { cn } from "@/lib/utils";
 
 export type TaskType = "status" | "score";
-export type TaskView = "list" | "detail" | "create" | "edit" | "report";
-export type StudentStatus = "未完成" | "已完成" | "待改正";
+export type TaskView = "list" | "detail" | "create" | "edit" | "report" | "leaderboard";
+export type StudentStatus = "未完成" | "已完成" | "待改正" | "待提交";
+type ReviewAction = "requestCorrection" | "complete";
 
 export interface TaskSubItem {
   id: string;
@@ -51,6 +53,7 @@ export interface Student {
   score?: number;
   photo?: string | null;
   checkedItemIds?: string[];
+  needsCorrection?: boolean;
 }
 
 export interface TaskItem {
@@ -106,35 +109,34 @@ export const statusStyles: Record<
     bar: "bg-rose-500",
     badge: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300",
     border: "border-rose-200 dark:border-rose-900/60"
+  },
+  待提交: {
+    label: "待提交（黄色）",
+    text: "text-amber-800 dark:text-amber-300",
+    bg: "bg-amber-50 dark:bg-amber-950/40",
+    bar: "bg-amber-400",
+    badge: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300",
+    border: "border-amber-200 dark:border-amber-900"
   }
 };
 
 const statusCycle: StudentStatus[] = ["已完成", "待改正", "未完成"];
+const checklistStatuses: StudentStatus[] = [...statusCycle, "待提交"];
+const hasChecklist = (task: TaskItem) => Boolean(task.items?.length);
+const countChecked = (task: TaskItem, student: Student) =>
+  task.items?.filter(item => student.checkedItemIds?.includes(item.id)).length ?? 0;
 
 /** 将历史状态归一化为新版统一状态。 */
 export function normalizeStatus(raw: string | undefined): StudentStatus {
   if (raw === "需订正" || raw === "待改正" || raw === "需修订") return "待改正";
-  if (raw === "已完成") return "已完成";
+  if (raw === "已完成" || raw === "待提交") return raw;
   return "未完成";
 }
 
-/** 根据子项勾选情况自动计算学生任务状态。 */
-export function deriveStatusFromSubItems(
-  items: TaskSubItem[] | undefined,
-  checkedItemIds: string[] | undefined
-): StudentStatus {
-  if (!items || items.length === 0) return "未完成";
-  const checked = checkedItemIds ?? [];
-  const validChecked = items.filter(item => checked.includes(item.id));
-  if (validChecked.length === 0) return "未完成";
-  if (validChecked.length === items.length) return "已完成";
-  return "待改正";
-}
-
 /** 按任务分配记录计数，同一学生在不同任务中的记录各计一次。 */
-function getCompletionStats(students: Student[]) {
+function getCompletionStats(students: Student[], includePending = false) {
   const total = students.length;
-  const statusPercents = statusCycle.map(status => {
+  const statusPercents = (includePending ? checklistStatuses : statusCycle).map(status => {
     const count = students.filter(student => student.status === status).length;
     return { status, count, percent: total ? Math.round((count / total) * 100) : 0 };
   });
@@ -144,7 +146,7 @@ function getCompletionStats(students: Student[]) {
 }
 
 export function getTaskStats(task: TaskItem) {
-  return getCompletionStats(task.students);
+  return getCompletionStats(task.students, hasChecklist(task));
 }
 
 function StatusCounts({ stats }: { stats: ReturnType<typeof getCompletionStats> }) {
@@ -159,7 +161,216 @@ function StatusCounts({ stats }: { stats: ReturnType<typeof getCompletionStats> 
   );
 }
 
-function TaskReport({ tasks, onBack }: { tasks: TaskItem[]; onBack: () => void }) {
+type RankRow = { student: Student; completed: number; unfinished: number; total: number };
+
+function latestEntry(entries: { task: TaskItem; student: Student }[]) {
+  return entries.reduce((current, entry) => (entry.task.createdAt > current.task.createdAt ? entry : current));
+}
+
+function Ranking({
+  rows,
+  scope,
+  unit,
+  photos,
+  onClose
+}: {
+  rows: RankRow[];
+  scope: string;
+  unit: string;
+  photos: ReadonlyMap<string, string | null | undefined>;
+  onClose?: () => void;
+}) {
+  const [unfinished, setUnfinished] = useState(false);
+  const metric = unfinished ? "unfinished" : "completed";
+  const ranked = rows
+    .filter(row => row[metric] > 0)
+    .sort(
+      (a, b) =>
+        b[metric] - a[metric] ||
+        a.student.studentNo.localeCompare(b.student.studentNo, "zh-CN", { numeric: true }) ||
+        a.student.id.localeCompare(b.student.id)
+    );
+  let rank = 0;
+  const metricLabel = unfinished ? `未完成${unit}` : `已完成${unit}`;
+  return (
+    <section aria-labelledby="task-ranking-title">
+      <div className="border-b border-slate-100 p-4 dark:border-slate-800 sm:p-5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 id="task-ranking-title" className="text-xl font-bold">
+              {unfinished ? "未完成排行榜" : "完成排行榜"}
+            </h2>
+            <p className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">{scope}</p>
+          </div>
+          {onClose && (
+            <Button variant="ghost" size="icon" className="shrink-0" aria-label="关闭排行榜" onClick={onClose}>
+              <X aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        <div
+          role="group"
+          aria-label="榜单类型"
+          className="mt-4 inline-flex max-w-full gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800"
+        >
+          {["完成任务", "未完成任务"].map((label, index) => {
+            const active = unfinished === (index === 1);
+            return (
+              <Button
+                key={label}
+                variant="ghost"
+                size="sm"
+                aria-pressed={active}
+                onClick={() => setUnfinished(index === 1)}
+                className={cn("px-3", active && "bg-white text-slate-950 shadow-sm dark:bg-slate-700 dark:text-white")}
+              >
+                {label}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        aria-live="polite"
+        className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 bg-slate-50 px-4 py-2.5 text-xs font-medium text-slate-600 dark:bg-slate-800/50 dark:text-slate-300 sm:px-5"
+      >
+        <span>名次</span>
+        <span>学生 · {ranked.length} 人上榜</span>
+        <span className="text-right">{metricLabel} / 总数</span>
+      </div>
+      {ranked.length === 0 ? (
+        <p role="status" className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+          暂无上榜学生。
+        </p>
+      ) : (
+        <ol
+          className={cn(
+            "divide-y divide-slate-100 px-4 dark:divide-slate-800 sm:px-5",
+            onClose && "max-h-[50dvh] overflow-y-auto"
+          )}
+        >
+          {ranked.map((row, index) => {
+            if (ranked[index - 1]?.[metric] !== row[metric]) rank = index + 1;
+            return (
+              <li
+                key={row.student.id}
+                className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 py-3 text-sm"
+              >
+                <span
+                  className={cn(
+                    "inline-flex size-8 items-center justify-center rounded-lg font-bold tabular-nums",
+                    rank <= 3
+                      ? "bg-cyan-50 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-200"
+                      : "text-slate-600 dark:text-slate-300"
+                  )}
+                  aria-label={`第 ${rank} 名`}
+                >
+                  {rank}
+                </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="hidden shrink-0 sm:block">
+                    <StudentAvatar name={row.student.name} photo={photos.get(row.student.id)} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="break-words font-semibold">{row.student.name}</p>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <span className="break-all text-xs text-slate-500 dark:text-slate-400">
+                        #{row.student.studentNo}
+                      </span>
+                      {onClose && (
+                        <Badge variant="outline" className={statusStyles[row.student.status].badge}>
+                          {row.student.status}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="min-w-12 text-right tabular-nums sm:min-w-20">
+                  <span
+                    className={cn(
+                      "font-bold",
+                      unfinished ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
+                    )}
+                  >
+                    {row[metric]}
+                  </span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400"> / {row.total}</span>
+                  <div
+                    aria-hidden="true"
+                    className="mt-1 h-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
+                  >
+                    <div
+                      className={cn("h-full rounded-full", unfinished ? "bg-rose-500" : "bg-emerald-500")}
+                      style={{ width: `${(row[metric] / row.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function TaskRankingDialog({
+  task,
+  photos,
+  onClose
+}: {
+  task: TaskItem;
+  photos: ReadonlyMap<string, string | null | undefined>;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  const rows = task.students.map(student => {
+    const total = task.items?.length || 1;
+    const checked = countChecked(task, student);
+    return {
+      student,
+      total,
+      completed: hasChecklist(task) ? checked : Number(student.status === "已完成"),
+      unfinished: hasChecklist(task) ? total - checked : Number(student.status === "未完成")
+    };
+  });
+  return (
+    <dialog
+      ref={dialog}
+      onCancel={event => {
+        event.preventDefault();
+        onClose();
+      }}
+      aria-labelledby="task-ranking-title"
+      className="m-auto max-h-[85dvh] w-[calc(100%_-_2rem)] max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+    >
+      <Ranking
+        rows={rows}
+        scope={`${task.title} · ${task.className}`}
+        unit={hasChecklist(task) ? "子项" : "任务"}
+        photos={photos}
+        onClose={onClose}
+      />
+    </dialog>
+  );
+}
+
+function TaskReport({
+  tasks,
+  onBack,
+  photos,
+  leaderboard = false
+}: {
+  tasks: TaskItem[];
+  onBack: () => void;
+  photos: ReadonlyMap<string, string | null | undefined>;
+  leaderboard?: boolean;
+}) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [className, setClassName] = useState("");
@@ -188,7 +399,7 @@ function TaskReport({ tasks, onBack }: { tasks: TaskItem[]; onBack: () => void }
         byStudent.set(student.id, entries);
       }
     }
-    return { matching, students: [...byStudent], totals: getCompletionStats(records) };
+    return { matching, students: [...byStudent], totals: getCompletionStats(records, matching.some(hasChecklist)) };
   }, [tasks, className, from, to, invalid]);
 
   return (
@@ -197,7 +408,7 @@ function TaskReport({ tasks, onBack }: { tasks: TaskItem[]; onBack: () => void }
         <Button size="icon" variant="ghost" onClick={onBack} aria-label="返回任务列表">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-lg font-bold">任务完成统计</h1>
+        <h1 className="text-lg font-bold">{leaderboard ? "任务排行榜" : "任务完成统计"}</h1>
       </header>
       <main className="mx-auto max-w-5xl space-y-5 p-4 sm:p-5">
         <section
@@ -245,7 +456,25 @@ function TaskReport({ tasks, onBack }: { tasks: TaskItem[]; onBack: () => void }
             {className ? "所选班级在这个日期范围内没有任务。" : "这个日期范围内没有任务。"}
           </p>
         )}
-        {matching.length > 0 && (
+        {leaderboard && (
+          <div
+            hidden={matching.length === 0}
+            className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+          >
+            <Ranking
+              scope={`${className || "全部班级"} · ${matching.length} 项任务`}
+              unit="任务"
+              photos={photos}
+              rows={students.map(([, entries]) => ({
+                student: latestEntry(entries).student,
+                total: entries.length,
+                completed: entries.filter(entry => entry.student.status === "已完成").length,
+                unfinished: entries.filter(entry => entry.student.status === "未完成").length
+              }))}
+            />
+          </div>
+        )}
+        {!leaderboard && matching.length > 0 && (
           <>
             <section
               className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
@@ -290,10 +519,11 @@ function TaskReport({ tasks, onBack }: { tasks: TaskItem[]; onBack: () => void }
               {students.length === 0 && <p className="text-sm text-slate-500">范围内的任务没有学生记录。</p>}
               <div className="space-y-2">
                 {students.map(([id, entries]) => {
-                  const latest = entries.reduce((current, entry) =>
-                    entry.task.createdAt > current.task.createdAt ? entry : current
+                  const latest = latestEntry(entries);
+                  const stats = getCompletionStats(
+                    entries.map(entry => entry.student),
+                    entries.some(entry => hasChecklist(entry.task))
                   );
-                  const stats = getCompletionStats(entries.map(entry => entry.student));
                   return (
                     <details
                       key={id}
@@ -361,6 +591,7 @@ export function TaskStats() {
   const [taskDeleteId, setTaskDeleteId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [rankingOpen, setRankingOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -387,9 +618,7 @@ export function TaskStats() {
             ...task,
             students: task.students.map(student => ({
               ...student,
-              status: task.items?.length
-                ? deriveStatusFromSubItems(task.items, student.checkedItemIds)
-                : normalizeStatus(student.status)
+              status: normalizeStatus(student.status)
             }))
           }))
         );
@@ -531,7 +760,7 @@ export function TaskStats() {
   };
 
   /** 只合并当前学生，避免其他学生的并行保存被旧响应覆盖。 */
-  const saveStudent = async (studentId: string, itemId?: string) => {
+  const saveStudent = async (studentId: string, operation?: { itemId: string } | { action: ReviewAction }) => {
     if (!activeTask || resetting) return;
     const student = activeTask.students.find(item => item.id === studentId);
     const updateKey = `${activeTask.id}:${studentId}`;
@@ -541,15 +770,18 @@ export function TaskStats() {
     setActionError(null);
     try {
       const base = `/api/task-stats/${activeTask.id}/students/${studentId}`;
-      const saved = itemId
-        ? await request<Student, Student>({
-            url: `${base}/items/${itemId}`,
-            method: "PATCH",
-            data: { checked: !(student.checkedItemIds ?? []).includes(itemId) }
-          })
-        : (await request<TaskItem, TaskItem>({ url: `${base}/cycle-status`, method: "POST" })).students.find(
-            item => item.id === studentId
-          );
+      const saved =
+        operation && "action" in operation
+          ? await request<Student, Student>({ url: `${base}/review`, method: "PATCH", data: operation })
+          : operation
+            ? await request<Student, Student>({
+                url: `${base}/items/${operation.itemId}`,
+                method: "PATCH",
+                data: { checked: !(student.checkedItemIds ?? []).includes(operation.itemId) }
+              })
+            : (await request<TaskItem, TaskItem>({ url: `${base}/cycle-status`, method: "POST" })).students.find(
+                item => item.id === studentId
+              );
       if (!saved) throw new Error("Missing saved student");
       setTasks(current =>
         current.map(task =>
@@ -634,8 +866,15 @@ export function TaskStats() {
 
   const deleteTaskTitle = tasks.find(item => item.id === taskDeleteId)?.title ?? "未命名任务";
 
-  if (view === "report") {
-    return <TaskReport tasks={tasks} onBack={() => setView("list")} />;
+  if (view === "report" || view === "leaderboard") {
+    return (
+      <TaskReport
+        tasks={tasks}
+        photos={studentPhotos}
+        leaderboard={view === "leaderboard"}
+        onBack={() => setView("list")}
+      />
+    );
   }
 
   if (view === "create" || view === "edit") {
@@ -818,8 +1057,11 @@ export function TaskStats() {
               </div>
 
               <div className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                <p className="font-semibold">3 种任务状态</p>
-                <p>已完成（绿）、待改正（红）、未完成（灰）。部分勾选为待改正。</p>
+                <p className="font-semibold">{draftType === "status" && draftItems.length ? 4 : 3} 种任务状态</p>
+                <p>
+                  已完成（绿）、待改正（红）、未完成（灰）。
+                  {draftType === "status" && draftItems.length > 0 && "部分勾选为待提交（黄），教师可标记待改正。"}
+                </p>
               </div>
               {!editing && !loading && classes.length === 0 && (
                 <p role="status" className="text-sm text-slate-500">
@@ -843,8 +1085,8 @@ export function TaskStats() {
 
   if (view === "detail" && activeTask) {
     const stats = getTaskStats(activeTask);
-    const activeCycle = statusCycle;
-    const hasItems = (activeTask.items?.length ?? 0) > 0;
+    const hasItems = hasChecklist(activeTask);
+    const activeCycle = hasItems ? checklistStatuses : statusCycle;
 
     return (
       <>
@@ -872,7 +1114,7 @@ export function TaskStats() {
                     {hasItems ? `${activeTask.items?.length} 个子项` : "无子项手动"}
                   </Badge>
                   <Badge variant="secondary" className="text-xs">
-                    3 态统计
+                    {activeCycle.length} 态统计
                   </Badge>
                 </div>
                 <p className="mt-0.5 text-xs font-semibold uppercase text-slate-400">
@@ -909,6 +1151,10 @@ export function TaskStats() {
             </div>
 
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              <Button variant="outline" size="sm" className="h-9 shrink-0" onClick={() => setRankingOpen(true)}>
+                <BarChart3 className="h-4 w-4" />
+                排名
+              </Button>
               {["全部", ...activeCycle].map(status => {
                 const count =
                   status === "全部"
@@ -983,7 +1229,7 @@ export function TaskStats() {
               const style = statusStyles[student.status];
               const updateKey = `${activeTask.id}:${student.id}`;
               const updating = updatingStudentIds.has(updateKey);
-              const checkedCount = (student.checkedItemIds ?? []).length;
+              const checkedCount = countChecked(activeTask, student);
               const totalSubItems = activeTask.items?.length ?? 0;
 
               return (
@@ -1026,6 +1272,21 @@ export function TaskStats() {
                       </div>
                     </div>
 
+                    {hasItems && checkedCount > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={updating || resetting}
+                        onClick={() =>
+                          void saveStudent(student.id, {
+                            action: student.needsCorrection ? "complete" : "requestCorrection"
+                          })
+                        }
+                        className="h-8 shrink-0 px-2 text-xs"
+                      >
+                        {student.needsCorrection ? "已完成" : "待改正"}
+                      </Button>
+                    )}
                     {/* 无子项任务保留快捷状态轮转操作 */}
                     {!hasItems && (
                       <Button
@@ -1066,7 +1327,7 @@ export function TaskStats() {
                                 type="checkbox"
                                 checked={isChecked}
                                 disabled={updating || resetting}
-                                onChange={() => void saveStudent(student.id, item.id)}
+                                onChange={() => void saveStudent(student.id, { itemId: item.id })}
                                 className="h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
                                 aria-label={`${student.name} - ${item.title}`}
                               />
@@ -1103,7 +1364,7 @@ export function TaskStats() {
                 {stats.percent}% ({stats.done}/{stats.total} 人已完成)
               </span>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className={cn("grid gap-3", hasItems ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
               {stats.statusPercents.map(item => (
                 <div key={item.status} className="text-center">
                   <div className="flex items-center justify-between text-[11px] mb-1">
@@ -1123,6 +1384,9 @@ export function TaskStats() {
             </div>
           </footer>
         </div>
+        {rankingOpen && (
+          <TaskRankingDialog task={activeTask} photos={studentPhotos} onClose={() => setRankingOpen(false)} />
+        )}
         <ConfirmDialog
           open={resetOpen}
           title="重置任务进度"
@@ -1165,6 +1429,13 @@ export function TaskStats() {
               >
                 <BarChart3 className="h-4 w-4" />
                 统计
+              </Button>
+              <Button
+                variant="outline"
+                disabled={loading || Boolean(actionError && tasks.length === 0)}
+                onClick={() => setView("leaderboard")}
+              >
+                排行榜
               </Button>
               <Button className="bg-cyan-600 font-bold hover:bg-cyan-700" onClick={openCreateTask}>
                 <Plus className="h-4 w-4" />

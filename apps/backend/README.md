@@ -450,3 +450,5 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
 `POST /task-stats` 接收 `classId` 和有序 `items: [{ title }]`。服务端从教师有权访问的班级创建学生快照，并分配子项 ID。`PATCH /task-stats/:taskId/students/:studentId/items/:itemId` 接收 `{ checked: boolean }`，返回该学生的 `id`、`checkedItemIds` 和三态结果。`POST /task-stats/:taskId/reset` 重置当前任务的学生进度并返回任务详情。读取旧「需订正」记录时返回「待改正」。
 
 部署时先通过现有迁移流程运行 `20261116000000-add-task-stats-items`，再发布 Backend 和 Web。迁移只新增可空 JSON 列，应用回滚时保留这些列。已经开始使用子项的环境应回滚到支持子项的兼容版本。
+
+带子项任务返回四种展示状态，部分勾选为「待提交」。`PATCH /task-stats/:taskId/students/:studentId/review` 接收 `{ action: "requestCorrection" | "complete" }`，原子更新并返回该学生的勾选、`needsCorrection` 和状态。普通勾选取消到零项及重置任务均清除标记。部署时先运行结构迁移 `20261116000001-add-task-stats-correction`，为任务学生表增加可空的 `needs_correction` 列。历史记录的空值视为未标记，迁移不回填业务数据。

@@ -13,6 +13,7 @@ import {
   UpdateTaskDto,
   UpdateTaskStudentStatusDto,
 } from './task-stats.dto';
+import type { ReviewAction } from './task-stats.types';
 import { TaskStatsService } from './task-stats.service';
 
 @Controller('task-stats')
@@ -74,6 +75,16 @@ export class TaskStatsController {
     @Body('checked') checked: boolean,
   ) {
     return this.taskStatsService.setChecked(taskId, studentId, itemId, checked);
+  }
+
+  @Patch(':taskId/students/:studentId/review')
+  @TrackFeature('task-stats', 'status')
+  review(
+    @Param('taskId') taskId: string,
+    @Param('studentId') studentId: string,
+    @Body('action') action: ReviewAction,
+  ) {
+    return this.taskStatsService.review(taskId, studentId, action);
   }
 
   @Post(':taskId/reset')

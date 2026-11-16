@@ -97,7 +97,7 @@ describe('任务子项', () => {
       items: [{ title: ' 订正 ' }, { title: '复核' }],
     });
     expect(database.findClass).toHaveBeenCalledWith('class-1');
-    expect(result.statusCount).toBe(3);
+    expect(result.statusCount).toBe(4);
     expect(result.className).toBe(task.className);
     expect(result.students).toEqual(task.students);
     expect(result.items?.map(({ title }) => title)).toEqual(['订正', '复核']);
@@ -112,25 +112,65 @@ describe('任务子项', () => {
       }),
       setChecked: jest
         .fn()
-        .mockResolvedValueOnce(['a'])
-        .mockResolvedValueOnce(['a', 'b'])
-        .mockResolvedValueOnce([]),
+        .mockResolvedValueOnce({
+          checkedItemIds: ['a'],
+          needsCorrection: false,
+        })
+        .mockResolvedValueOnce({
+          checkedItemIds: ['a', 'b'],
+          needsCorrection: false,
+        })
+        .mockResolvedValueOnce({ checkedItemIds: [], needsCorrection: false }),
     };
     const service = new TaskStatsService(database as never);
     expect((await service.findById('task-1')).summary.statusPercents).toEqual([
       { status: '已完成', count: 0, percent: 0 },
-      { status: '待改正', count: 1, percent: 100 },
+      { status: '待改正', count: 0, percent: 0 },
       { status: '未完成', count: 0, percent: 0 },
+      { status: '待提交', count: 1, percent: 100 },
     ]);
     await expect(
       service.setChecked('task-1', 'student-1', 'a', true),
-    ).resolves.toMatchObject({ status: '待改正' });
+    ).resolves.toMatchObject({ status: '待提交' });
     await expect(
       service.setChecked('task-1', 'student-1', 'b', true),
     ).resolves.toMatchObject({ status: '已完成' });
     await expect(
       service.setChecked('task-1', 'student-1', 'a', false),
     ).resolves.toMatchObject({ status: '未完成' });
+  });
+
+  it('reports reviewed students as red even when all subitems are checked', async () => {
+    const review = jest.fn().mockResolvedValue({
+      checkedItemIds: ['a', 'b'],
+      needsCorrection: true,
+    });
+    const service = new TaskStatsService({
+      review,
+      findById: jest.fn().mockResolvedValue({
+        ...task,
+        students: [
+          {
+            ...task.students[0],
+            checkedItemIds: ['a', 'b'],
+            needsCorrection: true,
+          },
+        ],
+      }),
+    } as never);
+    await expect(
+      service.review('task-1', 'student-1', 'requestCorrection'),
+    ).resolves.toMatchObject({
+      status: '待改正',
+      needsCorrection: true,
+    });
+    expect(review).toHaveBeenCalledWith(
+      'task-1',
+      'student-1',
+      ['a', 'b'],
+      'requestCorrection',
+    );
+    expect((await service.findById('task-1')).summary.done).toBe(0);
   });
 
   it('rejects inaccessible tasks and unrelated items or students', async () => {

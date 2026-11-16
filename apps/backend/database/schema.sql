@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS task_stats_students (
   student_no VARCHAR(64) NOT NULL COMMENT '学号快照',
   status ENUM('未完成', '已完成', '需订正') NOT NULL DEFAULT '未完成' COMMENT '完成状态',
   checked_item_ids JSON NULL,
+  needs_correction TINYINT(1) NULL,
   score DECIMAL(6,2) NULL COMMENT '分数型任务得分',
   CONSTRAINT fk_task_stats_students_task
     FOREIGN KEY (task_id) REFERENCES task_stats_tasks(id)

@@ -31,6 +31,9 @@ export class TaskStudentEntity {
   @Column({ name: 'checked_item_ids', type: 'json', nullable: true })
   checkedItemIds!: string[] | null;
 
+  @Column({ name: 'needs_correction', type: 'boolean', nullable: true })
+  needsCorrection!: boolean | null;
+
   @Column({ type: 'decimal', precision: 6, scale: 2, nullable: true })
   score!: string | null;
 
