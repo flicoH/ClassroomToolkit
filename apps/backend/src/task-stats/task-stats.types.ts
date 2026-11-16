@@ -36,3 +36,15 @@ export interface TaskItem {
   items?: TaskSubItem[];
   students: TaskStudent[];
 }
+
+/** 子项与待改正标记是派生状态的唯一来源，报告和任务统计共用此口径。 */
+export function checklistStatus(
+  items: TaskSubItem[],
+  checkedItemIds: string[],
+  needsCorrection = false,
+): StudentStatus {
+  const count = items.filter((item) => checkedItemIds.includes(item.id)).length;
+  if (!count) return '未完成';
+  if (needsCorrection) return '待改正';
+  return count === items.length ? '已完成' : '待提交';
+}

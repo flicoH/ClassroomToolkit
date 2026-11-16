@@ -1,3 +1,4 @@
+import type { HomeworkProgress } from './report-homework-progress';
 import { isDeepStrictEqual } from 'node:util';
 import type { SemesterReportEntity } from './semester-report.entity';
 import { extractLearningContents, type LearningContent } from './course-scope';
@@ -65,6 +66,7 @@ type Entry = { text: string; sourceRefs: string[] };
 type Snapshot = {
   reportVersion?: string;
   reportKind?: string;
+  homeworkProgress?: HomeworkProgress;
   stageCustomName?: string;
   scheduledTask?: {
     id: string;
@@ -157,6 +159,7 @@ export function classroomPhotoCaptionsForSnapshot(snapshot: {
 export function reportVisualsForSnapshot(snapshot: Snapshot) {
   const classroomPhotos = classroomPhotosForSnapshot(snapshot);
   return {
+    homeworkProgress: snapshot.homeworkProgress,
     pet: snapshot.pet,
     petAsOf: snapshot.petAsOf,
     petHistoryStatus: snapshot.petHistoryStatus,

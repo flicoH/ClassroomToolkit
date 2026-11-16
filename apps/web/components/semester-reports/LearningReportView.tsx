@@ -1,5 +1,5 @@
 import { attendanceLabels, type CourseAttendanceStatus } from "./CourseAttendance";
-import { GrowthAssessmentView, type GrowthAssessment } from "./GrowthAssessmentFields";
+import { GrowthAssessmentView, type GrowthAssessment, type HomeworkProgress } from "./GrowthAssessmentFields";
 import { ReportPetView, type ReportPet } from "./ReportPetView";
 import { BookOpenText, Heart, Sparkles, Target } from "lucide-react";
 import { PeriodScoreChart } from "./PeriodScoreChart";
@@ -16,6 +16,7 @@ export type LearningReportContent = {
   reportVersion?: "v2";
   studentPhoto?: string | null;
   growthAssessment?: Partial<GrowthAssessment>;
+  homeworkProgress?: HomeworkProgress;
   reportSubjects?: Array<{ subjectId: string; name: string }>;
   pet?: ReportPet | null;
   petAsOf?: string;
@@ -405,11 +406,14 @@ export function LearningReportView({ report }: { report: LearningReportData; for
                 )}
               </section>
             )}
-            {!isSubjectReport &&
-              Boolean(Object.values(content.growthAssessment ?? {}).some(value => value?.trim())) && (
-                <GrowthAssessmentView value={content.growthAssessment} periodTitle={periodTitle} />
-              )}
           </>
+        )}
+        {!isSubjectReport && (isV2 || content.homeworkProgress) && (
+          <GrowthAssessmentView
+            value={content.growthAssessment}
+            periodTitle={periodTitle}
+            homeworkProgress={content.homeworkProgress}
+          />
         )}
         {content.reportVersion !== "v2" && (
           <section className="rounded-2xl bg-slate-50/80 p-3 sm:p-6">

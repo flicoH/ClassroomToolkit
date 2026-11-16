@@ -29,6 +29,7 @@ import {
   type ReportGenerationMode,
 } from './report-generation';
 import { readReportAiConfig, resolveReportAiChatUrl } from './report-ai-config';
+import { readReportHomeworkProgress } from './report-homework-progress';
 
 /** Report prose should speak directly about the student, not expose evidence labels. */
 function cleanGrowthNarrative(value: unknown): string {
@@ -216,6 +217,15 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       console.log(
         `[SemesterReportWorker] 开始处理报告生成任务 [id=${candidate.id}], 学生: ${candidate.studentName}, 模式: ${mode}, 阶段汇总: ${isStage}`,
       );
+      // Capture the selected period at execution time, including scheduled reports.
+      const homeworkProgress =
+        mode === 'ai' &&
+        candidate.studentId &&
+        (isStage ||
+          candidate.periodType === 'term' ||
+          candidate.snapshot?.reportKind === 'term')
+          ? await readReportHomeworkProgress(this.dataSource, candidate)
+          : undefined;
       const content = await this.generate(candidate, mode);
       console.log(
         `[SemesterReportWorker] 报告生成任务成功 [id=${candidate.id}], 学生: ${candidate.studentName}`,
@@ -239,6 +249,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
         current.snapshot = {
           ...current.snapshot,
           generationMode: mode,
+          homeworkProgress,
           ...(mode === 'template' ? { templateVersion: 2 } : {}),
         };
         current.status = 'draft';

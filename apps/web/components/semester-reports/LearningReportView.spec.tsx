@@ -1,3 +1,4 @@
+import { GrowthAssessmentView } from "./GrowthAssessmentFields";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { LearningReportView, type LearningReportData } from "./LearningReportView";
@@ -1205,4 +1206,53 @@ it.each([false, true])("shows course cards only when teaching content is filled 
       }
     }
   }
+});
+
+it("renders the homework counts below overall understanding in the full-width growth grid", () => {
+  const rendered = document.createElement("div");
+  rendered.innerHTML = renderToStaticMarkup(
+    <LearningReportView
+      report={{
+        studentName: "小林",
+        className: "一班",
+        subject: "数学",
+        term: "第一学期",
+        period: "term",
+        content: {
+          reportVersion: "v2",
+          summary: "",
+          courseOverview: "",
+          strengths: [],
+          areasToImprove: [],
+          homeSuggestions: [],
+          limitations: [],
+          growthAssessment: { overallUnderstanding: "学习主动性有所提升" },
+          homeworkProgress: { completed: 3, unfinished: 1 }
+        }
+      }}
+      forImage
+    />
+  );
+  const grid = rendered.querySelector('[aria-label="学习习惯与能力成长总结"]');
+  expect(grid?.lastElementChild?.classList.contains("sm:col-span-2")).toBe(true);
+  expect(grid?.lastElementChild?.textContent).toContain("数学作业完成情况");
+  expect(grid?.lastElementChild?.textContent).toContain("已完成 3");
+  expect(grid?.lastElementChild?.textContent).toContain("未完成 1");
+  expect(grid?.lastElementChild?.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("3");
+});
+
+it("hides empty homework progress while retaining written growth observations", () => {
+  const homeworkProgress = { completed: 0, unfinished: 0 };
+  expect(renderToStaticMarkup(<GrowthAssessmentView periodTitle="本学期" homeworkProgress={homeworkProgress} />)).toBe(
+    ""
+  );
+  const html = renderToStaticMarkup(
+    <GrowthAssessmentView
+      periodTitle="本学期"
+      homeworkProgress={homeworkProgress}
+      value={{ overallUnderstanding: "保持专注" }}
+    />
+  );
+  expect(html).toContain("保持专注");
+  expect(html).not.toContain("数学作业完成情况");
 });

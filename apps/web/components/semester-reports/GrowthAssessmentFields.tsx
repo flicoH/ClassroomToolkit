@@ -1,3 +1,5 @@
+export type HomeworkProgress = { completed: number; unfinished: number };
+
 export type GrowthAssessment = {
   learningReadiness: string;
   communicationCooperation: string;
@@ -52,13 +54,16 @@ export function GrowthAssessmentFields({
 }
 export function GrowthAssessmentView({
   value,
-  periodTitle
+  periodTitle,
+  homeworkProgress
 }: {
   value?: Partial<GrowthAssessment>;
   periodTitle: string;
+  homeworkProgress?: HomeworkProgress;
 }) {
   const filledDimensions = growthDimensions.filter(([key]) => Boolean(value?.[key]?.trim()));
-  if (filledDimensions.length === 0) return null;
+  const hasHomework = Boolean(homeworkProgress && homeworkProgress.completed + homeworkProgress.unfinished > 0);
+  if (!filledDimensions.length && !hasHomework) return null;
   return (
     <section className="rounded-2xl border border-sky-100 bg-white p-3 sm:p-6">
       <h2 className="mb-5 text-lg font-bold text-sky-900">{periodTitle}学习习惯与能力成长总结</h2>
@@ -81,7 +86,35 @@ export function GrowthAssessmentView({
             </p>
           </div>
         ))}
+        {hasHomework && homeworkProgress && <HomeworkProgressView progress={homeworkProgress} />}
       </div>
     </section>
+  );
+}
+
+function HomeworkProgressView({ progress }: { progress: HomeworkProgress }) {
+  const { completed, unfinished } = progress;
+  const total = completed + unfinished;
+  const completionPercent = (completed / total) * 100;
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/50 p-4 sm:col-span-2">
+      <h3 className="font-semibold text-sky-900">数学作业完成情况</h3>
+      <div className="mb-2 mt-3 flex justify-between gap-2 text-sm font-semibold tabular-nums">
+        <span className="text-emerald-700">已完成 {completed}</span>
+        <span className="text-red-700">未完成 {unfinished}</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="数学作业完成情况"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={completed}
+        aria-valuetext={`已完成 ${completed} 项，未完成 ${unfinished} 项`}
+        className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100"
+      >
+        <div className="bg-emerald-500" style={{ width: `${completionPercent}%` }} />
+        <div className="bg-red-500" style={{ width: `${100 - completionPercent}%` }} />
+      </div>
+    </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 } from './task-stats.dto';
 import { TaskStatsDatabase } from './task-stats.database';
 import {
+  checklistStatus,
   Checklist,
   ReviewAction,
   StudentStatus,
@@ -145,8 +146,8 @@ export class TaskStatsService {
     return {
       id: studentId,
       ...checklist,
-      status: this.deriveStatus(
-        task,
+      status: checklistStatus(
+        task.items ?? [],
         checklist.checkedItemIds,
         checklist.needsCorrection,
       ),
@@ -204,27 +205,13 @@ export class TaskStatsService {
     return task;
   }
 
-  private deriveStatus(
-    task: TaskItem,
-    checkedItemIds: string[],
-    needsCorrection = false,
-  ): StudentStatus {
-    const items = task.items ?? [];
-    const count = items.filter((item) =>
-      checkedItemIds.includes(item.id),
-    ).length;
-    if (count === 0) return '未完成';
-    if (needsCorrection) return '待改正';
-    return count === items.length ? '已完成' : '待提交';
-  }
-
   /** 任务列表和详情都需要相同统计，统一在服务层计算。 */
   private withSummary(task: TaskItem) {
     const students = task.students.map((student) => ({
       ...student,
       status: task.items?.length
-        ? this.deriveStatus(
-            task,
+        ? checklistStatus(
+            task.items,
             student.checkedItemIds ?? [],
             student.needsCorrection,
           )
