@@ -2,6 +2,8 @@ import { StudentStatus, TaskStudent, TaskType } from './task-stats.types';
 
 export class CreateTaskDto {
   title!: string;
+  classId?: string;
+  items?: { title: string }[];
   className!: string;
   type!: TaskType;
   statusCount?: number;

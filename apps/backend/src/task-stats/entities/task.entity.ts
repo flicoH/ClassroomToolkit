@@ -5,6 +5,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { TaskSubItem } from '../task-stats.types';
 import { TaskStudentEntity } from './task-student.entity';
 
 @Entity('task_stats_tasks')
@@ -26,6 +27,9 @@ export class TaskEntity {
 
   @Column({ name: 'status_count', type: 'int', default: 3 })
   statusCount!: number;
+
+  @Column({ type: 'json', nullable: true })
+  items!: TaskSubItem[] | null;
 
   @Column({ name: 'created_at', type: 'date' })
   createdAt!: string;

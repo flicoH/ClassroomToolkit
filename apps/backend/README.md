@@ -444,3 +444,9 @@ IP 封禁也适用于已有 Web 会话：仅在发送请求时校验，命中时
   - `POST /subject-reports/reports/:id/classroom-photo?slot=0|1`：使用 `multipart/form-data` 接收图片文件（`file` 字段），文件大小限制为 2MB。上传成功后将照片转为 Base64 Data URL 存入草稿快照与内容中，并记录审计日志。
   - `DELETE /subject-reports/reports/:id/classroom-photo?slot=0|1`：清空草稿指定槽位的课堂照片。
 - **校验与权限**：接口仅允许操作属于当前教师且状态为 `draft` 的学科报告；非草稿状态抛出 400，报告不存在或跨教师访问抛出 404，非法槽位抛出 400。
+
+### 任务统计子项
+
+`POST /task-stats` 接收 `classId` 和有序 `items: [{ title }]`。服务端从教师有权访问的班级创建学生快照，并分配子项 ID。`PATCH /task-stats/:taskId/students/:studentId/items/:itemId` 接收 `{ checked: boolean }`，返回该学生的 `id`、`checkedItemIds` 和三态结果。`POST /task-stats/:taskId/reset` 重置当前任务的学生进度并返回任务详情。读取旧「需订正」记录时返回「待改正」。
+
+部署时先通过现有迁移流程运行 `20261116000000-add-task-stats-items`，再发布 Backend 和 Web。迁移只新增可空 JSON 列，应用回滚时保留这些列。已经开始使用子项的环境应回滚到支持子项的兼容版本。

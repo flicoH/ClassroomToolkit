@@ -56,3 +56,104 @@ describe('TaskStatsService', () => {
     );
   });
 });
+
+describe('任务子项', () => {
+  const task = {
+    id: 'task-1',
+    title: '随堂练习',
+    className: '一年级',
+    type: 'status' as const,
+    statusCount: 4,
+    createdAt: '2026-11-16',
+    items: [
+      { id: 'a', title: '订正' },
+      { id: 'b', title: '复核' },
+    ],
+    students: [
+      {
+        id: 'student-1',
+        name: '小王',
+        studentNo: '01',
+        status: '未完成' as const,
+      },
+    ],
+  };
+
+  it('uses the teacher class roster and server-generated items on create', async () => {
+    const database = {
+      findClass: jest
+        .fn()
+        .mockResolvedValue({ name: task.className, students: task.students }),
+      save: jest.fn().mockImplementation(async (value: typeof task) => value),
+    };
+    const service = new TaskStatsService(database as never);
+    const result = await service.create({
+      title: task.title,
+      classId: 'class-1',
+      className: '客户端班名',
+      type: 'status',
+      statusCount: 4,
+      students: [],
+      items: [{ title: ' 订正 ' }, { title: '复核' }],
+    });
+    expect(database.findClass).toHaveBeenCalledWith('class-1');
+    expect(result.statusCount).toBe(3);
+    expect(result.className).toBe(task.className);
+    expect(result.students).toEqual(task.students);
+    expect(result.items?.map(({ title }) => title)).toEqual(['订正', '复核']);
+    expect(new Set(result.items?.map(({ id }) => id)).size).toBe(2);
+  });
+
+  it('derives and summarizes partial, complete and cleared work', async () => {
+    const database = {
+      findById: jest.fn().mockResolvedValue({
+        ...task,
+        students: [{ ...task.students[0], checkedItemIds: ['a'] }],
+      }),
+      setChecked: jest
+        .fn()
+        .mockResolvedValueOnce(['a'])
+        .mockResolvedValueOnce(['a', 'b'])
+        .mockResolvedValueOnce([]),
+    };
+    const service = new TaskStatsService(database as never);
+    expect((await service.findById('task-1')).summary.statusPercents).toEqual([
+      { status: '已完成', count: 0, percent: 0 },
+      { status: '待改正', count: 1, percent: 100 },
+      { status: '未完成', count: 0, percent: 0 },
+    ]);
+    await expect(
+      service.setChecked('task-1', 'student-1', 'a', true),
+    ).resolves.toMatchObject({ status: '待改正' });
+    await expect(
+      service.setChecked('task-1', 'student-1', 'b', true),
+    ).resolves.toMatchObject({ status: '已完成' });
+    await expect(
+      service.setChecked('task-1', 'student-1', 'a', false),
+    ).resolves.toMatchObject({ status: '未完成' });
+  });
+
+  it('rejects inaccessible tasks and unrelated items or students', async () => {
+    const database = {
+      findById: jest
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValue(task),
+      setChecked: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new TaskStatsService(database as never);
+    await expect(
+      service.setChecked('other-task', 'student-1', 'a', true),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      service.setChecked('task-1', 'student-1', 'other-item', true),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(database.setChecked).not.toHaveBeenCalled();
+    await expect(
+      service.setChecked('task-1', 'other-student', 'a', true),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      service.cycleStudentStatus('task-1', 'student-1'),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+});

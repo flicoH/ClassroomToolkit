@@ -1,5 +1,10 @@
 export type TaskType = 'status' | 'score';
-export type StudentStatus = '未完成' | '已完成' | '需订正';
+export type StudentStatus = '未完成' | '已完成' | '待改正' | '需订正';
+
+export interface TaskSubItem {
+  id: string;
+  title: string;
+}
 
 export interface TaskStudent {
   id: string;
@@ -7,6 +12,7 @@ export interface TaskStudent {
   studentNo: string;
   status: StudentStatus;
   score?: number;
+  checkedItemIds?: string[];
 }
 
 export interface TaskItem {
@@ -16,5 +22,6 @@ export interface TaskItem {
   type: TaskType;
   statusCount: number;
   createdAt: string;
+  items?: TaskSubItem[];
   students: TaskStudent[];
 }

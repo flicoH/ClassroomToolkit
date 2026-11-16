@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS task_stats_tasks (
   class_name VARCHAR(64) NOT NULL COMMENT '班级名称快照',
   task_type ENUM('status', 'score') NOT NULL COMMENT '任务类型',
   status_count INT NOT NULL DEFAULT 3 COMMENT '状态数量',
+  items JSON NULL,
   created_at DATE NOT NULL COMMENT '创建日期',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB COMMENT='任务统计任务表';
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS task_stats_students (
   name VARCHAR(64) NOT NULL COMMENT '学生姓名快照',
   student_no VARCHAR(64) NOT NULL COMMENT '学号快照',
   status ENUM('未完成', '已完成', '需订正') NOT NULL DEFAULT '未完成' COMMENT '完成状态',
+  checked_item_ids JSON NULL,
   score DECIMAL(6,2) NULL COMMENT '分数型任务得分',
   CONSTRAINT fk_task_stats_students_task
     FOREIGN KEY (task_id) REFERENCES task_stats_tasks(id)

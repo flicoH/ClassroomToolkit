@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { TaskStudentEntity } from './entities/task-student.entity';
 import { TaskEntity } from './entities/task.entity';
 import { StudentStatus, TaskItem } from './task-stats.types';
+import { createEntityId } from '../common/id';
+import { ClassroomEntity } from '../students/entities/classroom.entity';
 import { TeacherContext } from '../auth/teacher-context';
 
 @Injectable()
@@ -35,41 +37,113 @@ export class TaskStatsDatabase {
     return row ? this.toTask(row) : undefined;
   }
 
-  /** 保存任务聚合数据，重写任务下的学生状态列表。 */
+  async findClass(id: string) {
+    const teacherId = this.teacherContext.teacherId;
+    const classroom = await this.tasks.manager.findOne(ClassroomEntity, {
+      where: { id, teacherId },
+      relations: { students: true },
+    });
+    if (!classroom) return undefined;
+    return {
+      name: classroom.name,
+      students: classroom.students
+        .filter((student) => student.teacherId === teacherId)
+        .map((student) => ({
+          id: student.id,
+          name: student.name,
+          studentNo: student.studentNo,
+          status: '未完成' as const,
+        })),
+    };
+  }
+
+  /** 任务与名单一起创建，避免只写入其中一部分。 */
   async save(task: TaskItem) {
     const teacherId = this.teacherContext.teacherId;
     const students = this.normalizeStudents(task);
-    await this.tasks.save(
-      this.tasks.create({
+    await this.tasks.manager.transaction(async (manager) => {
+      await manager.insert(TaskEntity, {
         id: task.id,
         teacherId,
         title: task.title,
         className: task.className,
         type: task.type,
         statusCount: task.statusCount,
+        items: task.items,
         createdAt: task.createdAt,
-      }),
-    );
-    await this.students
-      .createQueryBuilder()
-      .delete()
-      .from(TaskStudentEntity)
-      .where('task_id = :taskId', { taskId: task.id })
-      .execute();
-    const entities = students.map((student) =>
-      this.students.create({
-        id: `${task.id}-${student.id}`,
-        teacherId,
-        taskId: task.id,
-        studentId: student.id,
-        name: student.name,
-        studentNo: student.studentNo,
-        status: student.status,
-        score: student.score === undefined ? null : String(student.score),
-      }),
-    );
-    if (entities.length) await this.students.upsert(entities, ['id']);
+      });
+      if (students.length) {
+        await manager.insert(
+          TaskStudentEntity,
+          students.map((student) => ({
+            id: createEntityId('task-student'),
+            teacherId,
+            taskId: task.id,
+            studentId: student.id,
+            name: student.name,
+            studentNo: student.studentNo,
+            status: student.status === '待改正' ? '需订正' : student.status,
+            score: student.score === undefined ? null : String(student.score),
+          })),
+        );
+      }
+    });
     return (await this.findById(task.id))!;
+  }
+
+  /** 编辑配置时只写任务行，避免覆盖同时保存的勾选。 */
+  async updateConfiguration(task: TaskItem) {
+    const { id, title, className, type, statusCount } = task;
+    await this.tasks.update(
+      { id, teacherId: this.teacherContext.teacherId },
+      {
+        title,
+        className,
+        type,
+        statusCount,
+      },
+    );
+  }
+
+  /** 锁定单个任务学生的记录，使同时勾选不同子项也能合并。 */
+  async setChecked(
+    taskId: string,
+    studentId: string,
+    itemId: string,
+    checked: boolean,
+  ) {
+    const where = {
+      taskId,
+      teacherId: this.teacherContext.teacherId,
+      studentId,
+    };
+    return this.students.manager.transaction(async (manager) => {
+      const row = await manager.findOne(TaskStudentEntity, {
+        where,
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row) return undefined;
+      const ids = new Set(row.checkedItemIds ?? []);
+      if (checked) ids.add(itemId);
+      else ids.delete(itemId);
+      const checkedItemIds = [...ids];
+      await manager.update(
+        TaskStudentEntity,
+        { ...where, id: row.id },
+        { checkedItemIds },
+      );
+      return checkedItemIds;
+    });
+  }
+
+  async reset(taskId: string) {
+    await this.students.update(
+      { taskId, teacherId: this.teacherContext.teacherId },
+      {
+        checkedItemIds: null,
+        status: '未完成',
+      },
+    );
   }
 
   /** 直接更新任务中单个学生的状态和可选分数。 */
@@ -86,7 +160,7 @@ export class TaskStatsDatabase {
         studentId,
       },
       {
-        status,
+        status: status === '待改正' ? '需订正' : status,
         score: score === undefined ? undefined : String(score),
       },
     );
@@ -131,6 +205,7 @@ export class TaskStatsDatabase {
       type: entity.type,
       statusCount: entity.statusCount,
       createdAt: entity.createdAt,
+      items: entity.items ?? [],
       students: [...(entity.students ?? [])]
         .filter(
           (student) => student.teacherId === this.teacherContext.teacherId,
@@ -141,6 +216,7 @@ export class TaskStatsDatabase {
           name: student.name,
           studentNo: student.studentNo,
           status: student.status,
+          checkedItemIds: student.checkedItemIds ?? [],
           score: student.score === null ? undefined : Number(student.score),
         })),
     };

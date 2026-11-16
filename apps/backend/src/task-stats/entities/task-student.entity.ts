@@ -28,6 +28,9 @@ export class TaskStudentEntity {
   })
   status!: '未完成' | '已完成' | '需订正';
 
+  @Column({ name: 'checked_item_ids', type: 'json', nullable: true })
+  checkedItemIds!: string[] | null;
+
   @Column({ type: 'decimal', precision: 6, scale: 2, nullable: true })
   score!: string | null;
 

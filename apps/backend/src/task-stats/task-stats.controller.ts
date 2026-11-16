@@ -65,6 +65,22 @@ export class TaskStatsController {
     return this.taskStatsService.cycleStudentStatus(taskId, studentId);
   }
 
+  @Patch(':taskId/students/:studentId/items/:itemId')
+  @TrackFeature('task-stats', 'status')
+  setChecked(
+    @Param('taskId') taskId: string,
+    @Param('studentId') studentId: string,
+    @Param('itemId') itemId: string,
+    @Body('checked') checked: boolean,
+  ) {
+    return this.taskStatsService.setChecked(taskId, studentId, itemId, checked);
+  }
+
+  @Post(':taskId/reset')
+  reset(@Param('taskId') taskId: string) {
+    return this.taskStatsService.reset(taskId);
+  }
+
   /** 删除任务统计。 */
   @Delete(':taskId')
   delete(@Param('taskId') taskId: string) {
