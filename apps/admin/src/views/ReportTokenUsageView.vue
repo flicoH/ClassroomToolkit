@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api, daysAgo, formatTime, today } from '../lib/api'
 import PaginationBar from '../components/PaginationBar.vue'
+import OtherAiUsagePanel from './OtherAiUsagePanel.vue'
 
 export type TokenReportItem = {
   reportId: string
@@ -67,6 +68,7 @@ export type CallsResponse = {
   items: TokenCallItem[]
 }
 
+const showOther = ref(false)
 const student = ref('')
 const start = ref(daysAgo(29))
 const end = ref(today())
@@ -252,20 +254,42 @@ onMounted(load)
       <p class="eyebrow">
         TOKEN USAGE TRACKING
       </p>
-      <h1>AI 报告 Token 追踪</h1>
+      <h1>AI Token 追踪</h1>
       <p class="muted">
-        一期实时追踪报告正文 Kimi 模型调用消耗；旧报告与模板生成不产生模型请求。统计以北京时间为准。
+        统计以北京时间为准。供应商未提供的 Token 用量显示为未知。
       </p>
     </div>
     <div
-      v-if="data?.range"
+      v-if="!showOther && data?.range"
       class="range-indicator"
     >
       <span class="muted footnote">统计范围：北京时间 {{ data.range.start }} 至 {{ data.range.end }}</span>
     </div>
   </div>
 
+  <div
+    class="toolbar"
+    role="group"
+    aria-label="用量分类"
+  >
+    <button
+      type="button"
+      :aria-pressed="!showOther"
+      @click="showOther = false"
+    >
+      报告正文
+    </button>
+    <button
+      type="button"
+      :aria-pressed="showOther"
+      @click="showOther = true"
+    >
+      其他服务调用
+    </button>
+  </div>
+  <OtherAiUsagePanel v-if="showOther" />
   <form
+    v-if="!showOther"
     class="toolbar filter-bar"
     @submit.prevent="handleSearch"
   >
@@ -342,7 +366,7 @@ onMounted(load)
   </form>
 
   <div
-    v-if="data?.summary"
+    v-if="!showOther && data?.summary"
     class="metric-grid"
   >
     <div class="metric">
@@ -371,7 +395,7 @@ onMounted(load)
   </div>
 
   <p
-    v-if="error"
+    v-if="!showOther && error"
     role="alert"
     class="error"
   >
@@ -385,7 +409,7 @@ onMounted(load)
     </button>
   </p>
   <p
-    v-if="loading"
+    v-if="!showOther && loading"
     role="status"
     class="muted"
   >
@@ -393,7 +417,7 @@ onMounted(load)
   </p>
 
   <section
-    v-if="data"
+    v-if="!showOther && data"
     class="panel"
   >
     <div class="table-scroll">

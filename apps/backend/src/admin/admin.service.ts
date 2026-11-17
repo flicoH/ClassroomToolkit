@@ -1,5 +1,6 @@
 import { normalizeIp } from '../common/login-ip';
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
+import { QueryFailedError } from 'typeorm';
 import {
   BadRequestException,
   Injectable,
@@ -25,6 +26,11 @@ import {
   readReportAiConfig,
   resolveReportAiBalanceUrl,
 } from '../semester-reports/report-ai-config';
+import {
+  otherAiOperations,
+  responseUsage,
+  trackOtherAiCall,
+} from '../semester-reports/other-ai-calls';
 /** 管理端跨教师查询与账号管理；不复用绑定 TeacherContext 的教师业务查询层。 */
 @Injectable()
 export class AdminService {
@@ -119,50 +125,62 @@ export class AdminService {
     console.log(
       `[AdminService] 查询 AI Token 余额: URL=${url}, Source=${config.source}, Key=${maskedKey}`,
     );
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: {
-          authorization: `Bearer ${config.apiKey}`,
-          accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-    } catch {
-      throw new ServiceUnavailableException('余额接口连接失败或超时');
-    }
-    const data = (await response.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
-    if (!response.ok) {
-      console.error(
-        `[AdminService] 余额接口响应错误: HTTP=${response.status}, URL=${url}, Body=${JSON.stringify(data)}`,
-      );
-      const upstreamMessage =
-        (typeof data?.error === 'object' &&
-        data.error &&
-        'message' in data.error
-          ? String((data.error as { message?: unknown }).message)
-          : '') ||
-        (typeof data?.message === 'string' ? data.message : '') ||
-        '';
-      const detail = upstreamMessage ? ` (${upstreamMessage})` : '';
-      if (response.status === 401) {
-        throw new ServiceUnavailableException(
-          `余额接口返回 HTTP 401${detail}：认证失败，请检查 API Key 是否有效、是否含有多余前缀，或在管理后台重新输入保存`,
-        );
-      }
-      if (response.status === 404) {
-        throw new ServiceUnavailableException(
-          `余额接口返回 HTTP 404${detail}：当前 AI 服务商不支持 /v1/users/me/balance 余额查询端点（该接口为 Moonshot/Kimi 专用）`,
-        );
-      }
-      throw new ServiceUnavailableException(
-        `余额接口返回 HTTP ${response.status}${detail}`,
-      );
-    }
-    return { data, source: config.source, queriedAt: new Date().toISOString() };
+    return trackOtherAiCall(
+      repository.manager,
+      { operation: 'balance' },
+      async (details) => {
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            headers: {
+              authorization: `Bearer ${config.apiKey}`,
+              accept: 'application/json',
+            },
+            signal: AbortSignal.timeout(15000),
+          });
+        } catch {
+          throw new ServiceUnavailableException('余额接口连接失败或超时');
+        }
+        details.httpStatus = response.status;
+        const data = (await response.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null;
+        details.usage = responseUsage(data);
+        if (!response.ok) {
+          console.error(
+            `[AdminService] 余额接口响应错误: HTTP=${response.status}, URL=${url}, Body=${JSON.stringify(data)}`,
+          );
+          const upstreamMessage =
+            (typeof data?.error === 'object' &&
+            data.error &&
+            'message' in data.error
+              ? String((data.error as { message?: unknown }).message)
+              : '') ||
+            (typeof data?.message === 'string' ? data.message : '') ||
+            '';
+          const detail = upstreamMessage ? ` (${upstreamMessage})` : '';
+          if (response.status === 401) {
+            throw new ServiceUnavailableException(
+              `余额接口返回 HTTP 401${detail}：认证失败，请检查 API Key 是否有效、是否含有多余前缀，或在管理后台重新输入保存`,
+            );
+          }
+          if (response.status === 404) {
+            throw new ServiceUnavailableException(
+              `余额接口返回 HTTP 404${detail}：当前 AI 服务商不支持 /v1/users/me/balance 余额查询端点（该接口为 Moonshot/Kimi 专用）`,
+            );
+          }
+          throw new ServiceUnavailableException(
+            `余额接口返回 HTTP ${response.status}${detail}`,
+          );
+        }
+        return {
+          data,
+          source: config.source,
+          queriedAt: new Date().toISOString(),
+        };
+      },
+    );
   }
   /** 查询已授权 AI 报告权限的教师列表与全部教师概览。 */
   async reportAiPermissions() {
@@ -224,6 +242,33 @@ export class AdminService {
     const range = dateRange(q);
     const page = pageQuery(q);
     return this.database.findReportTokenUsage(q, range, page);
+  }
+  async otherAiUsage(q: AdminQueryDto) {
+    if (
+      q.kind &&
+      !otherAiOperations.some((operation) => operation === q.kind)
+    ) {
+      throw new BadRequestException('无效的调用类型');
+    }
+    if (q.status && !['responded', 'failed'].includes(q.status)) {
+      throw new BadRequestException('无效的调用状态');
+    }
+    const range = dateRange(q);
+    const page = pageQuery(q);
+    try {
+      return await this.database.findOtherAiUsage(q, range, page);
+    } catch (error) {
+      // Missing storage is distinguishable from a valid range with no calls.
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as { code?: string }).code === 'ER_NO_SUCH_TABLE'
+      ) {
+        throw new ServiceUnavailableException(
+          '其他 AI 调用流水表尚未就绪，请执行后端迁移 AddOtherAiCalls20261117000000 后重试。',
+        );
+      }
+      throw error;
+    }
   }
   /** 获取指定报告在筛选时间范围内的逐次模型调用明细。 */
   async reportTokenCalls(reportId: string, q: AdminQueryDto) {

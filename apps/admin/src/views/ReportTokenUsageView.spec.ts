@@ -101,11 +101,75 @@ describe('ReportTokenUsageView', () => {
     })
   })
 
+  it('keeps PDF and balance calls apart from report totals and renders unknown usage', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === 'report-token-usage') return mockReportData as never
+      return {
+        page: 1,
+        pageSize: 20,
+        summary: {
+          totalCalls: 2,
+          unknownCalls: 1,
+          promptTokens: 10,
+          completionTokens: 0,
+          totalTokens: 10,
+        },
+        items: [
+          {
+            id: 'pdf',
+            operation: 'pdf_content',
+            calledAt: '2026-11-04T08:00:00Z',
+            documentId: 'doc-a',
+            pageNumber: 2,
+            teacherId: 'teacher-101',
+            status: 'responded',
+            httpStatus: 200,
+            promptTokens: 10,
+            completionTokens: 0,
+            totalTokens: 10,
+          },
+          {
+            id: 'balance',
+            operation: 'balance',
+            status: 'failed',
+            httpStatus: 401,
+            promptTokens: null,
+            completionTokens: null,
+            totalTokens: null,
+          },
+        ],
+      } as never
+    })
+    const wrapper = mount(ReportTokenUsageView)
+    await flushPromises()
+    expect(api).not.toHaveBeenCalledWith('other-ai-usage', expect.anything())
+
+    await wrapper.get('button[aria-pressed="false"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('PDF 文本提取')
+    expect(wrapper.text()).toContain('doc-a 第 2 页')
+    expect(wrapper.text()).toContain('余额查询')
+    expect(wrapper.text()).toContain('HTTP 401')
+    expect(wrapper.text()).toContain('总用量未知 1 次')
+    expect(wrapper.text()).not.toContain('张三')
+
+    await wrapper.get('select').setValue('pdf_content')
+    await wrapper.get('form').trigger('submit')
+    expect(api).toHaveBeenLastCalledWith(
+      'other-ai-usage',
+      expect.objectContaining({ kind: 'pdf_content', page: 1 }),
+    )
+
+    await wrapper.get('button[aria-pressed="false"]').trigger('click')
+    expect(wrapper.text()).toContain('张三')
+    expect(wrapper.text()).not.toContain('doc-a')
+  })
+
   it('renders heading, summary metrics and report rows properly', async () => {
     const wrapper = mount(ReportTokenUsageView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('AI 报告 Token 追踪')
+    expect(wrapper.text()).toContain('AI Token 追踪')
     expect(wrapper.text()).toContain('650') // totalTokens
     expect(wrapper.text()).toContain('张三')
     expect(wrapper.text()).toContain('李四')

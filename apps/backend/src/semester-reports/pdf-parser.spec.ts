@@ -63,6 +63,75 @@ describe('direct Kimi PDF parser', () => {
       fetcher.mock.calls.some((c) => c[0].includes('chat/completions')),
     ).toBe(false);
   });
+  it('records per-page requests with known, zero and missing usage kept distinct', async () => {
+    const query = jest.fn().mockResolvedValue(undefined);
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(uploaded())
+      .mockResolvedValueOnce(
+        Response.json({
+          content: '课程一',
+          usage: { prompt_tokens: 12, completion_tokens: 0, total_tokens: 12 },
+        }),
+      )
+      .mockResolvedValueOnce(deleted())
+      .mockResolvedValueOnce(new Response(null, { status: 429 }));
+
+    await expect(
+      extractPdf('private.pdf', Buffer.from('pdf'), {
+        env: config,
+        fetcher,
+        split,
+        tracking: {
+          database: { query },
+          documentId: 'doc',
+          teacherId: 'teacher',
+        },
+      }),
+    ).rejects.toThrow('HTTP 429');
+
+    expect(
+      query.mock.calls.map(([, params]) => [
+        ...params.slice(1, 5),
+        ...params.slice(7),
+      ]),
+    ).toEqual([
+      ['pdf_upload', 'doc', 'teacher', 1, 'responded', 200, null, null, null],
+      ['pdf_content', 'doc', 'teacher', 1, 'responded', 200, 12, 0, 12],
+      ['pdf_delete', 'doc', 'teacher', 1, 'responded', 200, null, null, null],
+      ['pdf_upload', 'doc', 'teacher', 2, 'failed', 429, null, null, null],
+    ]);
+  });
+
+  it('still retrieves and cleans up cloud files when tracking storage fails', async () => {
+    const query = jest.fn().mockRejectedValue(new Error('storage unavailable'));
+    const logger = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const fetcher = jest.fn();
+    [...success('课程一'), ...success('课程二')].forEach((response) =>
+      fetcher.mockResolvedValueOnce(response),
+    );
+    try {
+      await expect(
+        extractPdf('x.pdf', Buffer.from('pdf'), {
+          env: config,
+          fetcher,
+          split,
+          tracking: {
+            database: { query },
+            documentId: 'doc',
+            teacherId: 'teacher',
+          },
+        }),
+      ).resolves.toMatchObject({ pages: [{ page: 1 }, { page: 2 }] });
+      expect(query).toHaveBeenCalledTimes(6);
+      expect(fetcher.mock.calls[5][1].method).toBe('DELETE');
+    } finally {
+      logger.mockRestore();
+    }
+  });
+
   it('requires a key before reading or uploading PDFs', async () => {
     const fetcher = jest.fn();
     const splitter = jest.fn();

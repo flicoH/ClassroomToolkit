@@ -94,15 +94,7 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
       })
       .execute()
       .catch(() => undefined);
-    void this.dataSource
-      .getRepository(SemesterReportEntity)
-      .createQueryBuilder()
-      .update()
-      .set({ status: 'queued', errorMessage: null })
-      .where('status = :status', { status: 'failed' })
-      .andWhere("JSON_EXTRACT(snapshot, '$.scheduledTask') IS NOT NULL")
-      .execute()
-      .catch(() => undefined);
+    // A restart resumes interrupted work. Failed reports require an explicit retry.
     this.schedule(1000);
   }
 
@@ -622,7 +614,13 @@ export class SemesterReportWorker implements OnModuleInit, OnModuleDestroy {
     try {
       if (!document.storagePath) throw new Error('课程 PDF 文件不可用');
       const buffer = await readFile(document.storagePath);
-      const parsed = await extractPdf(document.fileName, buffer);
+      const parsed = await extractPdf(document.fileName, buffer, {
+        tracking: {
+          database: this.dataSource,
+          documentId: document.id,
+          teacherId: document.teacherId,
+        },
+      });
       const row = await docs.findOne({
         where: {
           id: document.id,

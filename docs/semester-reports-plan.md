@@ -464,3 +464,16 @@ v2 草稿读取仍实时计算积分展示，AI 正文从生成时的证据产�
 - 草稿微调弹窗添加学科时，先调用 `POST /semester-reports/reports/:id/course-subjects`。仅添加评价学科时，`courseSelections` 传该学科的 ID 及空字符串 `courseScope`、`manualContent`，沿用“教学内容待补充”，避免自动引入 PDF 或生成教学证据。成功后以服务端返回的学科列表开放评价，保留未保存的寄语等正文。随后 `PATCH /semester-reports/reports/:id/draft` 仍按报告快照校验评价的 `subjectId`。
 - 学科变动独立保存并写入历史。弹窗移除学科时调用现有 DELETE 接口，并按返回的证据引用和学习条目清理本地待保存内容。学科操作失败在弹窗内显示原因，保留当前学科和输入，可重试。发布前的草稿保存失败时中止发布。
 - 沿用教师归属、草稿状态和事务校验。更新 Web 即可，接口及数据结构沿用现有实现，无需迁移。
+
+### 定时报告失败后的重试
+
+后端启动恢复超过 15 分钟的生成中报告和解析中课件。已失败的定时报告保留失败状态与错误原因，由所属教师通过既有重试入口重新入队，防止重启或部署意外重复调用 Kimi。发布新版 Backend 生效，沿用现有权限、接口和状态字段，无需迁移或清理历史记录。
+
+### AI Token 分类追踪
+
+- Admin 的「Token 追踪」默认展示报告正文，沿用报告、学生、逐次请求和历史追踪口径。切换「其他服务调用」后，可按北京时间、操作、状态分页查看 Kimi 课件上传、取文、清理及报告 AI 余额查询。
+- 其他调用请求结束后写入 `other_ai_calls`，保存调用时间、状态、HTTP 状态和可用的课件 ID、原始页码、教师 ID。JSON 响应提供有效的 `usage.prompt_tokens`、`usage.completion_tokens`、`usage.total_tokens` 时逐字段采集。缺失值保留 NULL，聚合只加总已知值，并显示总用量未知的请求数。
+- 管理员接口 `GET /admin/other-ai-usage` 接受 `start`、`end`、`page`、`pageSize`、`kind`（`pdf_upload`、`pdf_content`、`pdf_delete`、`balance`）、`status`（`responded`、`failed`）。响应返回日期范围、当前分页、筛选范围汇总及逐次记录。沿用管理员会话权限和日期/分页校验。
+- 网络失败的 HTTP 状态保留为空。流水写入失败时记录请求类型和流水 ID，原业务结果或错误继续返回。流水不包含 API Key、课件文本或供应商响应正文。
+- 先运行结构迁移 `20261117000000-add-other-ai-calls`，再发布 Backend 与 Admin。没有历史回填。部署前的 `/models` 探测由部署日志排查，Docling 不产生 Kimi 流水。回滚可使用旧应用镜像，保留分类流水表。
+- 流水表缺失时，查询接口返回 HTTP 503 并提示补跑对应迁移。已迁移且筛选范围内没有调用时正常返回空列表。

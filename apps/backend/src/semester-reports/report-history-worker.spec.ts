@@ -6,6 +6,29 @@ import {
 import type { DataSource } from 'typeorm';
 
 describe('generated report history', () => {
+  it('recovers stale in-flight jobs without retrying failed reports on startup', () => {
+    const qb = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue({ affected: 0 }),
+    };
+    const worker = new SemesterReportWorker({
+      getRepository: jest
+        .fn()
+        .mockReturnValue({ createQueryBuilder: () => qb }),
+    } as unknown as DataSource);
+
+    worker.onModuleInit();
+    worker.onModuleDestroy();
+
+    expect(qb.where.mock.calls).toEqual([
+      ['status = :status', { status: 'generating' }],
+      ['status = :status', { status: 'parsing' }],
+    ]);
+  });
+
   it.each(['v1', 'v2'])(
     'saves a recoverable initial %s version in the generation transaction',
     async (reportVersion) => {

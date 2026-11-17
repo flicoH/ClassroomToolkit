@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { QueryFailedError } from 'typeorm';
 
 describe('AdminService', () => {
   const originalEncryptionKey = process.env.REPORT_AI_SETTINGS_ENCRYPTION_KEY;
@@ -29,7 +30,7 @@ describe('AdminService', () => {
   function reportAiDatabase() {
     let row: Record<string, unknown> | null = null;
     const repository = {
-      manager: { getRepository: () => repository },
+      manager: { getRepository: () => repository, query: jest.fn() },
       findOne: jest.fn(async () => row),
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => {
@@ -43,6 +44,57 @@ describe('AdminService', () => {
     };
     return { reportAiSettings: () => repository, repository };
   }
+
+  it('explains the pending migration when the other calls table is missing', async () => {
+    const missing = new QueryFailedError(
+      'SELECT COUNT(*) FROM other_ai_calls',
+      [],
+      Object.assign(new Error('Table does not exist'), {
+        code: 'ER_NO_SUCH_TABLE',
+      }),
+    );
+    const findOtherAiUsage = jest.fn().mockRejectedValueOnce(missing);
+    const service = new AdminService({ findOtherAiUsage } as never);
+    await expect(service.otherAiUsage({})).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+
+    const unexpected = new Error('Connection lost');
+    findOtherAiUsage.mockRejectedValueOnce(unexpected);
+    await expect(service.otherAiUsage({})).rejects.toBe(unexpected);
+  });
+
+  it('validates other call filters and sends Shanghai dates and bounded pagination to storage', async () => {
+    const database = { findOtherAiUsage: jest.fn() };
+    const service = new AdminService(database as never);
+    await expect(
+      service.otherAiUsage({ kind: 'report' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.otherAiUsage({ status: 'in_progress' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.otherAiUsage({ pageSize: '101' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(database.findOtherAiUsage).not.toHaveBeenCalled();
+
+    const query = {
+      start: '2025-01-01',
+      end: '2025-01-01',
+      kind: 'pdf_content',
+      status: 'responded',
+      page: '2',
+    };
+    await service.otherAiUsage(query);
+    expect(database.findOtherAiUsage).toHaveBeenCalledWith(
+      query,
+      expect.objectContaining({
+        from: '2024-12-31 16:00:00.000',
+        to: '2025-01-01 16:00:00.000',
+      }),
+      { page: 2, pageSize: 20, offset: 20 },
+    );
+  });
 
   function featureDatabase() {
     return {
@@ -229,6 +281,23 @@ describe('AdminService', () => {
       data: { available_balance: 8 },
       source: 'database',
     });
+    expect(database.repository.manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO other_ai_calls'),
+      [
+        expect.any(String),
+        'balance',
+        null,
+        null,
+        null,
+        expect.any(String),
+        expect.any(String),
+        'responded',
+        200,
+        null,
+        null,
+        null,
+      ],
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.moonshot.cn/v1/users/me/balance',
       expect.objectContaining({

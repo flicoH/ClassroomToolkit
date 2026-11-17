@@ -587,6 +587,61 @@ export class AdminDatabase {
     }
   }
 
+  async findOtherAiUsage(
+    q: AdminQueryDto,
+    range: AdminDateRange & { start: string; end: string },
+    pagination: AdminPagination,
+  ) {
+    const conditions = ['called_at >= ?', 'called_at < ?'];
+    const params = [range.from, range.to];
+    if (q.kind) {
+      conditions.push('operation = ?');
+      params.push(q.kind);
+    }
+    if (q.status) {
+      conditions.push('status = ?');
+      params.push(q.status);
+    }
+    const where = conditions.join(' AND ');
+    const manager = this.teachers.manager;
+    const [summaryRows, items] = await Promise.all([
+      manager.query<[AdminDatabaseRow]>(
+        `SELECT COUNT(*) AS totalCalls,
+          COUNT(*) - COUNT(total_tokens) AS unknownCalls,
+          SUM(prompt_tokens) AS promptTokens,
+          SUM(completion_tokens) AS completionTokens,
+          SUM(total_tokens) AS totalTokens
+         FROM other_ai_calls WHERE ${where}`,
+        params,
+      ),
+      manager.query<AdminDatabaseRow[]>(
+        `SELECT id, operation, document_id AS documentId, teacher_id AS teacherId,
+          page_number AS pageNumber, ${isoDate('called_at')} AS calledAt,
+          status, http_status AS httpStatus, prompt_tokens AS promptTokens,
+          completion_tokens AS completionTokens, total_tokens AS totalTokens
+         FROM other_ai_calls WHERE ${where}
+         ORDER BY called_at DESC, id DESC LIMIT ? OFFSET ?`,
+        [...params, pagination.pageSize, pagination.offset],
+      ),
+    ]);
+    const row = summaryRows[0];
+    return {
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      range: { start: range.start, end: range.end },
+      summary: {
+        totalCalls: Number(row.totalCalls),
+        unknownCalls: Number(row.unknownCalls),
+        promptTokens:
+          row.promptTokens === null ? null : Number(row.promptTokens),
+        completionTokens:
+          row.completionTokens === null ? null : Number(row.completionTokens),
+        totalTokens: row.totalTokens === null ? null : Number(row.totalTokens),
+      },
+      items,
+    };
+  }
+
   async findReportTokenUsage(
     q: AdminQueryDto,
     range: { from: string; to: string; start: string; end: string },

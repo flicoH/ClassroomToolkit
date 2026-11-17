@@ -1012,6 +1012,69 @@ describe('Admin Report Token Usage & Tracking', () => {
     });
   });
 
+  it('applies the same filters to other service totals and paginated rows', async () => {
+    const items = [{ id: 'request', totalTokens: null }];
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          totalCalls: '2',
+          unknownCalls: '1',
+          promptTokens: '12',
+          completionTokens: '0',
+          totalTokens: '12',
+        },
+      ])
+      .mockResolvedValueOnce(items);
+    const database = new AdminDatabase(
+      { manager: { query } } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const result = await database.findOtherAiUsage(
+      { kind: 'pdf_content', status: 'responded' },
+      {
+        start: '2025-01-01',
+        end: '2025-01-01',
+        from: '2024-12-31 16:00:00.000',
+        to: '2025-01-01 16:00:00.000',
+      },
+      { page: 2, pageSize: 1, offset: 1 },
+    );
+    const filters = [
+      '2024-12-31 16:00:00.000',
+      '2025-01-01 16:00:00.000',
+      'pdf_content',
+      'responded',
+    ];
+    const where =
+      'FROM other_ai_calls WHERE called_at >= ? AND called_at < ? AND operation = ? AND status = ?';
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining(where),
+      filters,
+    );
+    expect(query).toHaveBeenNthCalledWith(2, expect.stringContaining(where), [
+      ...filters,
+      1,
+      1,
+    ]);
+    expect(result).toMatchObject({
+      page: 2,
+      summary: {
+        totalCalls: 2,
+        unknownCalls: 1,
+        promptTokens: 12,
+        completionTokens: 0,
+        totalTokens: 12,
+      },
+      items,
+    });
+  });
+
   describe('Admin Controller & Guard permissions', () => {
     it('requires admin access and delegates to service', async () => {
       const mockService = {
@@ -1033,27 +1096,30 @@ describe('Admin Report Token Usage & Tracking', () => {
       expect(mockService.reportTokenCalls).toHaveBeenCalledWith('rep-1', q);
     });
 
-    it('rejects unauthenticated requests via AdminAuthGuard', async () => {
-      const reflector = new Reflector();
-      const mockAuthService = {
-        authenticate: jest
-          .fn()
-          .mockRejectedValue(new BadRequestException('未登录')),
-      };
-      const guard = new AdminAuthGuard(reflector, mockAuthService as never);
+    it.each(['reportTokenUsage', 'otherAiUsage'] as const)(
+      'requires an admin session for %s',
+      async (handler) => {
+        const reflector = new Reflector();
+        const mockAuthService = {
+          authenticate: jest
+            .fn()
+            .mockRejectedValue(new BadRequestException('未登录')),
+        };
+        const guard = new AdminAuthGuard(reflector, mockAuthService as never);
 
-      const context = {
-        getHandler: () => AdminController.prototype.reportTokenUsage,
-        getClass: () => AdminController,
-        switchToHttp: () => ({
-          getRequest: () => ({
-            method: 'GET',
-            headers: {},
+        const context = {
+          getHandler: () => AdminController.prototype[handler],
+          getClass: () => AdminController,
+          switchToHttp: () => ({
+            getRequest: () => ({
+              method: 'GET',
+              headers: {},
+            }),
           }),
-        }),
-      } as never;
+        } as never;
 
-      await expect(guard.canActivate(context)).rejects.toThrow('未登录');
-    });
+        await expect(guard.canActivate(context)).rejects.toThrow('未登录');
+      },
+    );
   });
 });

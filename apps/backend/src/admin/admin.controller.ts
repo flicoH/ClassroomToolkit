@@ -51,6 +51,10 @@ export class AdminController {
   reportTokenUsage(@Query(AdminQueryPipe) q: AdminQueryDto) {
     return this.service.reportTokenUsage(q);
   }
+  @Get('other-ai-usage')
+  otherAiUsage(@Query(AdminQueryPipe) q: AdminQueryDto) {
+    return this.service.otherAiUsage(q);
+  }
   /** 获取指定报告在筛选时间范围内的逐次模型调用明细。 */
   @Get('report-token-usage/:reportId/calls')
   reportTokenCalls(

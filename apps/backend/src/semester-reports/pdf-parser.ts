@@ -1,3 +1,9 @@
+import type { EntityManager } from 'typeorm';
+import {
+  otherAiOperations,
+  responseUsage,
+  trackOtherAiCall,
+} from './other-ai-calls';
 import { basename } from 'node:path';
 import { splitPdf, type PdfSplitter } from './pdf-pages';
 export type { PdfSplitter } from './pdf-pages';
@@ -172,36 +178,52 @@ async function kimiPage(
   config: Extract<ParserConfig, { provider: 'kimi' }>,
   fetcher: typeof fetch,
   signal: AbortSignal,
+  tracking?: PdfCallTracking,
 ) {
   const headers = {
     authorization: `Bearer ${config.key}`,
   };
-  const request = async (
+  const request = <T>(
+    operation: (typeof otherAiOperations)[number],
     path: string,
     method: string,
+    read: (response: Response, setUsage: (body: unknown) => void) => Promise<T>,
     body?: FormData,
-    cleanup = false,
-  ) => {
-    let response: Response;
-    try {
-      response = await fetcher(`${config.base}${path}`, {
-        method,
-        body,
-        headers,
-        redirect: 'error',
-        signal: cleanup
-          ? AbortSignal.timeout(15000)
-          : AbortSignal.any([signal, AbortSignal.timeout(90000)]),
-      });
-    } catch {
-      throw new Error(`Kimi 第 ${page} 页连接失败或超时，请检查网络后重试`);
-    }
-    if (!response.ok)
-      throw new Error(
-        `Kimi 第 ${page} 页返回 HTTP ${response.status}，请检查密钥、额度或限流`,
-      );
-    return response;
-  };
+  ) =>
+    trackOtherAiCall(
+      tracking?.database,
+      {
+        operation,
+        documentId: tracking?.documentId,
+        teacherId: tracking?.teacherId,
+        page,
+      },
+      async (details) => {
+        let response: Response;
+        try {
+          response = await fetcher(`${config.base}${path}`, {
+            method,
+            body,
+            headers,
+            redirect: 'error',
+            signal:
+              operation === 'pdf_delete'
+                ? AbortSignal.timeout(15000)
+                : AbortSignal.any([signal, AbortSignal.timeout(90000)]),
+          });
+        } catch {
+          throw new Error(`Kimi 第 ${page} 页连接失败或超时，请检查网络后重试`);
+        }
+        details.httpStatus = response.status;
+        if (!response.ok)
+          throw new Error(
+            `Kimi 第 ${page} 页返回 HTTP ${response.status}，请检查密钥、额度或限流`,
+          );
+        return read(response, (value) => {
+          details.usage = responseUsage(value);
+        });
+      },
+    );
   const form = new FormData();
   form.append('purpose', 'file-extract');
   // A generic name keeps the original filename out of provider metadata.
@@ -210,10 +232,20 @@ async function kimiPage(
     new Blob([new Uint8Array(pdf)], { type: 'application/pdf' }),
     'course-page.pdf',
   );
-  const upload = (await boundedJson(
-    await request('/files', 'POST', form),
-    128 * 1024,
-  )) as { id?: unknown; extract_status?: unknown };
+  const upload = await request(
+    'pdf_upload',
+    '/files',
+    'POST',
+    async (response, setUsage) => {
+      const data = (await boundedJson(response, 128 * 1024)) as {
+        id?: unknown;
+        extract_status?: unknown;
+      };
+      setUsage(data);
+      return data;
+    },
+    form,
+  );
   if (
     typeof upload?.id !== 'string' ||
     !/^[a-zA-Z0-9_-]{1,200}$/u.test(upload.id)
@@ -225,24 +257,28 @@ async function kimiPage(
   try {
     if (upload.extract_status === 'error')
       throw new Error(`Kimi 第 ${page} 页云端内容提取失败`);
-    const response = await request(`${path}/content`, 'GET');
-    const raw = await boundedText(response, 512 * 1024);
-    if (response.headers.get('content-type')?.includes('application/json')) {
-      // File API responses may wrap Markdown in {content} or return text/plain;
-      // both retain the same original page contract.
-      let data: { content?: unknown } | string | null;
-      try {
-        data = JSON.parse(raw) as typeof data;
-      } catch {
-        throw new Error(`Kimi 第 ${page} 页返回无效 JSON`);
-      }
-      const value = typeof data === 'string' ? data : data?.content;
-      if (typeof value !== 'string')
-        throw new Error(`Kimi 第 ${page} 页未返回有效文本`);
-      text = value;
-    } else {
-      text = raw;
-    }
+    text = await request(
+      'pdf_content',
+      `${path}/content`,
+      'GET',
+      async (response, setUsage) => {
+        const raw = await boundedText(response, 512 * 1024);
+        if (!response.headers.get('content-type')?.includes('application/json'))
+          return raw;
+        // Keep the text and JSON content formats compatible.
+        let data: string | { content?: unknown } | null;
+        try {
+          data = JSON.parse(raw) as typeof data;
+        } catch {
+          throw new Error(`Kimi 第 ${page} 页返回无效 JSON`);
+        }
+        setUsage(data);
+        const value = typeof data === 'string' ? data : data?.content;
+        if (typeof value !== 'string')
+          throw new Error(`Kimi 第 ${page} 页未返回有效文本`);
+        return value;
+      },
+    );
     if (text.length > 50000)
       throw new Error(`Kimi 第 ${page} 页内容超限，请拆分文件`);
     signal.throwIfAborted();
@@ -252,7 +288,13 @@ async function kimiPage(
   try {
     // Use a fresh timeout even if OCR was cancelled, so temporary cloud files
     // are deleted on both success and failure. Never delete pre-existing files.
-    await request(path, 'DELETE', undefined, true);
+    await request('pdf_delete', path, 'DELETE', async (response, setUsage) => {
+      if (response.headers.get('content-type')?.includes('application/json')) {
+        setUsage(
+          await boundedJson(response, 128 * 1024).catch(() => undefined),
+        );
+      }
+    });
   } catch {
     throw new Error(
       `${failure ? failure.message + '；' : ''}云端临时 PDF 删除失败，请在 Kimi 控制台清理后重试`,
@@ -262,7 +304,13 @@ async function kimiPage(
   return text!;
 }
 
-/** Both providers return pages/units; no API or DB migration is required. */
+type PdfCallTracking = {
+  database: Pick<EntityManager, 'query'>;
+  documentId: string;
+  teacherId: string;
+};
+
+/** Both providers preserve the same pages and units contract. */
 export async function extractPdf(
   fileName: string,
   buffer: Buffer,
@@ -271,6 +319,7 @@ export async function extractPdf(
     fetcher?: typeof fetch;
     split?: PdfSplitter;
     signal?: AbortSignal;
+    tracking?: PdfCallTracking;
   } = {},
 ) {
   const config = readParserConfig(options.env);
@@ -313,7 +362,14 @@ export async function extractPdf(
       signal.throwIfAborted();
       if (page !== pages.length + 1 || page > 300)
         throw new Error('PDF 原始页码异常');
-      const text = await kimiPage(pdf, page, config, fetcher, signal);
+      const text = await kimiPage(
+        pdf,
+        page,
+        config,
+        fetcher,
+        signal,
+        options.tracking,
+      );
       total += text.length;
       if (total > 1000000) throw new Error('PDF 全文内容超限，请拆分文件');
       pages.push({ page, text });
