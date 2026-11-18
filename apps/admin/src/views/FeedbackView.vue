@@ -64,25 +64,48 @@ onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">FEEDBACK</p>
       <h1>意见反馈</h1>
-      <p class="muted">查看教师提交的功能建议和使用问题。</p>
+      <p class="muted">
+        查看教师提交的功能建议和使用问题。
+      </p>
     </div>
   </div>
 
-  <form class="toolbar" @submit.prevent="searchRecords">
+  <form
+    class="toolbar filter-surface"
+    @submit.prevent="searchRecords"
+  >
     <input
       v-model="search"
       type="search"
       placeholder="搜索教师姓名、账号或意见内容"
       aria-label="搜索意见"
       maxlength="100"
-    />
-    <button class="primary" :disabled="loading">查询</button>
+    >
+    <button
+      class="primary"
+      :disabled="loading"
+    >
+      查询
+    </button>
   </form>
 
-  <p v-if="error" class="error" role="alert">{{ error }} <button @click="load">重试</button></p>
-  <p v-if="loading" role="status" class="muted">正在加载…</p>
+  <p
+    v-if="error"
+    class="error"
+    role="alert"
+  >
+    {{ error }} <button @click="load">
+      重试
+    </button>
+  </p>
+  <p
+    v-if="loading"
+    role="status"
+    class="muted"
+  >
+    正在加载…
+  </p>
   <section class="panel">
     <div class="table-scroll">
       <table class="feedback-table">
@@ -95,9 +118,15 @@ onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in data?.items" :key="row.id">
+          <tr
+            v-for="row in data?.items"
+            :key="row.id"
+          >
             <td>
-              <RouterLink v-if="row.teacherId" :to="`/teachers/${row.teacherId}`">
+              <RouterLink
+                v-if="row.teacherId"
+                :to="`/teachers/${row.teacherId}`"
+              >
                 <strong>{{ row.teacherName || '已删除教师' }}</strong>
                 <small>{{ row.teacherUsername || row.teacherId }}</small>
               </RouterLink>
@@ -107,12 +136,23 @@ onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
             </td>
             <td>{{ formatTime(row.createdAt) }}</td>
             <td>
-              <button type="button" class="link-button" @click="selected = row">查看详情</button>
+              <button
+                type="button"
+                class="link-button"
+                @click="selected = row"
+              >
+                查看详情
+              </button>
             </td>
           </tr>
         </tbody>
       </table>
-      <p v-if="!data?.items.length && !loading" class="empty">暂无教师意见</p>
+      <p
+        v-if="!data?.items.length && !loading"
+        class="empty"
+      >
+        暂无教师意见
+      </p>
     </div>
     <PaginationBar
       v-if="data"
@@ -124,7 +164,11 @@ onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
     />
   </section>
 
-  <div v-if="selected" class="dialog-backdrop" @click.self="selected = null">
+  <div
+    v-if="selected"
+    class="dialog-backdrop"
+    @click.self="selected = null"
+  >
     <section
       class="feedback-dialog"
       role="dialog"
@@ -133,10 +177,20 @@ onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
     >
       <div class="dialog-heading">
         <div>
-          <p class="eyebrow">FEEDBACK DETAIL</p>
-          <h2 id="feedback-dialog-title">意见详情</h2>
+          <p class="eyebrow">
+            FEEDBACK DETAIL
+          </p>
+          <h2 id="feedback-dialog-title">
+            意见详情
+          </h2>
         </div>
-        <button type="button" aria-label="关闭意见详情" @click="selected = null">关闭</button>
+        <button
+          type="button"
+          aria-label="关闭意见详情"
+          @click="selected = null"
+        >
+          关闭
+        </button>
       </div>
       <dl class="feedback-meta">
         <div>

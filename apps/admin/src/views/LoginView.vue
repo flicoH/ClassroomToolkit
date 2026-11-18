@@ -31,38 +31,50 @@ async function submit() {
 <template>
   <div class="login-page">
     <section class="login-intro">
-      <div class="brand"><span class="brand-mark">课</span><span>课堂小组件</span></div>
-      <div>
-        <p class="eyebrow">CLASSROOM TOOLKIT</p>
-        <h1>看见每一间课堂<br />的成长。</h1>
-        <p>教师、学生与功能使用数据，尽在管理工作台。</p>
+      <div class="brand">
+        <span class="brand-mark">课</span><span>课堂小组件</span>
       </div>
-      <small>课堂小组件 · 平台管理</small>
+      <div>
+        <h1>课堂小组件<br>管理工作台</h1>
+        <p>查询教师、学生和班级资料，查看平台使用趋势。</p>
+      </div>
     </section>
     <section class="login-form">
       <form @submit.prevent="submit">
-        <span class="pill">管理员入口</span>
         <h2>登录管理后台</h2>
-        <p class="muted">使用管理员账号访问平台数据。</p>
-        <label
-          >账号<input
-            v-model="username"
-            autocomplete="username"
-            required
-            maxlength="64"
-            placeholder="请输入管理员账号" /></label
-        ><label
-          >密码<input
-            v-model="password"
-            type="password"
-            autocomplete="current-password"
-            required
-            maxlength="256"
-            placeholder="请输入密码"
-        /></label>
-        <p v-if="error" role="alert" class="error">{{ error }}</p>
-        <button class="primary" :disabled="busy">{{ busy ? '正在登录…' : '登录工作台 →' }}</button>
-        <p class="muted footnote">教师账号请使用教师端登录。</p>
+        <p class="muted">
+          使用管理员账号访问平台数据。
+        </p>
+        <label>账号<input
+          v-model="username"
+          autocomplete="username"
+          required
+          maxlength="64"
+          placeholder="请输入管理员账号"
+        ></label><label>密码<input
+          v-model="password"
+          type="password"
+          autocomplete="current-password"
+          required
+          maxlength="256"
+          placeholder="请输入密码"
+        ></label>
+        <p
+          v-if="error"
+          role="alert"
+          class="error"
+        >
+          {{ error }}
+        </p>
+        <button
+          class="primary"
+          :disabled="busy"
+        >
+          {{ busy ? '正在登录…' : '登录工作台 →' }}
+        </button>
+        <p class="muted footnote">
+          教师账号请使用教师端登录。
+        </p>
       </form>
     </section>
   </div>

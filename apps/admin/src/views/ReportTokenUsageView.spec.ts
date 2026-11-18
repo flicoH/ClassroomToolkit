@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import BaseChart from '../components/BaseChart.vue'
 import ReportTokenUsageView from './ReportTokenUsageView.vue'
 import { api } from '../lib/api'
 
@@ -101,6 +102,31 @@ describe('ReportTokenUsageView', () => {
     })
   })
 
+  it('charts recorded input and output totals and hides the chart for an empty result', async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce(mockReportData)
+      .mockResolvedValueOnce({
+        ...mockReportData,
+        total: 0,
+        items: [],
+        summary: {
+          ...mockReportData.summary,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+        },
+      })
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
+    await flushPromises()
+    expect(wrapper.getComponent(BaseChart).props('option')).toMatchObject({
+      series: [{ data: [{ value: 450 }, { value: 200 }] }],
+    })
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.findComponent(BaseChart).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps PDF and balance calls apart from report totals and renders unknown usage', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === 'report-token-usage') return mockReportData as never
@@ -140,7 +166,7 @@ describe('ReportTokenUsageView', () => {
         ],
       } as never
     })
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
     expect(api).not.toHaveBeenCalledWith('other-ai-usage', expect.anything())
 
@@ -166,7 +192,7 @@ describe('ReportTokenUsageView', () => {
   })
 
   it('renders heading, summary metrics and report rows properly', async () => {
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('AI Token 追踪')
@@ -180,7 +206,7 @@ describe('ReportTokenUsageView', () => {
   })
 
   it('expands report details to display call items on clicking expand button', async () => {
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     const expandBtn = wrapper.find('.expand-btn')
@@ -219,7 +245,7 @@ describe('ReportTokenUsageView', () => {
       items: [],
     } as never)
 
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无符合条件的报告 Token 追踪记录')
@@ -229,7 +255,7 @@ describe('ReportTokenUsageView', () => {
   it('displays error message and allows retry when API fails', async () => {
     vi.mocked(api).mockRejectedValueOnce(new Error('网络异常，获取数据失败'))
 
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('网络异常，获取数据失败')
@@ -245,7 +271,7 @@ describe('ReportTokenUsageView', () => {
   })
 
   it('triggers search query with selected filters and presets', async () => {
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     const searchInput = wrapper.find("input[type='search']")
@@ -266,7 +292,7 @@ describe('ReportTokenUsageView', () => {
   })
 
   it('formats teacher-***:class-*** composite IDs as human-readable names and student numbers', async () => {
-    const wrapper = mount(ReportTokenUsageView)
+    const wrapper = mount(ReportTokenUsageView, { global: { stubs: { BaseChart: true } } })
     await flushPromises()
 
     // 列表中不显示原始的内部复合 ID，而是显示格式化后的教师、班级和学号

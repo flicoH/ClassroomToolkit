@@ -74,7 +74,7 @@ onMounted(() => void load())
 <template>
   <section aria-label="其他服务调用">
     <form
-      class="toolbar"
+      class="toolbar filter-surface"
       @submit.prevent="load()"
     >
       <label>开始日期 <input

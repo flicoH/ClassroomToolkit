@@ -31,6 +31,12 @@ const chart = computed(() =>
         ],
   ),
 )
+const loginOutcomes = computed(() =>
+  trendChart(data.value?.series ?? [], [
+    { key: 'failures', name: '登录失败次数' },
+    { key: 'autoLogins', name: '注册后自动登录次数' },
+  ]),
+)
 const cumulative = computed(() =>
   trendChart(data.value?.series || [], [{ key: 'cumulative', name: '累计注册教师' }]),
 )
@@ -85,9 +91,6 @@ function searchRecords() {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        {{ registration ? 'GROWTH' : 'ENGAGEMENT' }}
-      </p>
       <h1>{{ registration ? '教师注册分析' : '教师登录分析' }}</h1>
       <p class="muted">
         {{
@@ -123,26 +126,27 @@ function searchRecords() {
     >
       所选日期早于数据采集时间，暂无统计数据。
     </p>
-    <section class="panel">
-      <div class="summary-strip">
-        <div v-if="registration">
-          <span>期间新增教师</span><strong>{{ data.total }}</strong>
-        </div>
-        <template v-else>
-          <div
-            v-for="(label, key) in {
-              logins: '成功登录次数',
-              teachers: '登录教师数（期间去重）',
-              failures: '失败次数',
-              autoLogins: '注册后自动登录',
-              activeTeachers: '活跃教师数（期间去重）',
-            }"
-            :key="key"
-          >
-            <span>{{ label }}</span><strong>{{ data.hasCoverage === false ? '—' : data.totals?.[key] }}</strong>
-          </div>
-        </template>
+    <div class="summary-strip color-summary">
+      <div v-if="registration">
+        <span>期间新增教师</span><strong>{{ data.total }}</strong>
       </div>
+      <template v-else>
+        <div
+          v-for="(label, key) in {
+            logins: '成功登录次数',
+            teachers: '登录教师数（期间去重）',
+            failures: '失败次数',
+            autoLogins: '注册后自动登录',
+            activeTeachers: '活跃教师数（期间去重）',
+          }"
+          :key="key"
+        >
+          <span>{{ label }}</span><strong>{{ data.hasCoverage === false ? '—' : data.totals?.[key] }}</strong>
+        </div>
+      </template>
+    </div>
+    <section class="panel">
+      <h2>{{ registration ? '每日新增教师' : '登录与活跃趋势' }}</h2>
       <BaseChart
         :option="chart"
         :label="registration ? '每日新增教师趋势' : '登录次数、登录教师数与活跃教师数趋势'"
@@ -156,6 +160,16 @@ function searchRecords() {
       <BaseChart
         :option="cumulative"
         label="现存教师账号的累计注册趋势"
+      />
+    </section>
+    <section
+      v-else-if="data.hasCoverage !== false && data.series.length"
+      class="panel"
+    >
+      <h2>登录失败与注册后自动登录</h2>
+      <BaseChart
+        :option="loginOutcomes"
+        label="每日登录失败与注册后自动登录次数趋势"
       />
     </section>
     <p class="muted footnote">

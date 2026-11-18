@@ -2,6 +2,14 @@
 
 Vue 3 + Vite + TypeScript 管理后台，使用 ECharts 展示教师注册、登录及功能使用趋势。包含教师、学生和班级目录查询。
 
+新增页面和界面调整统一遵循 [Admin 界面设计规范](../../docs/admin-dashboard.md#admin-界面设计规范)。
+
+管理端采用 I 风格的彩色指标看板。首页和分析页用彩色指标卡呈现关键数据，导航按平台分析、目录与反馈、服务与安全分组。列表页采用独立筛选区，教师详情分区展示账号资料、关联目录和安全操作。窄屏下主导航可横向滚动，表格在各自容器内滚动。
+
+首页的近 14 天登录与活跃趋势使用现有管理员接口 `GET /admin/analytics/logins`，按北京时间读取 `series[].teachers` 和 `series[].activeTeachers`。采集前的空值保留为图表断点。趋势与 `GET /admin/dashboard/overview` 独立加载，趋势出错时可单独重试。此更新发布 Admin 前端即可，兼容当前 Backend，无需迁移或补写历史数据。
+
+时间序列折线使用平滑曲线，缺测日期保留断点。登录分析另展示每日失败与注册后自动登录次数，沿用登录分析接口的 `failures` 和 `autoLogins`。Token 追踪使用报告接口当前筛选范围的 `summary.promptTokens` 和 `summary.completionTokens` 绘制输入与输出柱状对比，两项均为零时隐藏图表。
+
 ## 功能
 
 | 页面        | 路径                  | 能力                                                                                                                                                                                                                                                                                                                           |

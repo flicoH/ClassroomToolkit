@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, daysAgo, formatTime, today } from '../lib/api'
+import BaseChart from '../components/BaseChart.vue'
 import PaginationBar from '../components/PaginationBar.vue'
 import OtherAiUsagePanel from './OtherAiUsagePanel.vue'
 
@@ -78,6 +79,28 @@ const page = ref(1)
 const pageSize = ref(20)
 
 const data = ref<TokenUsageResponse | null>(null)
+// 使用筛选范围内的服务端汇总，翻页时图表仍代表同一范围。
+const tokenBreakdown = computed(() => {
+  const summary = data.value?.summary
+  if (!summary || (summary.promptTokens === 0 && summary.completionTokens === 0)) return null
+  return {
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: 60, right: 32, top: 10, bottom: 30 },
+    xAxis: { type: 'value', minInterval: 1 },
+    yAxis: { type: 'category', inverse: true, data: ['输入', '输出'] },
+    series: [
+      {
+        name: 'Token',
+        type: 'bar',
+        barMaxWidth: 20,
+        data: [
+          { value: summary.promptTokens, itemStyle: { color: '#5148b8' } },
+          { value: summary.completionTokens, itemStyle: { color: '#087774' } },
+        ],
+      },
+    ],
+  }
+})
 const loading = ref(false)
 const error = ref('')
 
@@ -251,9 +274,6 @@ onMounted(load)
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        TOKEN USAGE TRACKING
-      </p>
       <h1>AI Token 追踪</h1>
       <p class="muted">
         统计以北京时间为准。供应商未提供的 Token 用量显示为未知。
@@ -290,7 +310,7 @@ onMounted(load)
   <OtherAiUsagePanel v-if="showOther" />
   <form
     v-if="!showOther"
-    class="toolbar filter-bar"
+    class="toolbar filter-bar filter-surface"
     @submit.prevent="handleSearch"
   >
     <label>
@@ -393,6 +413,20 @@ onMounted(load)
       <span class="metric-line" />
     </div>
   </div>
+
+  <section
+    v-if="!showOther && !loading && tokenBreakdown"
+    class="panel token-breakdown"
+  >
+    <h2>输入与输出 Token</h2>
+    <p class="muted footnote">
+      按当前筛选条件汇总已记录的输入与输出用量。
+    </p>
+    <BaseChart
+      :option="tokenBreakdown"
+      label="筛选范围内已记录的输入与输出 Token 对比"
+    />
+  </section>
 
   <p
     v-if="!showOther && error"
@@ -718,6 +752,10 @@ onMounted(load)
 </template>
 
 <style scoped>
+.token-breakdown :deep(.chart) {
+  height: 136px;
+}
+
 .filter-bar {
   background: white;
   padding: 16px 20px;

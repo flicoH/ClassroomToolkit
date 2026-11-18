@@ -60,9 +60,6 @@ function searchRecords() {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        DIRECTORY
-      </p>
       <h1>{{ route.meta.title }}</h1>
       <p class="muted">
         {{
@@ -76,7 +73,7 @@ function searchRecords() {
     </div>
   </div>
   <form
-    class="toolbar"
+    class="toolbar filter-surface"
     @submit.prevent="searchRecords"
   >
     <input
@@ -133,6 +130,13 @@ function searchRecords() {
     正在加载…
   </p>
   <section class="panel">
+    <header class="section-heading">
+      <h2>{{ route.meta.title }}列表</h2>
+      <span
+        v-if="data && !loading"
+        class="muted"
+      >共 {{ data.total }} 条</span>
+    </header>
     <div class="table-scroll">
       <table>
         <thead>

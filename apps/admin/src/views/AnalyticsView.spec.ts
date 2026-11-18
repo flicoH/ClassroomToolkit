@@ -1,5 +1,6 @@
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import { it, expect, vi } from 'vitest'
+import BaseChart from '../components/BaseChart.vue'
 import AnalyticsView from './AnalyticsView.vue'
 import IpRestrictions from '../components/IpRestrictions.vue'
 import { api } from '../lib/api'
@@ -16,7 +17,7 @@ it('shows login IP fields and allows blocking and unblocking', async () => {
         items: [{ id: '1', username: 'teacher', loginIp: '192.0.2.1', ipLocation: '示例地区' }],
         total: 1,
       } as never
-    return { series: [] } as never
+    return { series: [{ date: '2026-11-18', failures: 0, autoLogins: 4 }] } as never
   })
   const wrapper = shallowMount(AnalyticsView, { global: { stubs: { RouterLink: true } } })
   await flushPromises()
@@ -29,6 +30,12 @@ it('shows login IP fields and allows blocking and unblocking', async () => {
     '结果',
   ])
   expect(wrapper.text()).toContain('示例地区')
+  expect(wrapper.findAllComponents(BaseChart)[1]?.props('option')).toMatchObject({
+    series: [
+      { name: '登录失败次数', data: [0] },
+      { name: '注册后自动登录次数', data: [4] },
+    ],
+  })
   const manager = shallowMount(IpRestrictions)
   await flushPromises()
   await manager.find('input').setValue('192.0.2.2')

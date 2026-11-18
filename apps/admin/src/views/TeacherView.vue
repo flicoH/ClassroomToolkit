@@ -258,9 +258,6 @@ function changePage(value: number) {
   </RouterLink>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        TEACHER PROFILE
-      </p>
       <h1>{{ data?.name || '教师详情' }}</h1>
     </div>
   </div>
@@ -284,17 +281,31 @@ function changePage(value: number) {
     v-if="data"
     class="panel"
   >
-    <div class="detail-info">
-      <span>账号：{{ data.username }}</span><span>邮箱：{{ data.email }}</span><span>注册：{{ formatTime(data.createdAt) }}</span><span>最近登录：{{ formatTime(data.lastLoginAt) }}</span><RouterLink
-        class="link"
-        :to="{ path: '/classrooms', query: { teacherId: data.id } }"
-      >
-        班级 {{ data.classrooms }} 个 →
-      </RouterLink><RouterLink
-        class="link"
-        :to="{ path: '/students', query: { teacherId: data.id } }"
-      >
-        学生档案 {{ data.students }} 份 →
+    <h2>账号资料</h2>
+    <dl class="detail-info">
+      <div>
+        <dt>账号</dt>
+        <dd>{{ data.username || '—' }}</dd>
+      </div>
+      <div>
+        <dt>邮箱</dt>
+        <dd>{{ data.email || '—' }}</dd>
+      </div>
+      <div>
+        <dt>注册时间</dt>
+        <dd>{{ formatTime(data.createdAt) }}</dd>
+      </div>
+      <div>
+        <dt>最近登录</dt>
+        <dd>{{ formatTime(data.lastLoginAt) }}</dd>
+      </div>
+    </dl>
+    <div class="record-links">
+      <RouterLink :to="{ path: '/classrooms', query: { teacherId: data.id } }">
+        班级 <strong>{{ data.classrooms }}</strong> 个 →
+      </RouterLink>
+      <RouterLink :to="{ path: '/students', query: { teacherId: data.id } }">
+        学生档案 <strong>{{ data.students }}</strong> 份 →
       </RouterLink>
     </div>
   </section>

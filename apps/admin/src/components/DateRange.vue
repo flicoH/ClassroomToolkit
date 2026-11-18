@@ -27,12 +27,37 @@ function preset(days: number) {
 }
 </script>
 <template>
-  <form class="toolbar" @submit.prevent="submit">
-    <button type="button" @click="preset(7)">近 7 天</button
-    ><button type="button" @click="preset(30)">近 30 天</button
-    ><label>开始<input v-model="start" type="date" :max="end" required /></label
-    ><label>结束<input v-model="end" type="date" :min="start" :max="today()" required /></label
-    ><button class="primary">查询</button><span class="muted footnote">北京时间</span
-    ><span v-if="error" role="alert" class="error">{{ error }}</span>
+  <form
+    class="toolbar filter-surface"
+    @submit.prevent="submit"
+  >
+    <button
+      type="button"
+      @click="preset(7)"
+    >
+      近 7 天
+    </button><button
+      type="button"
+      @click="preset(30)"
+    >
+      近 30 天
+    </button><label>开始<input
+      v-model="start"
+      type="date"
+      :max="end"
+      required
+    ></label><label>结束<input
+      v-model="end"
+      type="date"
+      :min="start"
+      :max="today()"
+      required
+    ></label><button class="primary">
+      查询
+    </button><span class="muted footnote">北京时间</span><span
+      v-if="error"
+      role="alert"
+      class="error"
+    >{{ error }}</span>
   </form>
 </template>

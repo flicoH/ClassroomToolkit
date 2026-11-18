@@ -20,7 +20,7 @@ let chart: ECharts | undefined, observer: ResizeObserver | undefined
 function render() {
   chart?.setOption(
     {
-      color: ['#3168e5', '#17a894', '#f0a643', '#9a74dc'],
+      color: ['#5148b8', '#087774', '#2764ab', '#9a4f13'],
       textStyle: { fontFamily: 'inherit' },
       aria: { enabled: true },
       animation: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -44,4 +44,11 @@ onBeforeUnmount(() => {
   chart?.dispose()
 })
 </script>
-<template><div ref="host" class="chart" role="img" :aria-label="label"></div></template>
+<template>
+  <div
+    ref="host"
+    class="chart"
+    role="img"
+    :aria-label="label"
+  />
+</template>

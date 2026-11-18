@@ -161,9 +161,6 @@ onMounted(() => {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        AI SERVICE
-      </p>
       <h1>AI 报告配置</h1>
       <p class="muted">
         配置报告生成服务、授权教师账号并查询账户 Token 余额。
@@ -171,6 +168,7 @@ onMounted(() => {
     </div>
   </div>
   <section class="panel ai-settings">
+    <h2>服务与模型</h2>
     <p
       v-if="message"
       role="status"

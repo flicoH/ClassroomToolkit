@@ -20,8 +20,10 @@ export function trendChart(
       name: m.name,
       type: m.type || 'line',
       data: rows.map((r) => r[m.key]),
-      showSymbol: false,
-      connectNulls: false,
+      // 沿日期轴限制曲线走势，历史缺测仍显示断点。
+      ...(m.type === 'bar'
+        ? {}
+        : { smooth: true, smoothMonotone: 'x', showSymbol: false, connectNulls: false }),
       barMaxWidth: 22,
       lineStyle: { width: 3 },
     })),

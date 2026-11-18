@@ -57,9 +57,6 @@ function selectFeature(key: string) {
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">
-        FEATURE INSIGHTS
-      </p>
       <h1>热门功能分析</h1>
       <p class="muted">
         从使用覆盖与使用频率，了解教师的课堂习惯。
