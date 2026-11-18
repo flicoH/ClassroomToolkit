@@ -304,6 +304,37 @@ describe("PetPoints persisted workflows", () => {
     expect(document.querySelector('[aria-label="关闭兑换站"]')).toBeNull();
     expect(document.querySelector('[aria-label="关闭设置"]')).not.toBeNull();
   });
+  it("adjusts or types a reward quantity and sends it in a single redemption request", async () => {
+    const redemptions = () => writes().filter(args => args.url === "/api/pet-points/rewards/redeem");
+    await mount();
+    await click(button("兑换站"));
+    const quantity = document.querySelector<HTMLInputElement>('[aria-label="贴纸兑换数量"]')!;
+    const redeem = document.querySelector<HTMLButtonElement>('[aria-label="兑换贴纸"]')!;
+    const decrease = document.querySelector<HTMLButtonElement>('[aria-label="减少贴纸兑换数量"]')!;
+    const increase = document.querySelector<HTMLButtonElement>('[aria-label="增加贴纸兑换数量"]')!;
+    expect(quantity.form?.textContent).not.toContain("数量");
+    expect(quantity.value).toBe("1");
+    expect(quantity.max).toBe("2");
+    await click(decrease);
+    expect(quantity.value).toBe("1");
+    await click(increase);
+    await click(increase);
+    expect(quantity.value).toBe("2");
+    await click(decrease);
+    expect(quantity.value).toBe("1");
+    expect(redemptions()).toHaveLength(0);
+    for (const invalid of ["", "0", "1.5", "3"]) {
+      quantity.value = invalid;
+      await click(redeem);
+    }
+    expect(redemptions()).toHaveLength(0);
+    quantity.value = "2";
+    await click(redeem);
+    expect(redemptions()).toHaveLength(1);
+    expect(redemptions()[0].data).toMatchObject({ studentId: "one", rewardId: "gift", quantity: 2 });
+    expect(quantity.value).toBe("1");
+  });
+
   it("configures the full-level badge reward while preserving manual badge controls", async () => {
     await mount();
     await click(container.querySelector('[aria-label="设置"]')!);
@@ -567,6 +598,55 @@ describe("PetPoints persisted workflows", () => {
     expect(document.body.textContent).toContain("#2026001");
   });
 
+  it("shows one redemption option per student ID even when an old record has a different student number", async () => {
+    const original = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      if (args === "/api/pet-points") {
+        const overview = await original(args);
+        return {
+          ...overview,
+          students: [
+            { ...student, studentNo: "2026001", revision: 4 },
+            { ...student, studentNo: "2026002", name: "旧记录", revision: 1 },
+            { ...student, id: "two", studentNo: "2026002", name: "测试乙" }
+          ]
+        };
+      }
+      return original(args);
+    });
+    await mount();
+    await click(button("兑换站"));
+    const select = document.querySelector<HTMLSelectElement>('[aria-label="兑换学生"]')!;
+    expect(Array.from(select.options, option => option.value)).toEqual(["one", "two"]);
+    expect(select.textContent).not.toContain("旧记录");
+    await click(document.querySelector('[aria-label="兑换贴纸"]') as HTMLElement);
+    expect(writes().find(args => args.url.endsWith("/rewards/redeem"))?.data).toMatchObject({
+      studentId: "one",
+      revisions: { one: 4 }
+    });
+  });
+
+  it("keeps students who share a number across classes when the points overview fails", async () => {
+    const original = api.request.getMockImplementation()!;
+    const classrooms = [
+      { id: "class", name: "测试班", groups: [], students: [{ id: "one", name: "测试甲", studentNo: "1" }] },
+      { id: "other", name: "另一个班", groups: [], students: [{ id: "two", name: "测试乙", studentNo: "1" }] }
+    ];
+    failedRefresh = true;
+    api.request.mockImplementation(async args => {
+      if (args === "/api/classes") return classrooms;
+      return original(args);
+    });
+    await mount();
+    expect(container.querySelector("[data-student-card]")?.textContent).toContain("测试甲");
+    const select = container.querySelector<HTMLSelectElement>('[aria-label="切换班级"]')!;
+    await act(async () => {
+      select.value = "other";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(container.querySelector("[data-student-card]")?.textContent).toContain("测试乙");
+  });
+
   it("preserves available points when pet reaches max level and provides direct reward redemption for that student", async () => {
     const original = api.request.getMockImplementation()!;
     api.request.mockImplementation(async args => {
@@ -618,6 +698,13 @@ describe("PetPoints persisted workflows", () => {
     // 满级学生卡片上应有直达兑换按钮
     const redeemBtn = document.querySelector('[aria-label="为满级小明兑换奖品"]');
     expect(redeemBtn).not.toBeNull();
+    await click(container.querySelector('[aria-label="紧凑模式"]') as HTMLElement);
+    const complete = Array.from(container.querySelectorAll("button")).find(
+      item => item.textContent === "领取满级纪念，开始下一轮"
+    )!;
+    expect(complete.parentElement).toBe(redeemBtn?.parentElement);
+    expect(complete.parentElement?.classList.contains("flex-col")).toBe(true);
+    expect(complete.classList.contains("whitespace-normal")).toBe(true);
     await click(redeemBtn as HTMLElement);
 
     const dialog = document.querySelector('[aria-label="积分兑换站"]')!;

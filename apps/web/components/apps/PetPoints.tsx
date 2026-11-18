@@ -124,6 +124,7 @@ interface RedemptionRecord {
   id: string;
   studentId: string;
   rewardName: string;
+  quantity?: number;
   cost: number;
   createdAt: string;
 }
@@ -394,17 +395,26 @@ function toPetPointStudent(classroom: Classroom, student: ClassroomStudent): Stu
   };
 }
 
+/** 历史记录可能共用积分学生 ID，即使学号不同也只能对应一个评分和兑换对象。 */
+function uniquePetStudents(students: StudentPet[]) {
+  const ids = new Set<string>();
+  const classStudentNos = new Set<string>();
+  return students.filter(student => {
+    const classStudentNo = `${student.classId}:${student.studentNo}`;
+    if (ids.has(student.id) || classStudentNos.has(classStudentNo)) return false;
+    ids.add(student.id);
+    classStudentNos.add(classStudentNo);
+    return true;
+  });
+}
+
 /** 用班级学生名单替换当前班级数据，同时保留已有积分和宠物进度，并保障同班学号唯一。 */
 function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroom) {
-  // 建立多维度映射（逻辑ID、班级+学号、纯学号），确保新老学生名册变更时仍能准确继承原有积分
-  const currentById = new Map<string, StudentPet>();
-  for (const s of currentStudents) {
-    currentById.set(s.id, s);
-    if (s.classId && s.studentNo) {
-      currentById.set(`${s.classId}:${s.studentNo}`, s);
-    }
-    currentById.set(s.studentNo, s);
-  }
+  const currentById = new Map(currentStudents.map(student => [student.id, student]));
+  const currentByStudentNo = new Map(
+    currentStudents.filter(student => student.classId === classroom.id).map(student => [student.studentNo, student])
+  );
+  const rosterIds = new Set(classroom.students.map(student => student.id));
   const seenClassStudentNos = new Set<string>();
   const nextClassStudents: StudentPet[] = [];
   for (const student of classroom.students) {
@@ -412,10 +422,9 @@ function replaceClassStudents(currentStudents: StudentPet[], classroom: Classroo
     if (seenClassStudentNos.has(student.studentNo)) continue;
     seenClassStudentNos.add(student.studentNo);
     const apiStudent = toPetPointStudent(classroom, student);
-    const currentStudent =
-      currentById.get(apiStudent.id) ??
-      currentById.get(`${classroom.id}:${student.studentNo}`) ??
-      currentById.get(student.studentNo);
+    const legacy = currentByStudentNo.get(student.studentNo);
+    // An old ID still in the roster belongs to its exact match, even if the student number changed.
+    const currentStudent = currentById.get(apiStudent.id) ?? (legacy && !rosterIds.has(legacy.id) ? legacy : undefined);
     nextClassStudents.push(
       currentStudent
         ? {
@@ -566,16 +575,9 @@ export function PetPoints() {
       setCompletionBadgesDraft(String(overview.settings.completionBadges ?? 1));
     setMaxPetEnergy(nextFinalEnergy);
     if (settingsPanelRef.current !== "等级规则") setMaxPetEnergyDraft(nextFinalEnergy);
-    // 初始加载概览数据时防御性去重，防止后端历史遗留数据导致前端出现同班同学号重复卡片
-    const seenStudentKeys = new Set<string>();
-    const deduplicatedStudents: StudentPet[] = [];
-    for (const student of overview.students) {
-      const key = `${student.classId || ""}:${student.studentNo}`;
-      if (seenStudentKeys.has(key)) continue;
-      seenStudentKeys.add(key);
-      deduplicatedStudents.push(student);
-    }
-    setStudents(deduplicatedStudents.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)));
+    setStudents(
+      uniquePetStudents(overview.students.map(student => normalizeStudent(student, nextMaxLevel, nextFinalEnergy)))
+    );
     setRubrics(overview.rubrics);
     setRewards(overview.rewards);
     setRecords(overview.records);
@@ -700,7 +702,9 @@ export function PetPoints() {
       setClassrooms(nextClassrooms);
       setActiveClassId(nextActiveClass?.id ?? "");
       setStudents(current =>
-        nextClassrooms.reduce((nextStudents, classroom) => replaceClassStudents(nextStudents, classroom), current)
+        uniquePetStudents(
+          nextClassrooms.reduce((nextStudents, classroom) => replaceClassStudents(nextStudents, classroom), current)
+        )
       );
       if (nextActiveClass) {
         await requestClassroomStudents({
@@ -734,19 +738,10 @@ export function PetPoints() {
     };
   }, [hydrated, requestClassrooms]);
 
-  // 当前选中班级的学生列表展示，依据学号保持唯一，避免列表渲染产生相同 Key
-  const classStudents = useMemo(() => {
-    const seen = new Set<string>();
-    const list: StudentPet[] = [];
-    for (const student of students) {
-      if (student.classId === activeClass.id) {
-        if (seen.has(student.studentNo)) continue;
-        seen.add(student.studentNo);
-        list.push(student);
-      }
-    }
-    return list;
-  }, [activeClass.id, students]);
+  const classStudents = useMemo(
+    () => students.filter(student => student.classId === activeClass.id),
+    [activeClass.id, students]
+  );
 
   const groupOptions = useMemo(
     () => [
@@ -937,16 +932,27 @@ export function PetPoints() {
     setNewRewardStock(1);
   };
 
-  /** 为当前兑换学生兑换奖品，积分或库存不足时直接忽略。 */
-  const redeemReward = async (reward: RewardItem) => {
-    if (!rewardStudent || reward.stock <= 0 || rewardStudent.score < reward.cost) return;
+  const stepRewardQuantity = (form: HTMLFormElement | null, step: -1 | 1) => {
+    const input = form?.elements.namedItem("quantity");
+    if (!(input instanceof HTMLInputElement)) return;
+    if (step === -1) input.stepDown();
+    else input.stepUp();
+  };
+
+  const redeemReward = async (reward: RewardItem, form: HTMLFormElement) => {
+    if (!rewardStudent) return;
+    const quantity = Number(new FormData(form).get("quantity"));
     if (
-      !(await perform("/api/pet-points/rewards/redeem", "POST", { studentId: rewardStudent.id, rewardId: reward.id }, [
-        rewardStudent.id
-      ]))
+      !(await perform(
+        "/api/pet-points/rewards/redeem",
+        "POST",
+        { studentId: rewardStudent.id, rewardId: reward.id, quantity },
+        [rewardStudent.id]
+      ))
     )
       return;
-    setNotice(`${rewardStudent.name} 已兑换 ${reward.name}`);
+    form.reset();
+    setNotice(`${rewardStudent.name} 已兑换 ${reward.name} × ${quantity}`);
   };
 
   /** 批量应用选中的评价指标，完成后退出评分模式。 */
@@ -1661,13 +1667,16 @@ export function PetPoints() {
                 </div>
               </div>
               {student.completionPending && (
-                <div className="mt-3 flex gap-2">
-                  <Button className="flex-1" onClick={() => setHistoryStudentId(student.id)}>
+                <div className={cn("mt-3 flex gap-2", displayMode === "compact" && "flex-col")}>
+                  <Button
+                    className="h-auto min-h-9 min-w-0 flex-1 whitespace-normal break-words text-center"
+                    onClick={() => setHistoryStudentId(student.id)}
+                  >
                     领取满级纪念，开始下一轮
                   </Button>
                   <Button
                     variant="outline"
-                    className="font-bold text-amber-700 hover:bg-amber-50"
+                    className="h-auto min-h-9 min-w-0 whitespace-normal font-bold text-amber-700 hover:bg-amber-50"
                     onClick={() => {
                       setRewardStoreTab("商品列表");
                       setRewardStudentId(student.id);
@@ -2412,7 +2421,7 @@ export function PetPoints() {
                   .filter(item => item.studentId === historyStudent.id)
                   .map(item => (
                     <p key={item.id} className="mt-3 text-sm">
-                      {formatDate(item.createdAt)} · {item.rewardName} · {item.cost} 积分
+                      {formatDate(item.createdAt)} · {item.rewardName} × {item.quantity ?? 1} · {item.cost} 积分
                     </p>
                   ))}
                 {!redemptions.some(item => item.studentId === historyStudent.id) && (
@@ -2437,7 +2446,7 @@ export function PetPoints() {
                 </span>
                 <div>
                   <h3 className="font-black text-slate-900">积分兑换站</h3>
-                  <p className="text-xs text-amber-700">商品 {availableRewards.length} · 用积分兑换一份小奖励</p>
+                  <p className="text-xs text-amber-700">商品 {availableRewards.length}</p>
                 </div>
               </div>
               <Button
@@ -2506,7 +2515,9 @@ export function PetPoints() {
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {availableRewards.map(reward => {
                     const unavailable = reward.stock < 1;
-                    const insufficient = !rewardStudent || rewardStudent.score < reward.cost;
+                    const affordable = rewardStudent ? Math.floor(rewardStudent.score / reward.cost) : 0;
+                    const insufficient = affordable < 1;
+                    const disabled = busy || unavailable || insufficient;
                     return (
                       <article key={reward.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                         <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-amber-50 to-orange-50">
@@ -2522,20 +2533,61 @@ export function PetPoints() {
                         </div>
                         <div className="p-4">
                           <h4 className="break-words font-black text-slate-900">{reward.name}</h4>
-                          <p className="mt-1 text-xs text-slate-400">班级积分好礼</p>
-                          <div className="mt-5 flex items-center justify-between gap-2">
-                            <span className="font-black text-amber-600">
-                              {reward.cost} <span className="text-xs">积分</span>
-                            </span>
+                          <p className="mt-1 font-black text-amber-600">
+                            {reward.cost} <span className="text-xs">积分 / 件</span>
+                          </p>
+                          <form
+                            key={rewardStudent?.id}
+                            className="mt-4 flex flex-wrap items-center justify-between gap-2"
+                            onSubmit={event => {
+                              event.preventDefault();
+                              void redeemReward(reward, event.currentTarget);
+                            }}
+                          >
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                disabled={disabled}
+                                aria-label={`减少${reward.name}兑换数量`}
+                                onClick={event => stepRewardQuantity(event.currentTarget.form, -1)}
+                              >
+                                <Minus aria-hidden="true" />
+                              </Button>
+                              <Input
+                                aria-label={`${reward.name}兑换数量`}
+                                name="quantity"
+                                type="number"
+                                inputMode="numeric"
+                                min={1}
+                                max={Math.min(reward.stock, affordable)}
+                                step={1}
+                                defaultValue={1}
+                                required
+                                disabled={disabled}
+                                className="w-16 px-1 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                disabled={disabled}
+                                aria-label={`增加${reward.name}兑换数量`}
+                                onClick={event => stepRewardQuantity(event.currentTarget.form, 1)}
+                              >
+                                <Plus aria-hidden="true" />
+                              </Button>
+                            </div>
                             <Button
+                              type="submit"
                               className="rounded-xl bg-amber-500 hover:bg-amber-600"
-                              disabled={busy || unavailable || insufficient}
+                              disabled={disabled}
                               aria-label={`兑换${reward.name}`}
-                              onClick={() => void redeemReward(reward)}
                             >
                               {unavailable ? "已兑完" : insufficient ? "积分不足" : "兑换"}
                             </Button>
-                          </div>
+                          </form>
                         </div>
                       </article>
                     );
@@ -2556,7 +2608,9 @@ export function PetPoints() {
                         className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4"
                       >
                         <div className="min-w-0">
-                          <p className="break-words font-bold">{item.rewardName}</p>
+                          <p className="break-words font-bold">
+                            {item.rewardName} × {item.quantity ?? 1}
+                          </p>
                           <p className="mt-1 text-xs text-slate-400">{formatDate(item.createdAt)}</p>
                         </div>
                         <span className="shrink-0 font-bold text-amber-700">−{item.cost} 积分</span>

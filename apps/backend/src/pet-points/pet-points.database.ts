@@ -792,6 +792,7 @@ export class PetPointsDatabase {
       teacherId: this.teacherContext.teacherId,
       studentId: student?.id ?? this.studentStorageId(redemption.studentId),
       rewardName: redemption.rewardName,
+      quantity: redemption.quantity,
       cost: redemption.cost,
       createdAt: new Date(redemption.createdAt),
     });
@@ -903,6 +904,8 @@ export class PetPointsDatabase {
         aliases.get(entity.studentId) ??
         this.logicalStudentId(entity.studentId),
       rewardName: entity.rewardName,
+      // Existing rows represent a single unit and are interpreted on read.
+      quantity: entity.quantity ?? 1,
       cost: entity.cost,
       createdAt: entity.createdAt.toISOString(),
     };

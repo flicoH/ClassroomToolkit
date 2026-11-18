@@ -464,6 +464,42 @@ describe('PetPointsService transactional workflows', () => {
       ),
     ).rejects.toThrow('没有可评分');
   });
+  it('redeems multiple units once and rejects invalid or unaffordable quantities', async () => {
+    const t = setup();
+    const student = t.state().students[0]!;
+    student.score = 6;
+    Object.assign(t.state().rewards[0]!, { stock: 4, cost: 3 });
+    const dto = { ...t.meta(), studentId: 'one', rewardId: 'gift' };
+
+    for (const quantity of [0, -1, 1.5, 2147483648]) {
+      await expect(t.service.redeem({ ...dto, quantity })).rejects.toThrow(
+        '整数',
+      );
+    }
+    await expect(t.service.redeem({ ...dto, quantity: 5 })).rejects.toThrow(
+      '库存不足',
+    );
+    await expect(t.service.redeem({ ...dto, quantity: 3 })).rejects.toThrow(
+      '积分不足',
+    );
+    await expect(
+      t.service.redeem({ ...dto, studentId: 'foreign', quantity: 2 }),
+    ).rejects.toThrow('积分学生不存在');
+    expect(t.state().students[0]!.score).toBe(6);
+    expect(t.state().rewards[0]!.stock).toBe(4);
+    expect(t.state().redemptions).toHaveLength(0);
+
+    const batch = { ...dto, quantity: 2 };
+    await expect(t.service.redeem(batch)).resolves.toMatchObject({
+      quantity: 2,
+      cost: 6,
+    });
+    await t.service.redeem(batch);
+    expect(t.state().students[0]!.score).toBe(0);
+    expect(t.state().rewards[0]!.stock).toBe(2);
+    expect(t.state().redemptions).toHaveLength(1);
+  });
+
   it('redeems balance without regressing pets and rolls back stock on failure', async () => {
     const t = setup();
     await t.service.adjustScore({
@@ -486,11 +522,13 @@ describe('PetPointsService transactional workflows', () => {
       delta: 45,
       label: '成长',
     });
-    await success.service.redeem({
-      ...success.meta(),
-      studentId: 'one',
-      rewardId: 'gift',
-    });
+    await expect(
+      success.service.redeem({
+        ...success.meta(),
+        studentId: 'one',
+        rewardId: 'gift',
+      }),
+    ).resolves.toMatchObject({ quantity: 1, cost: 1 });
     expect(success.state().students[0]).toMatchObject({
       score: 44,
       petExperience: 45,

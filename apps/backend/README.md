@@ -30,6 +30,8 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 | 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                             |
 | 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置                 |
 
+积分兑换接口 `POST /pet-points/rewards/redeem` 支持可选正整数 `quantity`，默认 1。每笔兑换按数量一次扣除库存与积分，记录返回 `quantity` 和总扣分 `cost`。部署时通过常规流程迁移 `pet_points_redemptions`，再依次更新 Backend 和 Web。历史记录按 1 件读取。详见[兑换设计](../../docs/pet-points.md#按数量兑换)。
+
 学科报告生成可在 `studentFeedback[].attendances`（数组）或兼容字段 `studentFeedback[].attendance` 提交各课次出勤状态（`present`、`excused` 或 `late`，默认 `present`）。草稿编辑通过 `content.attendances` 及 `content.attendance` 修改。报告正文的 `attendances` 记录每次课程出勤，`courseContent` 初始来自生成时确认的教学内容，历史报告可从已有快照读取。草稿编辑可提交 `content.courseContent` 更新正文，省略时保留原文，空字符串清空，非字符串返回 400。生成学科报告复用学期报告的学生身份匹配、头像与周期截止宠物快照口径，积分流水使用匹配后的学生 ID 查询，避免旧 ID 导致数据缺失。草稿编辑保留这些服务端展示数据。头像匹配优先使用学生逻辑身份，并限定同一教师和班级。已有学科报告缺少头像时，列表、详情和公开页补充读取当前头像用于展示。此次变更使用既有 JSON 字段，无额外迁移。
 
 学科报告与学期报告工作台的学科设置相互独立：学科报告在 `subject_report_subjects` 表中独立维护学科、停用状态与课堂表现评价配置。教师在学科报告中新增、停用或配置学科，仅作用于学科报告工作台，不影响学期报告工作台；停用后该学科从学科报告新建选项中移除，已有学科报告和已上传 PDF 保留。已有学科报告草稿使用 `POST /subject-reports/reports/:id/course-documents/preview-scope`，由服务端按当前教师名下草稿的原学期和学科读取已确认资料，即使学科已停用。学期基础设置与课程资料继续共用。

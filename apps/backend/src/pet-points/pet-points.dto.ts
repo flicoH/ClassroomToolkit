@@ -68,6 +68,7 @@ export class AddRewardStockDto extends PetWriteDto {
 export class RedeemRewardDto extends PetWriteDto {
   studentId!: string;
   rewardId!: string;
+  quantity?: number;
 }
 
 export class UpdatePetSettingsDto extends PetWriteDto {

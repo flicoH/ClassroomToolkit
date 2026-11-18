@@ -14,6 +14,9 @@ export class PetRedemptionEntity {
   @Column({ name: 'reward_name', length: 64 })
   rewardName!: string;
 
+  @Column({ type: 'int', nullable: true })
+  quantity!: number | null;
+
   @Column({ type: 'int' })
   cost!: number;
 

@@ -68,6 +68,7 @@ export interface RedemptionRecord {
   id: string;
   studentId: string;
   rewardName: string;
+  quantity: number;
   cost: number;
   createdAt: string;
 }

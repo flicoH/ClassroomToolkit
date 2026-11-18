@@ -569,23 +569,27 @@ export class PetPointsService {
   }
 
   async redeem(dto: RedeemRewardDto) {
+    // Older clients omit quantity when exchanging a single reward.
+    const quantity = dto.quantity === undefined ? 1 : dto.quantity;
+    integer(quantity, 1, 2147483647);
     return this.write('redeem', dto, async (db) => {
       const student = await this.student(db, dto.studentId, dto);
       const reward = await db.findRewardById(dto.rewardId);
       if (!reward || !reward.enabled) throw new NotFoundException('奖品不存在');
-      if (!reward.enabled || reward.stock <= 0)
-        throw new BadRequestException('奖品停用或库存不足');
-      if (student.score < reward.cost)
-        throw new BadRequestException('学生积分不足');
-      student.score -= reward.cost;
+      if (reward.stock < quantity)
+        throw new BadRequestException('奖品库存不足');
+      const cost = reward.cost * quantity;
+      if (student.score < cost) throw new BadRequestException('学生积分不足');
+      student.score -= cost;
       student.revision++;
       await db.updateStudent(student.id, student);
-      await db.updateReward(reward.id, { stock: reward.stock - 1 });
+      await db.updateReward(reward.id, { stock: reward.stock - quantity });
       return db.createRedemption({
         id: createEntityId('redemption'),
         studentId: student.id,
         rewardName: reward.name,
-        cost: reward.cost,
+        quantity,
+        cost,
         createdAt: new Date().toISOString(),
       });
     });

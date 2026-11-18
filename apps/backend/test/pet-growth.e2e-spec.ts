@@ -80,11 +80,18 @@ suite('pet growth isolated MySQL migration and transactions', () => {
       .replace(/CREATE DATABASE[^;]+;/gi, '')
       .replace(/USE classroom_toolkit;/gi, '');
     await connection.query(schema);
+    // Recreate the pre-upgrade table shape in the isolated fixture.
+    await connection.query(
+      'ALTER TABLE pet_points_redemptions DROP COLUMN quantity',
+    );
     await connection.query(
       "INSERT INTO pet_points_settings(teacher_id,max_level,final_energy) VALUES ('teacher',10,200)",
     );
     await connection.query(
       "INSERT INTO pet_points_students(teacher_id,id,name,student_no,class_id,class_name,group_name,score,level_num,stage,pet_id,pet_progress,trophies,completed_pets) VALUES ('teacher','teacher:one','测试甲','1','class','测试班','一组',44,2,'第2形态','sprout-puff',10,7,2),('teacher','teacher:two','测试乙','2','class','测试班','一组',200,10,'终极形态','cloud-bear',100,8,0)",
+    );
+    await connection.query(
+      "INSERT INTO pet_points_redemptions(teacher_id,id,student_id,reward_name,cost) VALUES ('teacher','legacy-redemption','teacher:one','旧奖品',3)",
     );
     await connection.query(
       "INSERT INTO student_classrooms(teacher_id,id,name) VALUES ('teacher','class','规范测试班')",
@@ -161,6 +168,13 @@ suite('pet growth isolated MySQL migration and transactions', () => {
       completedPets: 2,
     });
     expect(view.completed).toEqual([]);
+    expect(view.redemptions).toEqual([
+      expect.objectContaining({
+        id: 'legacy-redemption',
+        quantity: 1,
+        cost: 3,
+      }),
+    ]);
     const rows = await source.query(
       "SELECT migration_evidence FROM pet_points_students WHERE id='teacher:one'",
     );
@@ -265,12 +279,12 @@ suite('pet growth isolated MySQL migration and transactions', () => {
     expect(after.records).toEqual(before.records);
     await source.query('DROP TRIGGER pet_test_failure');
   });
-  it('commits only one purchase of the last stock, without changing experience', async () => {
+  it('rolls back failed batches and lets only one concurrent batch consume the last stock', async () => {
     const reward = await service.createReward({
       ...(await meta()),
-      name: '最后一件',
+      name: '最后两件',
       cost: 1,
-      stock: 1,
+      stock: 2,
     });
     const before = await service.overview();
     await source.query(
@@ -281,21 +295,28 @@ suite('pet growth isolated MySQL migration and transactions', () => {
         ...(await meta()),
         studentId: 'one',
         rewardId: reward.id,
+        quantity: 2,
       }),
     ).rejects.toThrow('injected redemption failure');
-    expect((await service.overview()).students).toEqual(before.students);
-    expect(
-      (await service.overview()).rewards.find((r) => r.id === reward.id)!.stock,
-    ).toBe(1);
+    const afterFailure = await service.overview();
+    expect(afterFailure.students).toEqual(before.students);
+    expect(afterFailure.redemptions).toEqual(before.redemptions);
+    expect(afterFailure.rewards.find((r) => r.id === reward.id)!.stock).toBe(2);
     await source.query('DROP TRIGGER pet_test_redemption_failure');
     const dto = await meta();
     const results = await Promise.allSettled([
-      service.redeem({ ...dto, studentId: 'one', rewardId: reward.id }),
+      service.redeem({
+        ...dto,
+        studentId: 'one',
+        rewardId: reward.id,
+        quantity: 2,
+      }),
       service.redeem({
         ...dto,
         operationId: 'parallel-redemption',
         studentId: 'two',
         rewardId: reward.id,
+        quantity: 2,
       }),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -306,7 +327,14 @@ suite('pet growth isolated MySQL migration and transactions', () => {
       before.students.map((s) => [s.id, s.petExperience, s.level]).sort(),
     );
     expect(after.rewards.find((r) => r.id === reward.id)!.stock).toBe(0);
-    expect(after.redemptions).toHaveLength(1);
+    expect(after.redemptions).toHaveLength(before.redemptions.length + 1);
+    const redeemed = after.redemptions.find(
+      (item) => item.rewardName === reward.name,
+    )!;
+    expect(redeemed).toMatchObject({ quantity: 2, cost: 2 });
+    expect(after.students.find((s) => s.id === redeemed.studentId)!.score).toBe(
+      before.students.find((s) => s.id === redeemed.studentId)!.score - 2,
+    );
   });
   it('maps legacy completion identities on read without rewriting the immutable stored snapshot', async () => {
     const before = (

@@ -301,6 +301,7 @@ CREATE TABLE IF NOT EXISTS pet_points_redemptions (
   id VARCHAR(64) PRIMARY KEY COMMENT '兑换记录ID',
   student_id VARCHAR(64) NOT NULL COMMENT '学生ID',
   reward_name VARCHAR(64) NOT NULL COMMENT '奖品名称快照',
+  quantity INT NULL COMMENT '兑换数量，旧记录为空时按一件读取',
   cost INT NOT NULL COMMENT '消耗积分',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '兑换时间',
   CONSTRAINT fk_pet_points_redemptions_student
