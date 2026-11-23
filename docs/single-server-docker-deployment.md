@@ -319,6 +319,10 @@ CI 显式传入 `DEPLOY_COMMIT`，在拉取镜像和迁移前核对服务器快�
 
 回归位于 `scripts/check-deployment-workflows.test.mjs` 和 `deploy/tests/test_{backend,frontend}_deploy_script.py`，覆盖读取标准输入、失败退出码和临时文件清理、旧容器伪装相同标签、权限失败、旧 CI 提交及人工回滚。测试使用本地 SSH/Git/Docker 替身，纳入两端 CI 和 `pnpm verify`；真实服务器上的迁移、网络和容器版本仍需发布后核对。此修复仅调整部署行为，无业务 API、数据结构、权限或数据库迁移变更。
 
+### 前端镜像拉取超时
+
+前端生产部署任务上限为 90 分钟，包含服务器依次拉取 Web 和 Admin 镜像、执行路由预检及验收容器版本的时间。[部署 45096498269 的第三次尝试](https://github.com/flicoH/ClassroomToolkit/actions/runs/45096498269/job/137448245303) 达到原有的 15 分钟上限时，Web 镜像的一层仍在下载，进度为 3.763 MB / 36.69 MB。拉取完成后才会启动候选容器。将更新后的工作流推送到 `main` 后，新的部署运行会使用 90 分钟上限。
+
 ### 后端部署超时与历史数据
 
 运行 [42050506091](https://github.com/flicoH/ClassroomToolkit/actions/runs/42050506091/job/127340767087) 已确认停在镜像拉取：183 MB 层在约 15 分钟只下载 5.94 MB，尚未进入迁移。后端镜像改用 `pnpm --config.inject-workspace-packages=true deploy --prod` 生成独立生产依赖，不再复制整个仓库依赖。发布后运行实际 Linux 镜像验证框架、MySQL、Sharp 原生模块和 TypeORM CLI，并检查前端和开发工具未混入；失败会阻止后续部署。镜像路径和迁移命令保持兼容。精简镜像与扩大预算无法保证极慢网络恢复，仍需核对服务器访问 GHCR 的实际速度。

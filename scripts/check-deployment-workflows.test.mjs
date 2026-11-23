@@ -166,6 +166,10 @@ test("backend deployment has a slow-release budget and frontend waits for the co
   assert.ok(frontend.jobs["wait-for-backend"]["timeout-minutes"] > total);
 });
 
+test("frontend deployment allows 90 minutes for serial image pulls on a slow production link", () => {
+  assert.equal(frontend.jobs.deploy["timeout-minutes"], 90);
+});
+
 test("backend SSH connections fail promptly on unreachable or disconnected servers", () => {
   for (const name of ["Test SSH connection", "Deploy backend containers"]) {
     const command = backend.jobs.deploy.steps.find(step => step.name === name).run;

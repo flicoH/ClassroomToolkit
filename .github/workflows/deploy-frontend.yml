@@ -164,7 +164,8 @@ jobs:
     name: Deploy frontend
     needs: [publish, wait-for-backend]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Production pulls Web and Admin sequentially over a slow registry link.
+    timeout-minutes: 90
     environment: production
     concurrency:
       group: classroom-production-server
