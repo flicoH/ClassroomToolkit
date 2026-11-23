@@ -243,12 +243,12 @@ export const petOptions: PetOption[] = [
   {
     id: "lava-pig",
     name: "熔宝豚",
-    family: "焰岩系",
-    tone: "from-orange-50 to-amber-100",
-    badge: "bg-orange-100 text-orange-700",
+    family: "星辉系",
+    tone: "from-violet-50 to-indigo-100",
+    badge: "bg-violet-100 text-violet-700",
     evolutions: ["熔火小猪", "炽炎宝豚", "金焰战甲豕", "煌炎镇岳神豕"],
     description:
-      "背负熔岩宝甲的敦厚小猪，如储蓄罐般记录每次努力，不畏艰难挫折，越是遇到难题越能燃起炽金熔岩的勇气之火。"
+      "背负星辉宝甲的敦厚小猪，如储蓄罐般记录每次努力，不畏艰难挫折，越是遇到难题越能点亮璀璨星芒的勇气之光。"
   },
   {
     id: "tide-dragon",
@@ -378,11 +378,11 @@ export const petOptions: PetOption[] = [
   {
     id: "starlight-mouse",
     name: "星点鼠",
-    family: "星辉系",
-    tone: "from-violet-50 to-indigo-100",
-    badge: "bg-violet-100 text-violet-700",
+    family: "焰岩系",
+    tone: "from-orange-50 to-amber-100",
+    badge: "bg-orange-100 text-orange-700",
     evolutions: ["星点鼠", "追星鼠", "星纹灵鼠", "星河光尾鼠"],
-    description: "圆耳朵的小老鼠总能发现别人没留意的细节。每发现一件新事，它的尾巴就会亮起一颗小星星。"
+    description: "圆耳朵的小老鼠总能发现别人没留意的细节。每发现一件新事，它的尾巴就会燃起一朵温暖的小火苗。"
   }
 ];
 

@@ -50,7 +50,8 @@ describe("PetSprite", () => {
     "vine-snake",
     "ember-monkey",
     "wave-elephant",
-    "starlight-mouse"
+    "starlight-mouse",
+    "lava-pig"
   ])("serves all four transparent 512 px forms for %s", petId => {
     const pet = petOptions.find(option => option.id === petId)!;
     const sprites = [petId, `${petId}-2`, `${petId}-3`, `${petId}-4`];
@@ -74,7 +75,8 @@ describe("PetSprite", () => {
     ["vine-snake", "萌芽系"],
     ["ember-monkey", "焰岩系"],
     ["wave-elephant", "潮汐系"],
-    ["starlight-mouse", "星辉系"]
+    ["starlight-mouse", "焰岩系"],
+    ["lava-pig", "星辉系"]
   ])("lists %s in %s", (petId, family) => {
     expect(petOptions.find(pet => pet.id === petId)?.family).toBe(family);
   });
