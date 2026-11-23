@@ -74,6 +74,12 @@ export class PetPointsController {
     return this.petPointsService.updateRubric(rubricId, dto);
   }
 
+  /** 删除指标，已有评分继续使用计分时保存的快照。 */
+  @Delete('rubrics/:rubricId')
+  deleteRubric(@Param('rubricId') rubricId: string, @Body() dto: PetWriteDto) {
+    return this.petPointsService.deleteRubric(rubricId, dto);
+  }
+
   /** 创建积分兑换奖品。 */
   @Post('rewards')
   createReward(@Body() dto: CreateRewardDto) {

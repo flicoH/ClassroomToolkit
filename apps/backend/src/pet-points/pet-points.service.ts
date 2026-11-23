@@ -29,6 +29,8 @@ import {
 import { petThresholds, petRewards } from './pet-progression';
 
 const categories = ['课堂表现', '作业情况', '品德修养', '纪律常规'];
+// 常用指标也能从手动评分入口使用，两处共用单项分值上限。
+const maxScoreAdjustment = 200;
 /** 四系允许领养的宠物模板ID集合，保持与前端petOptions配置一致（共39只）。 */
 const petIds = [
   // 萌芽系
@@ -129,7 +131,7 @@ export class PetPointsService {
   async overview() {
     // Default provisioning is serialized as well; concurrent initial reads cannot duplicate templates.
     await this.database.write(undefined, async (db) => {
-      if (!(await db.findRubrics()).length)
+      if (!(await db.hasRubrics()))
         for (const rubric of defaultRubrics)
           await db.createRubric({
             id: createEntityId('rubric'),
@@ -245,7 +247,7 @@ export class PetPointsService {
   }
 
   async adjustScore(dto: AdjustScoreDto) {
-    integer(dto.delta, -200, 200);
+    integer(dto.delta, -maxScoreAdjustment, maxScoreAdjustment);
     text(dto.label, 64);
     if (
       dto.category !== undefined &&
@@ -499,7 +501,7 @@ export class PetPointsService {
     if (!categories.includes(dto.category))
       throw new BadRequestException('评价分类无效');
     const label = text(dto.label, 64);
-    integer(dto.score, -10, 10);
+    integer(dto.score, -maxScoreAdjustment, maxScoreAdjustment);
     return this.write('create-rubric', dto, (db) =>
       db.createRubric({
         id: createEntityId('rubric'),
@@ -514,7 +516,8 @@ export class PetPointsService {
   async updateRubric(id: string, dto: UpdateRubricDto) {
     if (dto.category !== undefined && !categories.includes(dto.category))
       throw new BadRequestException('评价分类无效');
-    if (dto.score !== undefined) integer(dto.score, -10, 10);
+    if (dto.score !== undefined)
+      integer(dto.score, -maxScoreAdjustment, maxScoreAdjustment);
     if (dto.enabled !== undefined && typeof dto.enabled !== 'boolean')
       throw new BadRequestException('启用状态无效');
     const label = dto.label === undefined ? undefined : text(dto.label, 64);
@@ -527,6 +530,19 @@ export class PetPointsService {
         score: dto.score,
         enabled: dto.enabled,
       });
+    });
+  }
+
+  async deleteRubric(id: string, dto: PetWriteDto) {
+    const operation = {
+      operationId: dto?.operationId,
+      revisions: dto?.revisions,
+      rubricId: id,
+    };
+    return this.write('delete-rubric', operation, async (db) => {
+      if (!(await db.deleteRubric(id)))
+        throw new NotFoundException('评价指标不存在');
+      return { deleted: true };
     });
   }
 

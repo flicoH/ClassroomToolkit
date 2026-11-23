@@ -19,6 +19,16 @@ import { PetRewardEntity } from '../src/pet-points/entities/pet-reward.entity';
 import { PetEvaluationRecordEntity } from '../src/pet-points/entities/pet-evaluation-record.entity';
 import { PetRedemptionEntity } from '../src/pet-points/entities/pet-redemption.entity';
 import { PetSettingEntity } from '../src/pet-points/entities/pet-setting.entity';
+import {
+  ReportDocumentEntity,
+  ReportEventEntity,
+  ReportShareEntity,
+  ReportSubjectEntity,
+  ReportTermEntity,
+  SemesterReportEntity,
+} from '../src/semester-reports/semester-report.entity';
+import { SemesterReportsService } from '../src/semester-reports/semester-reports.service';
+import { formatShanghaiDate } from '../src/semester-reports/report-generation';
 import type { TeacherContext } from '../src/auth/teacher-context';
 
 // Explicit opt-in prevents the integration suite from touching a developer database.
@@ -85,6 +95,12 @@ suite('pet growth isolated MySQL migration and transactions', () => {
       'ALTER TABLE pet_points_redemptions DROP COLUMN quantity',
     );
     await connection.query(
+      'ALTER TABLE pet_points_rubrics DROP COLUMN deleted_at',
+    );
+    await connection.query(
+      "INSERT INTO pet_points_rubrics(teacher_id,id,category,label,score,enabled) VALUES ('other','legacy-rubric','课堂表现','旧指标',3,FALSE)",
+    );
+    await connection.query(
       "INSERT INTO pet_points_settings(teacher_id,max_level,final_energy) VALUES ('teacher',10,200)",
     );
     await connection.query(
@@ -120,6 +136,12 @@ suite('pet growth isolated MySQL migration and transactions', () => {
         ClassroomEntity,
         StudentEntity,
         StudentGroupEntity,
+        ReportDocumentEntity,
+        ReportEventEntity,
+        ReportShareEntity,
+        ReportSubjectEntity,
+        ReportTermEntity,
+        SemesterReportEntity,
       ],
       migrations: migrationFiles(
         join(__dirname, '../dist/database/migrations'),
@@ -503,5 +525,104 @@ suite('pet growth isolated MySQL migration and transactions', () => {
         )
       )[0].n,
     ).toBe(count);
+  });
+  it('scopes rubric deletion to the owning teacher and preserves term scores', async () => {
+    const legacy = (await other.overview()).rubrics;
+    expect(legacy).toEqual([
+      {
+        id: 'legacy-rubric',
+        category: '课堂表现',
+        label: '旧指标',
+        score: 3,
+        enabled: false,
+      },
+    ]);
+    const rubric = await service.createRubric({
+      ...(await meta()),
+      category: '课堂表现',
+      label: '删除前计分',
+      score: 2,
+    });
+    await service.evaluate(
+      { ...(await meta()), studentIds: ['one'], rubricIds: [rubric.id] },
+      true,
+    );
+    const before = await service.overview();
+    const record = before.records.find((item) => item.label === rubric.label)!;
+    const date = formatShanghaiDate(record.createdAt);
+    const previousDate = formatShanghaiDate(
+      new Date(Date.parse(record.createdAt) - 86400000),
+    );
+    const reports = new SemesterReportsService(
+      source.getRepository(ReportTermEntity),
+      source.getRepository(ReportSubjectEntity),
+      source.getRepository(ReportDocumentEntity),
+      source.getRepository(SemesterReportEntity),
+      source.getRepository(ReportShareEntity),
+      source.getRepository(ReportEventEntity),
+      source.getRepository(PetStudentEntity),
+      source.getRepository(PetEvaluationRecordEntity),
+      { teacherId: 'teacher' } as TeacherContext,
+      source.getRepository(StudentEntity),
+    );
+    const term = await reports.createTerm({
+      name: '测试学期',
+      startDate: previousDate,
+      endDate: date,
+    });
+    const subject = await reports.createSubject({
+      name: '数学',
+      termId: term.id,
+    });
+    const preview = () =>
+      reports.preview({
+        period: 'term',
+        start: term.startDate,
+        end: date,
+        termId: term.id,
+        subjectId: subject.id,
+        studentIds: ['one'],
+        courseSelections: [
+          { subjectId: subject.id, manualContent: '复习加法' },
+        ],
+      });
+    const { scoreSummaries } = await preview();
+    expect(scoreSummaries[0]).toMatchObject({
+      records: expect.arrayContaining([
+        expect.objectContaining({
+          id: record.id,
+          label: rubric.label,
+          category: '课堂表现',
+          delta: 2,
+        }),
+      ]),
+      positiveItems: expect.arrayContaining([
+        { label: rubric.label, count: 1 },
+      ]),
+    });
+
+    const dto = await meta();
+    await expect(other.deleteRubric(rubric.id, dto)).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      Promise.all([
+        service.deleteRubric(rubric.id, dto),
+        service.deleteRubric(rubric.id, dto),
+      ]),
+    ).resolves.toEqual([{ deleted: true }, { deleted: true }]);
+    for (const item of before.rubrics.filter((item) => item.id !== rubric.id)) {
+      await service.deleteRubric(item.id, await meta());
+    }
+
+    expect(await service.overview()).toEqual({ ...before, rubrics: [] });
+    expect((await preview()).scoreSummaries).toEqual(scoreSummaries);
+    expect((await other.overview()).rubrics).toEqual(legacy);
+    expect(
+      await source.getRepository(PetRubricEntity).findOne({
+        where: { id: rubric.id },
+        withDeleted: true,
+      }),
+    ).toMatchObject({ enabled: false, deletedAt: expect.any(Date) });
   });
 });

@@ -2,6 +2,7 @@ import { PetPointsService } from './pet-points.service';
 import type {
   CompletedPet,
   EvaluationRecord,
+  RubricItem,
   StudentPet,
 } from './pet-points.types';
 
@@ -51,7 +52,7 @@ function setup() {
         score: 1,
         enabled: true,
       },
-    ],
+    ] as (RubricItem & { deleted?: boolean })[],
     rewards: [{ id: 'gift', name: '贴纸', cost: 1, stock: 1, enabled: true }],
     redemptions: [] as unknown[],
   };
@@ -115,9 +116,10 @@ function setup() {
       return s;
     },
     deleteClassStudentsExcept: jest.fn(async () => undefined),
-    findRubrics: async () => state.rubrics,
+    hasRubrics: async () => state.rubrics.length > 0,
+    findRubrics: async () => state.rubrics.filter((item) => !item.deleted),
     findRubricById: async (id: string) =>
-      state.rubrics.find((item) => item.id === id),
+      state.rubrics.find((item) => item.id === id && !item.deleted),
     createRubric: async (value: (typeof state.rubrics)[number]) => {
       state.rubrics.push(value);
       return value;
@@ -132,6 +134,15 @@ function setup() {
           Object.entries(patch).filter(([, v]) => v !== undefined),
         ),
       ),
+    deleteRubric: jest.fn(async (id: string) => {
+      const rubric = state.rubrics.find(
+        (item) => item.id === id && !item.deleted,
+      );
+      if (!rubric) return false;
+      rubric.deleted = true;
+      rubric.enabled = false;
+      return true;
+    }),
     createRecord: async (record: EvaluationRecord) => {
       if (failed && state.records.length === 1)
         throw new Error('第二条记录失败');
@@ -574,16 +585,103 @@ describe('PetPointsService transactional workflows', () => {
     },
   );
 
-  it('rejects invalid rubric, reward, pet, note and unprovable historical rollback inputs', async () => {
+  it('saves and applies rubric scores at both 200-point limits', async () => {
     const t = setup();
+    const rubric = await t.service.createRubric({
+      ...t.meta(),
+      category: '课堂表现',
+      label: '测试',
+      score: 200,
+    });
+    expect(rubric).toMatchObject({ score: 200, enabled: true });
+    await t.service.evaluate(
+      { ...t.meta(), studentIds: ['one'], rubricIds: [rubric.id] },
+      true,
+    );
+    expect(t.state().students[0]!.score).toBe(200);
+
     await expect(
-      t.service.createRubric({
+      t.service.updateRubric(rubric.id, { ...t.meta(), score: -200 }),
+    ).resolves.toMatchObject({ score: -200 });
+    await t.service.evaluate(
+      { ...t.meta(), studentIds: ['one'], rubricIds: [rubric.id] },
+      false,
+    );
+    expect(t.state().students[0]!.score).toBe(0);
+    expect(t.state().records.map((record) => record.delta)).toEqual([
+      200, -200,
+    ]);
+  });
+
+  it('rejects invalid rubric scores and updates to inaccessible rubrics', async () => {
+    const t = setup();
+    for (const score of [-201, 201, 10.5]) {
+      await expect(
+        t.service.createRubric({
+          ...t.meta(),
+          category: '课堂表现',
+          label: '测试',
+          score,
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      await expect(
+        t.service.updateRubric('r1', { ...t.meta(), score }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(t.db.write).not.toHaveBeenCalled();
+    await expect(
+      t.service.updateRubric('inaccessible-rubric', {
         ...t.meta(),
-        category: '课堂表现',
-        label: '测试',
-        score: 11,
+        score: 200,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('deletes rubric configurations without changing scores or restoring defaults', async () => {
+    const t = setup();
+    await t.service.evaluate(
+      { ...t.meta(), studentIds: ['one'], rubricIds: ['r1'] },
+      true,
+    );
+    await t.service.updateRubric('r2', { ...t.meta(), enabled: false });
+    const before = await t.service.overview();
+    expect(before.rubrics).toContainEqual(
+      expect.objectContaining({ id: 'r2', enabled: false }),
+    );
+
+    const operation = t.meta();
+    await expect(t.service.deleteRubric('r1', operation)).resolves.toEqual({
+      deleted: true,
+    });
+    await expect(t.service.deleteRubric('r1', operation)).resolves.toEqual({
+      deleted: true,
+    });
+    await expect(t.service.deleteRubric('r2', operation)).rejects.toThrow(
+      '操作编号已用于其他请求',
+    );
+    expect(t.db.deleteRubric).toHaveBeenCalledTimes(1);
+    await t.service.deleteRubric('r2', t.meta());
+    expect(await t.service.overview()).toEqual({ ...before, rubrics: [] });
+    expect((await t.service.overview()).rubrics).toEqual([]);
+
+    for (const id of ['r1', 'foreign-rubric']) {
+      await expect(t.service.deleteRubric(id, t.meta())).rejects.toMatchObject({
+        status: 404,
+      });
+    }
+    await expect(
+      t.service.updateRubric('r1', { ...t.meta(), enabled: true }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      t.service.evaluate(
+        { ...t.meta(), studentIds: ['one'], rubricIds: ['r1'] },
+        false,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('rejects invalid reward, pet, note and unprovable historical rollback inputs', async () => {
+    const t = setup();
     await expect(
       t.service.createReward({ ...t.meta(), name: '', cost: 1, stock: 1 }),
     ).rejects.toThrow();

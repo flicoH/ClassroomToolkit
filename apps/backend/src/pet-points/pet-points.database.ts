@@ -10,7 +10,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import { PetEvaluationRecordEntity } from './entities/pet-evaluation-record.entity';
 import { PetRedemptionEntity } from './entities/pet-redemption.entity';
 import { PetRewardEntity } from './entities/pet-reward.entity';
@@ -633,7 +633,15 @@ export class PetPointsDatabase {
     });
   }
 
-  /** 查询评价指标列表。 */
+  /** 已删除的行仍代表初始化过，避免清空指标后重新生成默认项。 */
+  async hasRubrics() {
+    return this.rubrics.exists({
+      where: { teacherId: this.teacherContext.teacherId },
+      withDeleted: true,
+    });
+  }
+
+  /** 查询评价指标列表，包含可恢复的停用项。 */
   async findRubrics() {
     return (
       await this.rubrics.find({
@@ -672,6 +680,19 @@ export class PetPointsDatabase {
     return this.toRubric(
       await this.rubrics.save(this.rubrics.merge(current, patch)),
     );
+  }
+
+  async deleteRubric(rubricId: string) {
+    const result = await this.rubrics.update(
+      {
+        id: rubricId,
+        teacherId: this.teacherContext.teacherId,
+        deletedAt: IsNull(),
+      },
+      // 旧版后端只识别启用状态，回滚时也应继续排除该指标的评分。
+      { enabled: false, deletedAt: new Date() },
+    );
+    return Boolean(result.affected);
   }
 
   /** 查询兑换奖品列表。 */

@@ -30,6 +30,10 @@ ClassroomToolkit 的 NestJS 业务 API，负责教师认证、教师数据隔离
 | 功能统计   | `/analytics`        | 记录认证教师的功能打开事件                             |
 | 管理后台   | `/admin`            | 平台统计、目录查询、教师详情与密码重置                 |
 
+宠物积分指标接口 `POST /pet-points/rubrics` 和 `PATCH /pet-points/rubrics/:rubricId` 的 `score` 支持 -200 到 +200 的整数，越界或非整数返回 400。先更新 Backend，再更新 Web，无需迁移。详见[指标分值配置](../../docs/pet-points.md#指标分值配置)。
+
+`DELETE /pet-points/rubrics/:rubricId` 使用 `operationId` 和 `revisions` 删除当前教师名下的评价指标。积分统计和学期报告按历史评分流水继续汇总原指标名称和分值。发布时先执行 `20261123000000-add-pet-rubric-deleted-at` 结构迁移，再更新 Backend 和 Web。详见[删除评价指标](../../docs/pet-points.md#删除评价指标)。
+
 积分兑换接口 `POST /pet-points/rewards/redeem` 支持可选正整数 `quantity`，默认 1。每笔兑换按数量一次扣除库存与积分，记录返回 `quantity` 和总扣分 `cost`。部署时通过常规流程迁移 `pet_points_redemptions`，再依次更新 Backend 和 Web。历史记录按 1 件读取。详见[兑换设计](../../docs/pet-points.md#按数量兑换)。
 
 学科报告生成可在 `studentFeedback[].attendances`（数组）或兼容字段 `studentFeedback[].attendance` 提交各课次出勤状态（`present`、`excused` 或 `late`，默认 `present`）。草稿编辑通过 `content.attendances` 及 `content.attendance` 修改。报告正文的 `attendances` 记录每次课程出勤，`courseContent` 初始来自生成时确认的教学内容，历史报告可从已有快照读取。草稿编辑可提交 `content.courseContent` 更新正文，省略时保留原文，空字符串清空，非字符串返回 400。生成学科报告复用学期报告的学生身份匹配、头像与周期截止宠物快照口径，积分流水使用匹配后的学生 ID 查询，避免旧 ID 导致数据缺失。草稿编辑保留这些服务端展示数据。头像匹配优先使用学生逻辑身份，并限定同一教师和班级。已有学科报告缺少头像时，列表、详情和公开页补充读取当前头像用于展示。此次变更使用既有 JSON 字段，无额外迁移。

@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, DeleteDateColumn, Entity, PrimaryColumn } from 'typeorm';
 
 @Entity('pet_points_rubrics')
 export class PetRubricEntity {
@@ -22,4 +22,7 @@ export class PetRubricEntity {
 
   @Column({ type: 'boolean', default: true })
   enabled!: boolean;
+
+  @DeleteDateColumn({ name: 'deleted_at', type: 'datetime', precision: 6 })
+  deletedAt!: Date | null;
 }

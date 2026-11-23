@@ -268,7 +268,8 @@ CREATE TABLE IF NOT EXISTS pet_points_rubrics (
   category ENUM('课堂表现', '作业情况', '品德修养', '纪律常规') NOT NULL COMMENT '评价分类',
   label VARCHAR(64) NOT NULL COMMENT '指标名称',
   score INT NOT NULL COMMENT '分值',
-  enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用'
+  enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+  deleted_at DATETIME(6) NULL COMMENT '删除时间'
 ) ENGINE=InnoDB COMMENT='宠物积分评价指标表';
 
 CREATE TABLE IF NOT EXISTS pet_points_rewards (

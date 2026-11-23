@@ -39,6 +39,7 @@ describe("PetPoints persisted workflows", () => {
   let completed: unknown[] = [];
   let rejectBinding = false;
   let rewardDeleted = false;
+  let rubricDeleted = false;
   const writes = () =>
     api.request.mock.calls.map(([args]) => args).filter(args => typeof args !== "string" && args.method !== "GET");
   const button = (label: string) =>
@@ -69,6 +70,7 @@ describe("PetPoints persisted workflows", () => {
     failedRefresh = false;
     rejectBinding = false;
     rewardDeleted = false;
+    rubricDeleted = false;
     api.request.mockImplementation(
       async (args: string | { url: string; method: string; data: Record<string, unknown> }) => {
         if (typeof args === "string") {
@@ -92,7 +94,9 @@ describe("PetPoints persisted workflows", () => {
           return {
             students: [{ ...student }],
             completed,
-            rubrics: [{ id: "r1", category: "课堂表现", label: "积极发言", score: 2, enabled: true }],
+            rubrics: rubricDeleted
+              ? []
+              : [{ id: "r1", category: "课堂表现", label: "积极发言", score: 2, enabled: true }],
             rewards: rewardDeleted ? [] : [{ id: "gift", name: "贴纸", cost: 1, stock: 2, enabled: true }],
             records: [],
             redemptions: [],
@@ -102,6 +106,7 @@ describe("PetPoints persisted workflows", () => {
         if (args.url.endsWith("sync")) return [];
         if (fail) throw new Error("网络中断");
         if (args.method === "DELETE" && args.url === "/api/pet-points/rewards/gift") rewardDeleted = true;
+        if (args.method === "DELETE" && args.url === "/api/pet-points/rubrics/r1") rubricDeleted = true;
         if (args.url.endsWith("/complete")) {
           completed = [
             {
@@ -475,6 +480,121 @@ describe("PetPoints persisted workflows", () => {
     expect(dialog.textContent).toContain("贴纸");
     await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+  it("confirms rubric deletion, retries a network failure and removes the rubric even when refresh fails", async () => {
+    const request = api.request.getMockImplementation()!;
+    api.request.mockImplementation(async args => {
+      const response = await request(args);
+      if (args !== "/api/pet-points") return response;
+      return {
+        ...response,
+        records: [
+          {
+            id: "record-1",
+            studentId: "one",
+            label: "积极发言",
+            category: "课堂表现",
+            delta: 2,
+            scoreDelta: 2,
+            note: "",
+            createdAt: "2026-10-14T08:00:00Z"
+          }
+        ]
+      };
+    });
+    await mount();
+    await click(container.querySelector('[aria-label="设置"]')!);
+    await click(button("指标配置"));
+    const deleteButton = document.querySelector('[aria-label="删除指标积极发言"]')!;
+    const count = writes().length;
+    await click(deleteButton);
+    await click(button("取消"));
+    expect(writes()).toHaveLength(count);
+
+    await click(deleteButton);
+    fail = true;
+    await click(button("确认删除"));
+    const attempt = writes().at(-1);
+    expect(attempt).toMatchObject({ url: "/api/pet-points/rubrics/r1", method: "DELETE" });
+    expect(document.body.textContent).toContain("已有评分记录、学生积分和学期统计都会保留");
+    expect(document.body.textContent).toContain("网络中断");
+    expect(deleteButton.isConnected).toBe(true);
+
+    fail = false;
+    failedRefresh = true;
+    await click(button("确认删除"));
+    expect(writes().at(-1)).toEqual(attempt);
+    expect(button("确认删除")).toBeUndefined();
+    expect(deleteButton.isConnected).toBe(false);
+    expect(document.body.textContent).toContain("暂无指标，请先新增");
+    expect(document.body.textContent).toContain("已保存，刷新失败");
+
+    await click(document.querySelector('[aria-label="关闭设置"]')!);
+    failedRefresh = false;
+    await refreshFromSettings();
+    expect(writes()).toHaveLength(count + 2);
+    await click(container.querySelector('[aria-label="为测试甲加分"]')!);
+    expect(document.body.textContent).toContain("暂无启用的加分项目");
+    await click(document.querySelector('[aria-label="关闭积分调整"]')!);
+    await click(container.querySelector('[aria-label="设置"]')!);
+    await click(button("最近评分"));
+    expect(document.querySelector('[aria-label="最近评分"]')!.textContent).toContain("测试甲 · 积极发言");
+    await click(document.querySelector('[aria-label="关闭设置"]')!);
+    await click(container.querySelector('[aria-label="设置"]')!);
+    await click(button("积分统计"));
+    const stats = document.querySelector('[aria-label="积分统计"]')!;
+    expect(stats.textContent).toContain("22可用积分合计");
+    expect(stats.textContent).toContain("2记录累计评价（净值）");
+  });
+  it("keeps incomplete rubric score drafts and saves signed integers at both 200-point limits", async () => {
+    await mount();
+    await click(container.querySelector('[aria-label="设置"]')!);
+    await click(button("指标配置"));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const fill = (input: HTMLInputElement, value: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+    const newScore = Array.from(dialog.querySelectorAll("label"))
+      .find(label => label.textContent?.trim() === "分值")!
+      .querySelector("input")!;
+    await fill(dialog.querySelector<HTMLInputElement>('input[placeholder="例如：主动整理课桌"]')!, "测试指标");
+    const count = writes().length;
+    for (const draft of ["", "-", "-201", "1.5"]) {
+      await fill(newScore, draft);
+      expect(newScore.value).toBe(draft);
+      expect(button("新增指标").disabled).toBe(true);
+      await click(button("新增指标"));
+    }
+    expect(writes()).toHaveLength(count);
+    await fill(newScore, "-200");
+    await click(button("新增指标"));
+    expect(writes().at(-1)).toMatchObject({ url: "/api/pet-points/rubrics", method: "POST", data: { score: -200 } });
+
+    await click(button("编辑"));
+    const editScore = dialog.querySelector<HTMLInputElement>('input[aria-label="指标分值"]')!;
+    expect(editScore.value).toBe("2");
+    for (const draft of ["", "-", "201", "1e2"]) {
+      await fill(editScore, draft);
+      expect(editScore.value).toBe(draft);
+      expect(button("保存").disabled).toBe(true);
+      await click(button("保存"));
+    }
+    expect(writes()).toHaveLength(count + 1);
+    await fill(editScore, "+200");
+    await click(button("保存"));
+    expect(writes().at(-1)).toMatchObject({
+      url: "/api/pet-points/rubrics/r1",
+      method: "PATCH",
+      data: { score: 200 }
+    });
+
+    await click(button("编辑"));
+    await fill(dialog.querySelector<HTMLInputElement>('input[aria-label="指标分值"]')!, "0");
+    await click(button("保存"));
+    expect(writes().at(-1).data.score).toBe(0);
   });
   it("ignores an older overview response after a newer refresh has completed", async () => {
     await mount();

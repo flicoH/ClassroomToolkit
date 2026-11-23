@@ -191,6 +191,13 @@ const defaultFinalEnergy = 200;
 const maxScoreAdjustment = 200;
 const defaultMaxLevel = 10;
 
+function parseRubricScore(draft: string): number | undefined {
+  const value = draft.trim();
+  if (!/^[+-]?\d+$/.test(value)) return undefined;
+  const score = Number(value);
+  return Math.abs(score) <= maxScoreAdjustment ? score : undefined;
+}
+
 function getPetLevel(progress: number, maxLevel: number, finalEnergy = defaultFinalEnergy) {
   return Array.from({ length: maxLevel }, (_, i) => Math.round((i * finalEnergy) / (maxLevel - 1))).filter(
     value => value <= Math.max(0, progress)
@@ -516,11 +523,14 @@ export function PetPoints() {
   const [scoreAdjustNote, setScoreAdjustNote] = useState("");
   const [newRubricLabel, setNewRubricLabel] = useState("");
   const [newRubricCategory, setNewRubricCategory] = useState<EvaluationCategory>("课堂表现");
-  const [newRubricScore, setNewRubricScore] = useState(1);
+  // 分值草稿保留空字符串和单独的负号，输入完整后才转换为数字。
+  const [newRubricScoreDraft, setNewRubricScoreDraft] = useState("1");
   const [editingRubricId, setEditingRubricId] = useState<string | null>(null);
   const [editingRubricLabel, setEditingRubricLabel] = useState("");
   const [editingRubricCategory, setEditingRubricCategory] = useState<EvaluationCategory>("课堂表现");
-  const [editingRubricScore, setEditingRubricScore] = useState(1);
+  const [editingRubricScoreDraft, setEditingRubricScoreDraft] = useState("");
+  const newRubricScore = parseRubricScore(newRubricScoreDraft);
+  const editingRubricScore = parseRubricScore(editingRubricScoreDraft);
   const [newRewardName, setNewRewardName] = useState("");
   const [newRewardCost, setNewRewardCost] = useState(5);
   const [newRewardStock, setNewRewardStock] = useState(1);
@@ -885,16 +895,16 @@ export function PetPoints() {
     if (saved) closeScoreAdjust();
   };
 
-  /** 新增评价指标，分值限制在 -10 到 10 之间。 */
+  /** 新增评价指标，保存成功后清空草稿。 */
   const addRubric = async () => {
     const label = newRubricLabel.trim();
-    if (!label) return;
+    if (!label || newRubricScore === undefined) return;
     if (
       !(await perform("/api/pet-points/rubrics", "POST", { category: newRubricCategory, label, score: newRubricScore }))
     )
       return;
     setNewRubricLabel("");
-    setNewRubricScore(1);
+    setNewRubricScoreDraft("1");
   };
 
   /** 将指标修改保存到服务端，并用返回值更新当前列表。 */
@@ -907,16 +917,16 @@ export function PetPoints() {
     setEditingRubricId(rubric.id);
     setEditingRubricLabel(rubric.label);
     setEditingRubricCategory(rubric.category);
-    setEditingRubricScore(rubric.score);
+    setEditingRubricScoreDraft(String(rubric.score));
   };
 
   /** 保存指标名称、分类和分值。 */
   const saveRubric = async () => {
-    if (!editingRubricId || !editingRubricLabel.trim()) return;
+    if (!editingRubricId || !editingRubricLabel.trim() || editingRubricScore === undefined) return;
     const saved = await updateRubric(editingRubricId, {
       label: editingRubricLabel.trim(),
       category: editingRubricCategory,
-      score: Math.max(-10, Math.min(10, Math.round(editingRubricScore)))
+      score: editingRubricScore
     });
     if (saved) setEditingRubricId(null);
   };
@@ -2720,7 +2730,11 @@ export function PetPoints() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-black">{settingsPanel}</h3>
-                <p className="text-sm font-semibold text-slate-400">宠物积分云端配置与数据概览</p>
+                <p className="text-sm font-semibold text-slate-400">
+                  {settingsPanel === "指标配置"
+                    ? `分值可填写 -${maxScoreAdjustment} 到 ${maxScoreAdjustment} 的整数`
+                    : "宠物积分云端配置与数据概览"}
+                </p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setSettingsPanel(null)} aria-label="关闭设置">
                 <X className="h-5 w-5" />
@@ -2753,17 +2767,11 @@ export function PetPoints() {
                   </label>
                   <label className="grid gap-1 text-sm font-bold text-slate-600">
                     分值
-                    <Input
-                      type="number"
-                      min={-10}
-                      max={10}
-                      value={newRubricScore}
-                      onChange={event => setNewRubricScore(Number(event.target.value))}
-                    />
+                    <Input value={newRubricScoreDraft} onChange={event => setNewRubricScoreDraft(event.target.value)} />
                   </label>
                   <Button
                     className="bg-orange-500 font-bold hover:bg-orange-600"
-                    disabled={busy || !newRubricLabel.trim()}
+                    disabled={busy || !newRubricLabel.trim() || newRubricScore === undefined}
                     onClick={() => void addRubric()}
                   >
                     <Plus className="h-4 w-4" />
@@ -2796,17 +2804,14 @@ export function PetPoints() {
                           ))}
                         </select>
                         <Input
-                          type="number"
-                          min={-10}
-                          max={10}
-                          value={editingRubricScore}
-                          onChange={event => setEditingRubricScore(Number(event.target.value))}
+                          value={editingRubricScoreDraft}
+                          onChange={event => setEditingRubricScoreDraft(event.target.value)}
                           className="w-24"
                           aria-label="指标分值"
                         />
                         <Button
                           size="sm"
-                          disabled={busy || !editingRubricLabel.trim()}
+                          disabled={busy || !editingRubricLabel.trim() || editingRubricScore === undefined}
                           onClick={() => void saveRubric()}
                         >
                           <Save className="h-4 w-4" />
@@ -2846,10 +2851,42 @@ export function PetPoints() {
                           <Pencil className="h-4 w-4" />
                           编辑
                         </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0 text-rose-600"
+                          disabled={busy}
+                          title={`删除指标${item.label}`}
+                          aria-label={`删除指标${item.label}`}
+                          onClick={() =>
+                            setConfirmAction({
+                              title: "删除指标",
+                              description: `确定删除“${item.label}”吗？已有评分记录、学生积分和学期统计都会保留。`,
+                              confirmLabel: "确认删除",
+                              onConfirm: () =>
+                                perform(
+                                  `/api/pet-points/rubrics/${encodeURIComponent(item.id)}`,
+                                  "DELETE",
+                                  {},
+                                  [],
+                                  () => {
+                                    setRubrics(current => current.filter(rubric => rubric.id !== item.id));
+                                    setSelectedRubricIds(current => current.filter(id => id !== item.id));
+                                    setNotice(`已删除指标：${item.label}`);
+                                  }
+                                )
+                            })
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </Button>
                       </>
                     )}
                   </div>
                 ))}
+                {!rubrics.length && (
+                  <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">暂无指标，请先新增。</p>
+                )}
               </div>
             )}
             {settingsPanel === "奖品配置" && (
