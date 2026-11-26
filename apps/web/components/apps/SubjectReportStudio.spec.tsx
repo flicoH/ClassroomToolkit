@@ -3,6 +3,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SubjectReportStudio } from "./SubjectReportStudio";
+import {
+  approveReportDraftRecovery,
+  getPendingReportDraft,
+  saveReportDraftsForReauthentication
+} from "@/lib/report-draft-recovery";
+import { useAuthStore } from "@/store/authStore";
+import { subjectLessonCategories } from "@/components/subject-reports/SubjectLessonPdfFill";
 
 const { apiMock, mockRequest } = vi.hoisted(() => {
   const apiMock = vi.fn();
@@ -106,7 +113,77 @@ describe("SubjectReportStudio", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    useAuthStore.getState().setUser(null);
     localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("restores PDF choices, manual overrides and remaining students while consuming the local snapshot", async () => {
+    const teacher = { id: "teacher-1", name: "王老师", email: "" };
+    useAuthStore.getState().setUser(teacher);
+    const button = (label: string) =>
+      [...container.querySelectorAll("button")].find(item => item.textContent?.includes(label))!;
+    const click = (label: string) => act(async () => button(label).click());
+    const fill = (field: HTMLTextAreaElement, value: string) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    await act(async () => root.render(<SubjectReportStudio />));
+    await click("填写与生成报告");
+    await click("2. 选择学生");
+    await click("全选本班");
+    await click("3. 学科与内容来源");
+    await act(async () => {
+      const scope = container.querySelector<HTMLSelectElement>('select[aria-label="选择 PDF 章节"]')!;
+      scope.value = "Unit1";
+      scope.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      fill(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-0")!, "课堂拓展词汇");
+      fill(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-3")!, "");
+    });
+    await click("4. 课堂评价与生成");
+    await click("乐乐");
+    await act(async () => {
+      const attendance = container.querySelector<HTMLSelectElement>('select:has(option[value="late"])')!;
+      attendance.value = "late";
+      attendance.dispatchEvent(new Event("change", { bubbles: true }));
+      fill(container.querySelector<HTMLTextAreaElement>('textarea[placeholder*="寄语"]')!, "下次一起复习颜色");
+    });
+    expect(saveReportDraftsForReauthentication("subject", teacher.id)).toBe(true);
+    act(() => root.unmount());
+    expect(approveReportDraftRecovery(teacher.id)).toBe(true);
+
+    const original = apiMock.getMockImplementation()!;
+    apiMock.mockImplementation(async (url: string, config: unknown) => {
+      if (url === "/api/pet-points") return { students: [{ id: "s2", name: "乐乐", className: "启航班" }] };
+      if (url.endsWith("/report-subjects"))
+        return [
+          {
+            id: "sub-1",
+            name: "英语",
+            courseContentTitles: subjectLessonCategories.slice().reverse()
+          }
+        ];
+      return original(url, config);
+    });
+    root = createRoot(container);
+    await act(async () => root.render(<SubjectReportStudio />));
+    expect(getPendingReportDraft("subject", teacher.id)).toBeUndefined();
+    expect(container.textContent).toContain("已移除 1 位当前不可选的学生");
+    expect(container.querySelector('[aria-label="待评价学生"]')?.textContent).toContain("乐乐");
+    expect(container.querySelector('[aria-label="待评价学生"]')?.textContent).not.toContain("小宇");
+    expect(container.querySelector<HTMLSelectElement>('select:has(option[value="late"])')?.value).toBe("late");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[placeholder*="寄语"]')?.value).toBe(
+      "下次一起复习颜色"
+    );
+    await click("3. 学科与内容来源");
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="选择 PDF 章节"]')?.value).toBe("Unit1");
+    expect(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-3")?.value).toBe("课堂拓展词汇");
+    expect(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-2")?.value).toBe("What colour is it?");
+    expect(container.querySelector<HTMLTextAreaElement>("#subject-lesson-0-0")?.value).toBe("");
+    expect(apiMock.mock.calls.some(([url]) => String(url).endsWith("/reports/generate"))).toBe(false);
   });
 
   it("renders header and switches tabs between reports, compose, and library", async () => {

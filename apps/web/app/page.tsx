@@ -10,8 +10,10 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWindowStore } from "@/store/windowStore";
+import { useAuthStore } from "@/store/authStore";
+import { getReportDraftReturnWindow, pruneExpiredReportDrafts } from "@/lib/report-draft-recovery";
 import { UserPanel } from "@/components/UserPanel";
 import { MenuBox } from "@/components/MenuBox";
 import { AppWindow } from "@/components/AppWindow";
@@ -102,7 +104,24 @@ function WindowContent({ contentKey }: { contentKey: string }) {
 
 export default function Home() {
   const { windows, openWindow } = useWindowStore();
+  const teacherId = useAuthStore(state => state.user?.id);
+  const authLoading = useAuthStore(state => state.isLoading);
   const [panelOpen, setPanelOpen] = useState(false);
+
+  useEffect(() => {
+    pruneExpiredReportDrafts();
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("resumeReport") !== "1") return;
+    const contentKey = getReportDraftReturnWindow(teacherId);
+    const item = menuItems.find(entry => entry.contentKey === contentKey);
+    url.searchParams.delete("resumeReport");
+    window.history.replaceState(window.history.state, "", url);
+    if (item && contentKey) openWindow(item.name, contentKey);
+  }, [authLoading, openWindow, teacherId]);
 
   /** 统一处理桌面图标点击；便签需要每次新开独立小窗，所以单独处理。 */
   const handleMenuClick = (contentKey: string) => {

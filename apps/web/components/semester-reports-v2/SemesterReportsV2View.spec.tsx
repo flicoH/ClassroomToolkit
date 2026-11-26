@@ -2,6 +2,13 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError, AxiosHeaders } from "axios";
+import {
+  approveReportDraftRecovery,
+  getPendingReportDraft,
+  saveReportDraftsForReauthentication
+} from "@/lib/report-draft-recovery";
+import { useAuthStore } from "@/store/authStore";
 import { SemesterReportsV2View, defaultReportDates } from "./SemesterReportsV2View";
 import { getRecentMonthRange } from "./StageReportSchedulerView";
 import { DraftEditModal } from "./DraftEditModal";
@@ -183,7 +190,91 @@ describe("SemesterReportsV2View", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    useAuthStore.getState().setUser(null);
+    localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
+  });
+
+  it("restores the edited semester report after a generation 401 and removes local data after applying it", async () => {
+    const teacher = { id: "teacher-1", name: "王老师", email: "" };
+    useAuthStore.getState().setUser(teacher);
+    const click = (label: string) =>
+      act(async () => {
+        [...container.querySelectorAll("button")].find(button => button.textContent?.includes(label))!.click();
+      });
+    const fill = (field: HTMLTextAreaElement | HTMLInputElement, value: string) => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    await act(async () => root.render(<SemesterReportsV2View />));
+    await click("填写与生成报告");
+    await act(async () => {
+      const [start, end] = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+      fill(start!, "2026-10-05");
+      fill(end!, "2026-10-09");
+    });
+    await click("下一步：配置学科与教学内容");
+    await act(async () => {
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(box => box.click());
+      fill(
+        container.querySelector<HTMLTextAreaElement>("textarea[placeholder*='输入本期教学内容']")!,
+        "课程原文\n分组讨论"
+      );
+    });
+    await click("下一步：挑选学生名单");
+    await click("全选本班");
+    await click("下一步：录入课堂评价与生成");
+    await click("李小红");
+
+    const post = api.post.getMockImplementation()!;
+    api.post.mockImplementation(async (url: string, data: unknown) => {
+      if (!url.endsWith("/reports/generate")) return post(url, data);
+      expect(saveReportDraftsForReauthentication("semester", teacher.id)).toBe(true);
+      const config = { headers: new AxiosHeaders() };
+      throw new AxiosError("登录过期", undefined, config, undefined, {
+        status: 401,
+        statusText: "Unauthorized",
+        data: {},
+        headers: {},
+        config
+      });
+    });
+    await act(async () => {
+      fill(container.querySelector<HTMLTextAreaElement>('textarea[placeholder*="寄语"]')!, "小红最后填写的评价");
+      [...container.querySelectorAll("button")].find(button => button.textContent?.includes("确认生成"))!.click();
+    });
+    expect(container.textContent).toContain("李小红的课堂反馈");
+    expect(container.textContent).not.toContain("份报告草稿已全部成功生成");
+
+    act(() => root.unmount());
+    expect(approveReportDraftRecovery(teacher.id)).toBe(true);
+    const get = api.get.getMockImplementation()!;
+    let rosterReady = false;
+    api.get.mockImplementation(async (url: string) => {
+      if (url === "/api/classes" && !rosterReady) throw new Error("名单暂不可用");
+      if (url === "/api/pet-points") return { students: mockStudents.slice().reverse() };
+      return get(url);
+    });
+    root = createRoot(container);
+    await act(async () => root.render(<SemesterReportsV2View />));
+    expect(container.textContent).toContain("已保留上次填写的报告");
+    expect(getPendingReportDraft("semester", teacher.id)).toBeDefined();
+    rosterReady = true;
+    await click("重试恢复");
+
+    expect(container.textContent).toContain("已恢复上次填写的内容");
+    expect(container.textContent).toContain("李小红的课堂反馈");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[placeholder*="寄语"]')?.value).toBe(
+      "小红最后填写的评价"
+    );
+    expect(getPendingReportDraft("semester", teacher.id)).toBeUndefined();
+    await click("2. 学科与内容来源");
+    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(2);
+    expect(container.querySelector<HTMLTextAreaElement>("textarea[placeholder*='输入本期教学内容']")?.value).toBe(
+      "课程原文\n分组讨论"
+    );
   });
 
   it("renders 4 main workspace navigation tabs and loads existing report data", async () => {
