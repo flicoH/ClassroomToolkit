@@ -12,8 +12,12 @@
 
 import { BLOCKED_LOGIN_MESSAGE } from "@/lib/blocked-session";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
+import {
+  approveReportDraftRecovery,
+  pruneExpiredReportDrafts,
+  reportDraftReturnPath
+} from "@/lib/report-draft-recovery";
 import request from "@/lib/request";
 import type { User } from "@/types";
 import toast from "react-hot-toast";
@@ -23,6 +27,16 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card";
 import { GraduationCap, Loader2 } from "lucide-react";
 
+export function getLoginRedirect(redirect: string | null, origin: string) {
+  if (!redirect?.startsWith("/") || redirect.startsWith("//")) return "/";
+  try {
+    const target = new URL(redirect, origin);
+    return target.origin === origin ? target.href : "/";
+  } catch {
+    return "/";
+  }
+}
+
 export const LoginForm = () => {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUesrname] = useState("");
@@ -31,13 +45,17 @@ export const LoginForm = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
   const { setUser } = useAuthStore();
 
   useEffect(() => {
-    if (sessionStorage.getItem("ip-login-blocked")) {
-      sessionStorage.removeItem("ip-login-blocked");
-      toast.error(BLOCKED_LOGIN_MESSAGE, { id: "ip-login-blocked" });
+    pruneExpiredReportDrafts();
+    try {
+      if (sessionStorage.getItem("ip-login-blocked")) {
+        sessionStorage.removeItem("ip-login-blocked");
+        toast.error(BLOCKED_LOGIN_MESSAGE, { id: "ip-login-blocked" });
+      }
+    } catch {
+      // Login remains available with browser storage disabled.
     }
   }, []);
 
@@ -81,10 +99,18 @@ export const LoginForm = () => {
               email: email.trim() || undefined
             }
       );
-      setUser(data);
+      try {
+        setUser(data);
+      } catch {
+        // The server has already issued its session cookie even if the profile cache is unavailable.
+      }
       toast.success(mode === "login" ? "登录成功" : "注册成功");
       const redirect = new URLSearchParams(window.location.search).get("redirect");
-      const target = redirect?.startsWith("/") && !redirect.startsWith("//") ? redirect : "/";
+      const canResume = approveReportDraftRecovery(mode === "login" ? data.id : undefined);
+      const target = getLoginRedirect(
+        redirect === reportDraftReturnPath && !canResume ? null : redirect,
+        window.location.origin
+      );
       window.location.replace(target);
     } catch (error: unknown) {
       const err = error as Error;

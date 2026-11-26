@@ -1,7 +1,10 @@
 "use client";
 
-import { CourseAttendance, type CourseAttendanceStatus } from "@/components/semester-reports/CourseAttendance";
-import type { GrowthAssessment } from "@/components/semester-reports/GrowthAssessmentFields";
+import {
+  attendanceLabels,
+  CourseAttendance,
+  type CourseAttendanceStatus
+} from "@/components/semester-reports/CourseAttendance";
 import { ReportPetView } from "@/components/semester-reports/ReportPetView";
 import { PeriodScoreChart } from "@/components/semester-reports/PeriodScoreChart";
 import { V2ClassroomPerformance } from "@/components/semester-reports-v2/V2ClassroomPerformance";
@@ -9,6 +12,9 @@ import type { ScorePreview } from "@/components/semester-reports-v2/SemesterRepo
 import { ReportWizardSteps, type ReportWizardStep } from "@/components/semester-reports-v2/ReportStudioControls";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import request from "@/lib/request";
+import { isAxiosError } from "axios";
+import { isDraftList, isDraftMap, isDraftRecord, isDraftText, readReportDraftForm } from "@/lib/report-draft-recovery";
+import { ReportDraftRecoveryNotice, useReportDraftForm } from "@/components/semester-reports/useReportDraftForm";
 import { createUuid } from "@/lib/id";
 import { copyText } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
@@ -65,11 +71,155 @@ type StudentFeedback = {
   focusItems?: string[];
   /** 按课堂评价维度名称保存预设选项。 */
   ratings?: Record<string, string>;
-  /** 教师填写的四维观察文案。 */
-  growthAssessment?: GrowthAssessment;
   /** 仅控制填写向导中的逐人完成状态。 */
   completed?: boolean;
 };
+
+type LessonText = Record<string, Record<string, string>>;
+
+function createSubjectDraft() {
+  const monday = new Date();
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const friday = new Date(monday);
+  friday.setDate(friday.getDate() + 4);
+  const format = new Intl.DateTimeFormat("sv-SE", { year: "numeric", month: "2-digit", day: "2-digit" });
+  return {
+    step: 1 as ReportWizardStep,
+    period: "week" as "week" | "month" | "term",
+    selectedTermId: "",
+    selectedSubjectId: "",
+    reportDates: { startDate: format.format(monday), endDate: format.format(friday) },
+    heading: "WK课堂成长记录",
+    theme: "",
+    lessonNumber: "" as number | "",
+    lessonDate: "",
+    lessonCount: 2,
+    lessonInputs: {} as LessonText,
+    pdfLessonInputs: {} as LessonText,
+    lessonScopes: {} as Record<string, string>,
+    courseScope: "",
+    nextWeekContent: "",
+    selectedClass: "",
+    selectedStudentIds: [] as string[],
+    feedbackStudentId: "",
+    studentFeedbackMap: {} as Record<string, StudentFeedback>,
+    keywords: "",
+    observation: ""
+  };
+}
+
+function isAttendance(value: unknown): value is CourseAttendanceStatus {
+  return isDraftText(value) && Object.hasOwn(attendanceLabels, value);
+}
+
+function isStudentFeedback(value: unknown): value is StudentFeedback {
+  return (
+    isDraftRecord(value) &&
+    (value.attendance === undefined || isAttendance(value.attendance)) &&
+    (value.attendances === undefined || isDraftList(value.attendances, isAttendance)) &&
+    [value.teacherMessage, value.nextFocus].every(text => text === undefined || isDraftText(text)) &&
+    (value.focusItems === undefined || isDraftList(value.focusItems, isDraftText)) &&
+    (value.ratings === undefined || isDraftMap(value.ratings, isDraftText)) &&
+    (value.completed === undefined || typeof value.completed === "boolean")
+  );
+}
+
+function readSubjectDraft(value: unknown) {
+  return readReportDraftForm(
+    value,
+    createSubjectDraft(),
+    form =>
+      (form.step === 1 || form.step === 2 || form.step === 3 || form.step === 4) &&
+      (form.period === "week" || form.period === "month" || form.period === "term") &&
+      isDraftRecord(form.reportDates) &&
+      isDraftText(form.reportDates.startDate) &&
+      isDraftText(form.reportDates.endDate) &&
+      (form.lessonNumber === "" || Number.isFinite(form.lessonNumber)) &&
+      typeof form.lessonCount === "number" &&
+      Number.isInteger(form.lessonCount) &&
+      form.lessonCount >= 1 &&
+      form.lessonCount <= 30 &&
+      [form.lessonInputs, form.pdfLessonInputs].every(input =>
+        isDraftMap(input, (row): row is Record<string, string> => isDraftMap(row, isDraftText))
+      ) &&
+      isDraftMap(form.lessonScopes, isDraftText) &&
+      isDraftList(form.selectedStudentIds, isDraftText) &&
+      isDraftMap(form.studentFeedbackMap, isStudentFeedback)
+  );
+}
+
+function hasSavedPdfScope(scope: string, units: Set<string>, documents: CourseDocument[]) {
+  if (units.has(scope)) return true;
+  const pages = /^第?\s*(\d{1,3})(?:\s*[-–—~至到]\s*(\d{1,3}))?\s*页$/u.exec(scope);
+  if (!pages) return false;
+  const first = Number(pages[1]);
+  const last = Number(pages[2] ?? pages[1]);
+  return first > 0 && last >= first && last <= 300 && documents.some(doc => !doc.pageCount || doc.pageCount >= last);
+}
+
+function reconcileSubjectDraft(
+  draft: ReturnType<typeof createSubjectDraft>,
+  terms: Term[],
+  subjects: Subject[],
+  students: Student[],
+  documents: CourseDocument[]
+) {
+  const permittedStudents = new Set(students.map(student => student.id));
+  const selectedStudentIds = draft.selectedStudentIds.filter(id => permittedStudents.has(id));
+  const removedStudents = draft.selectedStudentIds.length - selectedStudentIds.length;
+  const termAvailable = !draft.selectedTermId || terms.some(term => term.id === draft.selectedTermId);
+  const subject = subjects.find(
+    subject => subject.id === draft.selectedSubjectId && (!subject.termId || subject.termId === draft.selectedTermId)
+  );
+  const missingSettings = !termAvailable || Boolean(draft.selectedSubjectId && !subject);
+  const titles = subject?.courseContentTitles ?? subjectLessonCategories;
+  const prefix = `${draft.selectedTermId}:${draft.selectedSubjectId}:${draft.period}:`;
+  const count = draft.period === "week" ? draft.lessonCount : 1;
+  const matchingDocs = documents.filter(
+    doc => doc.termId === draft.selectedTermId && doc.subjectId === draft.selectedSubjectId && doc.status === "ready"
+  );
+  const units = new Set(matchingDocs.flatMap(doc => doc.units ?? []));
+  const lessonInputs = { ...draft.lessonInputs };
+  let reviewPdf = false;
+  let reviewTitles = false;
+  for (let lesson = 0; lesson < count; lesson += 1) {
+    const scopeKey = prefix + lesson;
+    const scope = draft.lessonScopes[scopeKey]?.trim();
+    if (scope && !hasSavedPdfScope(scope, units, matchingDocs)) reviewPdf = true;
+    const carriedText = { ...draft.pdfLessonInputs[scopeKey], ...lessonInputs[lesson] };
+    if (Object.entries(carriedText).some(([title, text]) => text && !titles.includes(title))) reviewTitles = true;
+    if (missingSettings) lessonInputs[lesson] = carriedText;
+  }
+  const needsCourseReview = missingSettings || reviewPdf || reviewTitles;
+  const step =
+    needsCourseReview && draft.step >= 3
+      ? (3 as const)
+      : removedStudents && !selectedStudentIds.length && draft.step > 2
+        ? (2 as const)
+        : draft.step;
+  return {
+    form: {
+      ...draft,
+      step,
+      selectedTermId: termAvailable ? draft.selectedTermId : "",
+      selectedSubjectId: termAvailable && subject ? subject.id : "",
+      selectedClass: students.some(student => (student.className || "未分班") === draft.selectedClass)
+        ? draft.selectedClass
+        : "",
+      selectedStudentIds,
+      feedbackStudentId: selectedStudentIds.includes(draft.feedbackStudentId) ? draft.feedbackStudentId : "",
+      studentFeedbackMap: Object.fromEntries(
+        Object.entries(draft.studentFeedbackMap).filter(([id]) => permittedStudents.has(id))
+      ),
+      lessonInputs
+    },
+    notice: [
+      missingSettings ? "部分学期或学科已不可用，请重新选择。" : "",
+      removedStudents ? `已移除 ${removedStudents} 位当前不可选的学生及其评价。` : "",
+      reviewPdf || reviewTitles ? "课程资料或标题可能已变更，请核对教学内容。" : ""
+    ].join("")
+  };
+}
 
 const messageTemplates = [
   { label: "积极参与", text: "你积极参与课堂活动，期待你继续主动分享自己的想法！" },
@@ -118,40 +268,42 @@ export function SubjectReportStudioView() {
   >(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  // 四步向导状态
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [period, setPeriod] = useState<"week" | "month" | "term">("week");
-  const [selectedTermId, setSelectedTermId] = useState("");
-  const [selectedSubjectId, setSelectedSubjectId] = useState("");
-  const [{ startDate, endDate }, setReportDates] = useState(() => {
-    const monday = new Date();
-    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
-    const friday = new Date(monday);
-    friday.setDate(friday.getDate() + 4);
-    const format = new Intl.DateTimeFormat("sv-SE", { year: "numeric", month: "2-digit", day: "2-digit" });
-    return { startDate: format.format(monday), endDate: format.format(friday) };
-  });
-  const [heading, setHeading] = useState("WK课堂成长记录");
-  const [theme, setTheme] = useState("");
-  const [lessonNumber, setLessonNumber] = useState<number | "">("");
-  const [lessonDate, setLessonDate] = useState("");
-
-  // 教学内容
-  const [lessonCount, setLessonCount] = useState(2);
-  const [lessonInputs, setLessonInputs] = useState<Record<string, string>>({});
-  const [pdfLessonInputs, setPdfLessonInputs] = useState<Record<string, string[]>>({});
-  const [lessonScopes, setLessonScopes] = useState<Record<string, string>>({});
-  const [courseScope, setCourseScope] = useState("");
-  const [nextWeekContent, setNextWeekContent] = useState("");
-
-  // 学生选择与课堂反馈
-  const [selectedClass, setSelectedClass] = useState("");
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-  const [feedbackStudentId, setFeedbackStudentId] = useState("");
-  const [studentFeedbackMap, setStudentFeedbackMap] = useState<Record<string, StudentFeedback>>({});
+  const {
+    form: {
+      step,
+      period,
+      selectedTermId,
+      selectedSubjectId,
+      reportDates: { startDate, endDate },
+      heading,
+      theme,
+      lessonNumber,
+      lessonDate,
+      lessonCount,
+      lessonInputs,
+      pdfLessonInputs,
+      lessonScopes,
+      courseScope,
+      nextWeekContent,
+      selectedClass,
+      selectedStudentIds,
+      feedbackStudentId,
+      studentFeedbackMap,
+      keywords,
+      observation
+    },
+    edit,
+    initialize,
+    reset,
+    readPending,
+    apply,
+    discardInvalid,
+    recovery,
+    setRecovery,
+    cleanupFailed,
+    cleanUp
+  } = useReportDraftForm("subject", createSubjectDraft);
   const [scorePreview, setScorePreview] = useState<{ key: string; data?: ScorePreview; error?: string }>();
-  const [keywords, setKeywords] = useState("");
-  const [observation, setObservation] = useState("");
   const [generating, setGenerating] = useState(false);
 
   const currentFeedbackStudentId = selectedStudentIds.includes(feedbackStudentId)
@@ -162,10 +314,7 @@ export function SubjectReportStudioView() {
     currentTermSubjects.find(subject => subject.id === selectedSubjectId) ??
     subjects.find(subject => subject.id === selectedSubjectId);
   // null/缺省沿用历史四项，空数组保留教师主动清空的设置。
-  const categories = useMemo(
-    () => selectedSubject?.courseContentTitles ?? subjectLessonCategories,
-    [selectedSubject?.courseContentTitles]
-  );
+  const categories = selectedSubject?.courseContentTitles ?? subjectLessonCategories;
   const performanceFields =
     selectedSubject?.performanceConfig ??
     Object.entries(defaultRatings).map(([label, options]) => ({ label, options }));
@@ -248,36 +397,61 @@ export function SubjectReportStudioView() {
   const refreshReports = useCallback(() => loadReports(activeSubjectFilter.current), [loadReports]);
   useEffect(() => {
     activeSubjectFilter.current = subjectFilter;
-    // 列表加载同步设置 loading，属于请求生命周期的起点。
-    void loadReports(subjectFilter);
+    queueMicrotask(() => {
+      if (activeSubjectFilter.current === subjectFilter) void loadReports(subjectFilter);
+    });
   }, [loadReports, subjectFilter]);
 
   // 初始化加载基础数据
   useEffect(() => {
     let alive = true;
+    const pending = readPending();
+    if (pending)
+      queueMicrotask(() => {
+        if (alive) setRecovery("loading");
+      });
     Promise.all([
-      request<Term[], Term[]>(`${base}/report-terms`).catch(() => []),
-      request<Subject[], Subject[]>(`${base}/report-subjects`).catch(() => []),
-      request<{ students: Student[] }, { students: Student[] }>("/api/pet-points").catch(() => ({ students: [] })),
-      request<CourseDocument[], CourseDocument[]>(`${base}/course-documents`).catch(() => [])
+      request<Term[], Term[]>(`${base}/report-terms`).catch(() => undefined),
+      request<Subject[], Subject[]>(`${base}/report-subjects`).catch(() => undefined),
+      request<{ students: Student[] }, { students: Student[] }>("/api/pet-points").catch(() => undefined),
+      request<CourseDocument[], CourseDocument[]>(`${base}/course-documents`).catch(() => undefined)
     ]).then(([termsData, subjectsData, petData, docsData]) => {
       if (!alive) return;
-      const termList = Array.isArray(termsData) ? termsData : [];
-      const subList = Array.isArray(subjectsData) ? subjectsData : [];
-      const stuList = Array.isArray(petData?.students) ? petData.students : [];
-      setTerms(termList);
-      setSubjects(subList);
-      setStudents(stuList);
-      setDocuments(Array.isArray(docsData) ? docsData : []);
-      setSelectedTermId(current => (termList.some(term => term.id === current) ? current : (termList[0]?.id ?? "")));
-      setSelectedSubjectId(current =>
-        subList.some(subject => subject.id === current) ? current : (subList[0]?.id ?? "")
-      );
+      const termList = Array.isArray(termsData) ? termsData : undefined;
+      const subList = Array.isArray(subjectsData) ? subjectsData : undefined;
+      const stuList = Array.isArray(petData?.students) ? petData.students : undefined;
+      const docs = Array.isArray(docsData) ? docsData : undefined;
+      if (termList) setTerms(termList);
+      if (subList) setSubjects(subList);
+      if (stuList) setStudents(stuList);
+      if (docs) setDocuments(docs);
+
+      if (pending && readPending()?.id === pending.id) {
+        const saved = readSubjectDraft(pending.form);
+        if (!saved) {
+          discardInvalid(pending);
+        } else if (!termList || !subList || !stuList || (!docs && Object.keys(saved.lessonScopes).length)) {
+          setRecovery("failed");
+          return;
+        } else {
+          const { form, notice } = reconcileSubjectDraft(saved, termList, subList, stuList, docs ?? []);
+          apply(pending, form);
+          setActiveTab("compose");
+          setRecovery(null);
+          announce(`已恢复上次填写的内容。${notice}`);
+          return;
+        }
+      }
+      initialize({
+        ...(termList ? { selectedTermId: termList[0]?.id ?? "" } : {}),
+        ...(subList ? { selectedSubjectId: subList[0]?.id ?? "" } : {})
+      });
+      setRecovery(null);
     });
     return () => {
       alive = false;
     };
-  }, [catalogueRefresh]);
+  }, [announce, apply, catalogueRefresh, discardInvalid, initialize, readPending, setRecovery]);
 
   // 班级列表
   const classes = useMemo(() => {
@@ -292,29 +466,27 @@ export function SubjectReportStudioView() {
 
   const lessonScopePrefix = `${selectedTermId}:${selectedSubjectId}:${period}:`;
   // PDF suggestions belong to a lesson and course; edits always take precedence.
-  const lessonValue = useCallback(
-    (lesson: number, category: number) =>
-      lessonInputs[`${lesson}-${category}`] ?? pdfLessonInputs[`${lessonScopePrefix}${lesson}`]?.[category] ?? "",
+  const lessonText = useCallback(
+    (lesson: number) => ({ ...pdfLessonInputs[`${lessonScopePrefix}${lesson}`], ...lessonInputs[lesson] }),
     [lessonInputs, pdfLessonInputs, lessonScopePrefix]
   );
 
   // 序列化手填教学内容
-  const serializedManualContent = useMemo(() => {
+  const serializedManualContent = (() => {
     const lines: string[] = [];
     const count = period === "week" ? lessonCount : 1;
     for (let l = 0; l < count; l += 1) {
       const lName = period === "week" ? `第 ${l + 1} 节课` : "本期教学内容";
-      for (let c = 0; c < categories.length; c += 1) {
-        const val = lessonValue(l, c)
-          .trim()
-          .replace(/[\r\n]+/g, " ");
+      const text = lessonText(l);
+      for (const title of categories) {
+        const val = (Object.hasOwn(text, title) ? (text[title] ?? "") : "").trim().replace(/[\r\n]+/g, " ");
         if (val) {
-          lines.push(`${lName} · ${categories[c]}：${val}`);
+          lines.push(`${lName} · ${title}：${val}`);
         }
       }
     }
     return lines.join("\n");
-  }, [period, lessonCount, lessonValue, categories]);
+  })();
 
   const previewBody = useMemo(
     () => ({
@@ -343,7 +515,7 @@ export function SubjectReportStudioView() {
     serializedManualContent.length <= 1000;
 
   useEffect(() => {
-    if (activeTab !== "compose" || step !== 4 || !canPreview) return;
+    if (activeTab !== "compose" || step !== 4 || !canPreview || recovery) return;
     const controller = new AbortController();
     void request<ScorePreview, ScorePreview>(`${base}/reports/preview-input`, {
       method: "POST",
@@ -358,33 +530,33 @@ export function SubjectReportStudioView() {
           setScorePreview({ key: previewKey, error: "无法读取本周期积分和宠物形态，可继续填写评价。" });
       });
     return () => controller.abort();
-  }, [activeTab, step, previewBody, previewKey, canPreview]);
+  }, [activeTab, step, previewBody, previewKey, canPreview, recovery]);
 
   // 提交生成报告
   const handleGenerate = async () => {
     if (!selectedStudentIds.length) {
       announce("请先挑选本次生成报告的学生");
-      setStep(3);
+      edit("step", 2, false);
       return;
     }
     if (selectedStudentIds.length > 30) {
       announce("单次最多生成 30 份学科报告。");
-      setStep(3);
+      edit("step", 2, false);
       return;
     }
     if (!selectedSubjectId || !selectedTermId) {
       announce("请确认学期与任教学科");
-      setStep(2);
+      edit("step", 3, false);
       return;
     }
     if (!validDates) {
       announce("请确认报告周期的起止日期。");
-      setStep(1);
+      edit("step", 1, false);
       return;
     }
     if (!serializedManualContent || serializedManualContent.length > 1000) {
       announce("请填写教学内容或从 PDF 带入，教学内容最多 1,000 字。");
-      setStep(2);
+      edit("step", 3, false);
       return;
     }
 
@@ -454,26 +626,12 @@ export function SubjectReportStudioView() {
 
       announce(`成功生成 ${selectedStudentIds.length} 份学科报告草稿`);
       setActiveTab("reports");
-      setStep(1);
       // 成功生成后清空本次填写及 PDF 带入状态，下一份报告从空白内容开始。
-      setLessonInputs({});
-      setPdfLessonInputs({});
-      setLessonScopes({});
-      setCourseScope("");
-      setNextWeekContent("");
-      setLessonCount(2);
-      setHeading("WK课堂成长记录");
-      setTheme("");
-      setLessonNumber("");
-      setLessonDate("");
-      setSelectedStudentIds([]);
-      setFeedbackStudentId("");
-      setStudentFeedbackMap({});
+      reset({ period, selectedTermId, selectedSubjectId, selectedClass, reportDates: { startDate, endDate } });
       setScorePreview(undefined);
-      setKeywords("");
-      setObservation("");
       void refreshReports();
     } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 401) return;
       const msg = err instanceof Error ? err.message : "生成学科报告失败，请检查输入";
       announce(msg);
     } finally {
@@ -595,7 +753,11 @@ export function SubjectReportStudioView() {
     <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
       <div className="flex items-center gap-2">
         {step > 1 && (
-          <Button variant="outline" size="sm" onClick={() => setStep(prev => (prev - 1) as 1 | 2 | 3 | 4)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => edit("step", prev => (prev - 1) as ReportWizardStep, false)}
+          >
             <ArrowLeft className="mr-1 h-3.5 w-3.5" /> 上一步
           </Button>
         )}
@@ -610,11 +772,11 @@ export function SubjectReportStudioView() {
                 announce("请至少勾选 1 位学生");
                 return;
               }
-              if (step === 3 && (!selectedSubjectId || !currentTermSubjects.length)) {
-                announce("请先选择报告学科");
+              if (step === 3 && (!selectedTermId || !selectedSubjectId || !currentTermSubjects.length)) {
+                announce("请先选择报告学期与学科");
                 return;
               }
-              setStep(prev => (prev + 1) as 1 | 2 | 3 | 4);
+              edit("step", prev => (prev + 1) as ReportWizardStep, false);
             }}
           >
             {step === 1 ? "下一步：选择学生" : step === 2 ? "下一步：配置学科与教学内容" : "下一步：课堂评价与生成"}{" "}
@@ -666,6 +828,7 @@ export function SubjectReportStudioView() {
           </button>
           <button
             type="button"
+            disabled={Boolean(recovery)}
             onClick={() => setActiveTab("compose")}
             className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1 py-2 text-center transition ${
               activeTab === "compose"
@@ -699,6 +862,13 @@ export function SubjectReportStudioView() {
         </div>
       )}
 
+      <ReportDraftRecoveryNotice
+        recovery={recovery}
+        cleanupFailed={cleanupFailed}
+        onRetry={() => setCatalogueRefresh(current => current + 1)}
+        onCleanup={cleanUp}
+      />
+
       {/* 主视图区 */}
       <main className="min-w-0">
         {/* Tab 1: 报告管理与分发 */}
@@ -723,7 +893,13 @@ export function SubjectReportStudioView() {
                   {label} ({reports.filter(report => !status || report.status === status).length})
                 </Button>
               ))}
-              <Button size="sm" variant="outline" className="ml-auto" onClick={() => setActiveTab("compose")}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={Boolean(recovery)}
+                className="ml-auto"
+                onClick={() => setActiveTab("compose")}
+              >
                 <Sparkles className="h-3.5 w-3.5" /> 新建学科报告
               </Button>
             </div>
@@ -1021,11 +1197,11 @@ export function SubjectReportStudioView() {
         )}
 
         {/* Tab 2: 填写与生成报告 (四步向导) */}
-        {activeTab === "compose" && (
+        {activeTab === "compose" && !recovery && (
           <div className="space-y-4 animate-in fade-in duration-200">
             <ReportWizardSteps
               step={step}
-              onChange={setStep}
+              onChange={value => edit("step", value, false)}
               hasSubjects={!!selectedTermId && !!selectedSubjectId && !!currentTermSubjects.length}
               hasStudents={selectedStudentIds.length > 0}
               steps={subjectReportWizardSteps}
@@ -1065,7 +1241,7 @@ export function SubjectReportStudioView() {
                           type="button"
                           key={value}
                           aria-pressed={period === value}
-                          onClick={() => setPeriod(value)}
+                          onClick={() => edit("period", value)}
                           className={`rounded-lg py-1.5 transition ${period === value ? "bg-indigo-600 font-bold text-white shadow-2xs" : "text-muted-foreground hover:bg-card"}`}
                         >
                           {label}
@@ -1078,7 +1254,7 @@ export function SubjectReportStudioView() {
                     <Input
                       type="date"
                       value={startDate}
-                      onChange={e => setReportDates({ startDate: e.target.value, endDate })}
+                      onChange={e => edit("reportDates", { startDate: e.target.value, endDate })}
                       className="h-9 min-w-0 text-left text-xs"
                     />
                   </label>
@@ -1087,7 +1263,7 @@ export function SubjectReportStudioView() {
                     <Input
                       type="date"
                       value={endDate}
-                      onChange={e => setReportDates({ startDate, endDate: e.target.value })}
+                      onChange={e => edit("reportDates", { startDate, endDate: e.target.value })}
                       className="h-9 min-w-0 text-left text-xs"
                     />
                   </label>
@@ -1098,7 +1274,7 @@ export function SubjectReportStudioView() {
                     <Input
                       value={heading}
                       maxLength={60}
-                      onChange={e => setHeading(e.target.value)}
+                      onChange={e => edit("heading", e.target.value)}
                       placeholder="课堂成长记录"
                       className="h-9 text-xs"
                     />
@@ -1108,7 +1284,7 @@ export function SubjectReportStudioView() {
                     <Input
                       value={theme}
                       maxLength={100}
-                      onChange={e => setTheme(e.target.value)}
+                      onChange={e => edit("theme", e.target.value)}
                       placeholder="选填"
                       className="h-9 text-xs"
                     />
@@ -1121,7 +1297,7 @@ export function SubjectReportStudioView() {
                         min={1}
                         max={999}
                         value={lessonNumber}
-                        onChange={e => setLessonNumber(e.target.value ? Number(e.target.value) : "")}
+                        onChange={e => edit("lessonNumber", e.target.value ? Number(e.target.value) : "")}
                         placeholder="选填"
                         className="h-9 text-xs"
                       />
@@ -1131,7 +1307,7 @@ export function SubjectReportStudioView() {
                       <Input
                         type="date"
                         value={lessonDate}
-                        onChange={e => setLessonDate(e.target.value)}
+                        onChange={e => edit("lessonDate", e.target.value)}
                         className="h-9 min-w-0 text-left text-xs"
                       />
                     </label>
@@ -1154,7 +1330,7 @@ export function SubjectReportStudioView() {
                   <div className="flex items-center gap-2">
                     <select
                       value={selectedClass}
-                      onChange={e => setSelectedClass(e.target.value)}
+                      onChange={e => edit("selectedClass", e.target.value)}
                       className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
                       aria-label="按班级筛选"
                     >
@@ -1170,12 +1346,12 @@ export function SubjectReportStudioView() {
                       size="sm"
                       onClick={() => {
                         const ids = visibleStudents.map(s => s.id);
-                        setSelectedStudentIds(prev => Array.from(new Set([...prev, ...ids])).slice(0, 30));
+                        edit("selectedStudentIds", prev => Array.from(new Set([...prev, ...ids])).slice(0, 30));
                       }}
                     >
                       全选本班
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedStudentIds([])}>
+                    <Button variant="ghost" size="sm" onClick={() => edit("selectedStudentIds", [])}>
                       清空
                     </Button>
                   </div>
@@ -1191,7 +1367,7 @@ export function SubjectReportStudioView() {
                         aria-pressed={checked}
                         disabled={!checked && selectedStudentIds.length >= 30}
                         onClick={() => {
-                          setSelectedStudentIds(prev =>
+                          edit("selectedStudentIds", prev =>
                             checked ? prev.filter(id => id !== student.id) : [...prev, student.id]
                           );
                         }}
@@ -1239,14 +1415,17 @@ export function SubjectReportStudioView() {
                       value={selectedTermId}
                       onChange={e => {
                         const nextTermId = e.target.value;
-                        setSelectedTermId(nextTermId);
+                        edit("selectedTermId", nextTermId);
                         const matching = subjects.filter(s => s.termId === nextTermId || !s.termId);
                         if (matching.every(s => s.id !== selectedSubjectId)) {
-                          setSelectedSubjectId(matching[0]?.id ?? "");
+                          edit("selectedSubjectId", matching[0]?.id ?? "");
                         }
                       }}
                       className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
                     >
+                      <option value="" disabled>
+                        请选择学期
+                      </option>
                       {terms.map(t => (
                         <option key={t.id} value={t.id}>
                           {t.name}
@@ -1261,10 +1440,12 @@ export function SubjectReportStudioView() {
                     <select
                       id="subject-report-course-subject"
                       value={selectedSubjectId}
-                      onChange={e => setSelectedSubjectId(e.target.value)}
+                      onChange={e => edit("selectedSubjectId", e.target.value)}
                       className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-slate-50 px-2 text-xs"
                     >
-                      {!currentTermSubjects.length && <option value="">该学期暂无学科，请先添加</option>}
+                      <option value="" disabled>
+                        {currentTermSubjects.length ? "请选择学科" : "该学期暂无学科，请先添加"}
+                      </option>
                       {currentTermSubjects.map(s => (
                         <option key={s.id} value={s.id}>
                           {s.name}
@@ -1283,7 +1464,9 @@ export function SubjectReportStudioView() {
                       max={30}
                       aria-label="本周课程次数"
                       value={lessonCount}
-                      onChange={e => setLessonCount(Math.max(1, Math.min(30, Math.trunc(Number(e.target.value)) || 1)))}
+                      onChange={e =>
+                        edit("lessonCount", Math.max(1, Math.min(30, Math.trunc(Number(e.target.value)) || 1)))
+                      }
                       className="mt-1 h-9 w-32 text-xs"
                     />
                   </div>
@@ -1293,6 +1476,10 @@ export function SubjectReportStudioView() {
                 <div className="mt-4 space-y-4">
                   {Array.from({ length: period === "week" ? lessonCount : 1 }).map((_, lIdx) => {
                     const scopeKey = `${lessonScopePrefix}${lIdx}`;
+                    const filled = lessonText(lIdx);
+                    const unmatched = Object.entries(filled).filter(
+                      ([title, value]) => value && !categories.includes(title)
+                    );
                     return (
                       <div key={lIdx} className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
                         <h3 className="mb-2 text-xs font-bold text-indigo-900">
@@ -1301,7 +1488,7 @@ export function SubjectReportStudioView() {
                         <SubjectLessonPdfFill
                           key={scopeKey}
                           scope={lessonScopes[scopeKey] ?? ""}
-                          onScopeChange={scope => setLessonScopes(current => ({ ...current, [scopeKey]: scope }))}
+                          onScopeChange={scope => edit("lessonScopes", current => ({ ...current, [scopeKey]: scope }))}
                           termId={selectedTermId}
                           subjectId={selectedSubjectId}
                           period={period}
@@ -1309,23 +1496,41 @@ export function SubjectReportStudioView() {
                           hasDocuments={!!pdfDocuments.length}
                           onOpenLibrary={() => setActiveTab("library")}
                           onFill={groups =>
-                            setPdfLessonInputs(current => ({
+                            edit("pdfLessonInputs", current => ({
                               ...current,
-                              [scopeKey]: categories.map(title => {
-                                const index = subjectLessonCategories.indexOf(title);
-                                return (groups[index] ?? []).join("\n");
-                              })
+                              [scopeKey]: Object.fromEntries(
+                                categories.map(title => {
+                                  const index = subjectLessonCategories.indexOf(title);
+                                  return [title, (groups[index] ?? []).join("\n")];
+                                })
+                              )
                             }))
                           }
                         />
                         <SubjectLessonFields
                           id={`subject-lesson-${lIdx}`}
                           titles={categories}
-                          values={categories.map((_, index) => lessonValue(lIdx, index))}
-                          onChange={(index, value) =>
-                            setLessonInputs(previous => ({ ...previous, [`${lIdx}-${index}`]: value }))
-                          }
+                          values={categories.map(title => (Object.hasOwn(filled, title) ? (filled[title] ?? "") : ""))}
+                          onChange={(index, value) => {
+                            const title = categories[index];
+                            if (title)
+                              edit("lessonInputs", previous => ({
+                                ...previous,
+                                [lIdx]: { ...previous[lIdx], [title]: value }
+                              }));
+                          }}
                         />
+                        {unmatched.length > 0 && (
+                          <details className="mt-2 rounded-lg border bg-background p-2.5 text-xs">
+                            <summary className="cursor-pointer">查看无法匹配到当前标题的教学内容</summary>
+                            {unmatched.map(([title, text]) => (
+                              <p key={title} className="mt-2 whitespace-pre-wrap">
+                                <strong>{title}：</strong>
+                                {text}
+                              </p>
+                            ))}
+                          </details>
+                        )}
                       </div>
                     );
                   })}
@@ -1338,7 +1543,7 @@ export function SubjectReportStudioView() {
                   <label className="text-xs font-semibold text-slate-700">授课范围备注文案（选填）</label>
                   <Input
                     value={courseScope}
-                    onChange={e => setCourseScope(e.target.value)}
+                    onChange={e => edit("courseScope", e.target.value)}
                     placeholder="例如：Unit 1 单词复习与句型对话"
                     className="mt-1 h-9 text-xs"
                   />
@@ -1354,7 +1559,7 @@ export function SubjectReportStudioView() {
                   </label>
                   <Textarea
                     value={nextWeekContent}
-                    onChange={e => setNextWeekContent(e.target.value)}
+                    onChange={e => edit("nextWeekContent", e.target.value)}
                     placeholder="例如：继续巩固颜色与数字表达，开展课堂情景剧..."
                     className="mt-1 min-h-[60px] text-xs"
                   />
@@ -1381,7 +1586,7 @@ export function SubjectReportStudioView() {
                     size="sm"
                     className="bg-emerald-600 text-white hover:bg-emerald-700"
                     onClick={() => {
-                      setStudentFeedbackMap(current => {
+                      edit("studentFeedbackMap", current => {
                         const next = { ...current };
                         for (const id of selectedStudentIds) {
                           if (!next[id]?.teacherMessage?.trim())
@@ -1412,7 +1617,7 @@ export function SubjectReportStudioView() {
                           key={id}
                           type="button"
                           aria-pressed={active}
-                          onClick={() => setFeedbackStudentId(id)}
+                          onClick={() => edit("feedbackStudentId", id)}
                           className={`flex w-full items-center justify-between gap-2 rounded-lg p-2.5 text-left text-xs transition ${active ? "bg-indigo-600 font-bold text-white shadow-xs" : "text-muted-foreground hover:bg-card"}`}
                         >
                           <span>{student?.name ?? "学生"}</span>
@@ -1428,7 +1633,7 @@ export function SubjectReportStudioView() {
                       const feedback = studentFeedbackMap[id];
                       const focusItems = feedback?.focusItems ?? (feedback?.nextFocus ? [feedback.nextFocus] : []);
                       const updateFeedback = (changes: Partial<StudentFeedback>) =>
-                        setStudentFeedbackMap(current => ({ ...current, [id]: { ...current[id], ...changes } }));
+                        edit("studentFeedbackMap", current => ({ ...current, [id]: { ...current[id], ...changes } }));
                       const score = currentPreview?.data?.scoreSummaries?.find(item => item.studentId === id);
                       const pet = currentPreview?.data?.petPreviews?.find(item => item.studentId === id);
                       return (
@@ -1621,7 +1826,7 @@ export function SubjectReportStudioView() {
                                 updateFeedback({ completed: true });
                                 const next = selectedStudentIds[selectedStudentIds.indexOf(id) + 1];
                                 if (next) {
-                                  setFeedbackStudentId(next);
+                                  edit("feedbackStudentId", next);
                                   announce(`已暂存「${student?.name ?? "学生"}」的完整课堂反馈，已切换到下一位`);
                                 } else {
                                   announce("已经完成全部学生的报告填写，请点击确认生成草稿");
@@ -1641,7 +1846,7 @@ export function SubjectReportStudioView() {
                     <label className="text-xs font-semibold text-slate-700">补充关键词（选填）</label>
                     <Input
                       value={keywords}
-                      onChange={e => setKeywords(e.target.value)}
+                      onChange={e => edit("keywords", e.target.value)}
                       placeholder="例如：阅读表达、探究思维"
                       className="mt-1 h-9 text-xs"
                     />
@@ -1652,7 +1857,7 @@ export function SubjectReportStudioView() {
                     </label>
                     <Input
                       value={observation}
-                      onChange={e => setObservation(e.target.value)}
+                      onChange={e => edit("observation", e.target.value)}
                       placeholder="例如：本周整体课堂纪律良好，互动热烈"
                       className="mt-1 h-9 text-xs"
                     />
@@ -1689,11 +1894,15 @@ export function SubjectReportStudioView() {
             initialSubjectId={selectedSubjectId}
             onTerm={term => {
               setTerms(current => [...current, term]);
-              setSelectedTermId(current => current || term.id);
+              edit("selectedTermId", current => current || term.id, false);
             }}
             onDeleteTerm={id => {
               setTerms(current => current.filter(term => term.id !== id));
-              setSelectedTermId(current => (current === id ? (terms.find(term => term.id !== id)?.id ?? "") : current));
+              edit(
+                "selectedTermId",
+                current => (current === id ? (terms.find(term => term.id !== id)?.id ?? "") : current),
+                false
+              );
             }}
             onSubject={subject => {
               setSubjects(current =>
@@ -1701,12 +1910,14 @@ export function SubjectReportStudioView() {
                   ? current.map(item => (item.id === subject.id ? subject : item))
                   : [...current, subject]
               );
-              setSelectedSubjectId(current => current || subject.id);
+              edit("selectedSubjectId", current => current || subject.id, false);
             }}
             onDeleteSubject={id => {
               setSubjects(current => current.filter(subject => subject.id !== id));
-              setSelectedSubjectId(current =>
-                current === id ? (subjects.find(item => item.id !== id)?.id ?? "") : current
+              edit(
+                "selectedSubjectId",
+                current => (current === id ? (subjects.find(item => item.id !== id)?.id ?? "") : current),
+                false
               );
               if (subjectFilter === id) {
                 setSelectedReportIds([]);

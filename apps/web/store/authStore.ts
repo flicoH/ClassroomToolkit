@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { User } from "@/types";
 import { cookieStorage } from "@/lib/cookie";
+import { clearReportDraftRecovery } from "@/lib/report-draft-recovery";
 
 interface AuthState {
   user: User | null;
@@ -19,6 +20,13 @@ interface AuthState {
   setUser: (user: User | null) => void;
   setLoading: (loading: boolean) => void;
   logout: () => Promise<void>;
+}
+
+let pendingLogouts = 0;
+
+/** Responses from in-flight business requests cannot start recovery during an explicit logout. */
+export function isTeacherLogoutInProgress() {
+  return pendingLogouts > 0;
 }
 
 /** 登录态集中存储，同时通过 persist 写入 localStorage，刷新后可恢复用户信息。 */
@@ -30,9 +38,12 @@ export const useAuthStore = create<AuthState>()(
       setUser: user => set({ user }),
       setLoading: loading => set({ isLoading: loading }),
       logout: async () => {
+        pendingLogouts += 1;
+        clearReportDraftRecovery();
         try {
           await fetch("/api/logout", { method: "POST" });
         } finally {
+          pendingLogouts -= 1;
           cookieStorage.clearAll();
           set({ user: null });
         }

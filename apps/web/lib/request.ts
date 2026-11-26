@@ -9,6 +9,7 @@
  * @LastEditTime: 2026-04-19
  */
 import { exitBlockedSession } from "./blocked-session";
+import { handleExpiredTeacherSession } from "./expired-teacher-session";
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import { cookieStorage } from "./cookie";
 import toast from "react-hot-toast";
@@ -142,11 +143,7 @@ requestInstance.interceptors.response.use(
 
     switch (status) {
       case 401:
-        toast.error("登录已过期，请重新登录");
-        void fetch("/api/logout", { method: "POST", keepalive: true });
-        cookieStorage.clearAll();
-        localStorage.removeItem("auth-storage");
-        window.location.href = "/login";
+        handleExpiredTeacherSession();
         break;
       case 403:
         toast.error("没有权限访问");

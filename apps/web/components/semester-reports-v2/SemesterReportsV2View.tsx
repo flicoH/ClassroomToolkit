@@ -1,9 +1,12 @@
 "use client";
 
 import { SubjectPerformanceConfig } from "@/components/semester-reports/SubjectPerformanceConfig";
-import { CoursePdfUpload, ReportWizardSteps } from "./ReportStudioControls";
+import { CoursePdfUpload, ReportWizardSteps, type ReportWizardStep } from "./ReportStudioControls";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import request from "@/lib/request";
+import { isAxiosError } from "axios";
+import { isDraftList, isDraftMap, isDraftRecord, isDraftText, readReportDraftForm } from "@/lib/report-draft-recovery";
+import { ReportDraftRecoveryNotice, useReportDraftForm } from "@/components/semester-reports/useReportDraftForm";
 import { createUuid } from "@/lib/id";
 import { CartoonSemesterReportIcon } from "@/components/icons/CartoonAppIcons";
 import { Button } from "@/components/ui/button";
@@ -73,7 +76,7 @@ export type ScorePreview = {
   scoreSummaries: Array<ScoreDetails & { studentId: string; studentName: string }>;
 };
 
-export function createFallbackScoreDetails(_name?: string): ScoreDetails {
+function createFallbackScoreDetails(): ScoreDetails {
   const items = [
     { label: "课堂发言积极", count: 7 },
     { label: "作业书写工整", count: 5 },
@@ -117,6 +120,121 @@ export function defaultReportDates(period: string, term?: Term) {
     }
   }
   return { start: localDateString(first), end: localDateString(last) };
+}
+
+function createSemesterDraft() {
+  const dates = defaultReportDates("week");
+  return {
+    composeStep: 1 as ReportWizardStep,
+    composePeriod: "week" as "week" | "month" | "term",
+    composeTermId: "",
+    composeStart: dates.start,
+    composeEnd: dates.end,
+    institutionName: "课堂成长记录",
+    courseTheme: "",
+    lessonNumber: "" as number | "",
+    lessonDate: dates.end,
+    composeSelectedSubjects: [] as string[],
+    courseSource: "manual" as "manual" | "pdf",
+    courseManualText: "",
+    selectedStudentClass: "",
+    selectedStudentIds: [] as string[],
+    feedbackStudentId: "",
+    step4PerfSubject: "",
+    step4StudentRatings: {} as Record<string, PerformanceRating[]>,
+    step4StudentComments: {} as Record<string, string>,
+    step4StudentGrowthAssessment: {} as Record<string, GrowthAssessment>,
+    step4FocusItems: [] as string[],
+    step4CompletedIds: [] as string[],
+    step4Keywords: "",
+    step4Observation: ""
+  };
+}
+
+function readSemesterDraft(value: unknown) {
+  return readReportDraftForm(
+    value,
+    createSemesterDraft(),
+    form =>
+      (form.composeStep === 1 || form.composeStep === 2 || form.composeStep === 3 || form.composeStep === 4) &&
+      (form.composePeriod === "week" || form.composePeriod === "month" || form.composePeriod === "term") &&
+      (form.courseSource === "manual" || form.courseSource === "pdf") &&
+      (form.lessonNumber === "" || Number.isFinite(form.lessonNumber)) &&
+      [form.composeSelectedSubjects, form.selectedStudentIds, form.step4FocusItems, form.step4CompletedIds].every(
+        list => isDraftList(list, isDraftText)
+      ) &&
+      isDraftMap(form.step4StudentComments, isDraftText) &&
+      isDraftMap(form.step4StudentRatings, (ratings): ratings is PerformanceRating[] =>
+        isDraftList(
+          ratings,
+          (rating): rating is PerformanceRating =>
+            isDraftRecord(rating) &&
+            isDraftText(rating.label) &&
+            isDraftText(rating.value) &&
+            (rating.subjectId === undefined || isDraftText(rating.subjectId))
+        )
+      ) &&
+      isDraftMap(
+        form.step4StudentGrowthAssessment,
+        (assessment): assessment is GrowthAssessment =>
+          isDraftRecord(assessment) && growthDimensions.every(([key]) => isDraftText(assessment[key]))
+      )
+  );
+}
+
+function reconcileSemesterDraft(
+  draft: ReturnType<typeof createSemesterDraft>,
+  terms: Term[],
+  subjects: Subject[],
+  students: Student[]
+) {
+  const permittedStudents = new Set(students.map(student => student.id));
+  const selectedStudentIds = draft.selectedStudentIds.filter(id => permittedStudents.has(id));
+  const termAvailable = !draft.composeTermId || terms.some(term => term.id === draft.composeTermId);
+  const permittedSubjects = new Set(
+    subjects.filter(subject => !subject.termId || subject.termId === draft.composeTermId).map(subject => subject.id)
+  );
+  const composeSelectedSubjects = draft.composeSelectedSubjects.filter(id => permittedSubjects.has(id));
+  const missingSubject = composeSelectedSubjects.length !== draft.composeSelectedSubjects.length;
+  const removedStudents = draft.selectedStudentIds.length - selectedStudentIds.length;
+  const filterFeedback = <T,>(feedback: Record<string, T>) =>
+    Object.fromEntries(Object.entries(feedback).filter(([id]) => permittedStudents.has(id)));
+  const ratings = Object.fromEntries(
+    Object.entries(filterFeedback(draft.step4StudentRatings)).map(([id, items]) => [
+      id,
+      items.filter(rating => !rating.subjectId || permittedSubjects.has(rating.subjectId))
+    ])
+  );
+  return {
+    form: {
+      ...draft,
+      composeTermId: termAvailable ? draft.composeTermId : "",
+      composeSelectedSubjects: termAvailable ? composeSelectedSubjects : [],
+      selectedStudentIds,
+      selectedStudentClass: students.some(student => student.className === draft.selectedStudentClass)
+        ? draft.selectedStudentClass
+        : "",
+      feedbackStudentId: selectedStudentIds.includes(draft.feedbackStudentId) ? draft.feedbackStudentId : "",
+      step4PerfSubject: composeSelectedSubjects.includes(draft.step4PerfSubject)
+        ? draft.step4PerfSubject
+        : (composeSelectedSubjects[0] ?? ""),
+      step4CompletedIds: draft.step4CompletedIds.filter(id => selectedStudentIds.includes(id)),
+      step4StudentRatings: ratings,
+      step4StudentComments: filterFeedback(draft.step4StudentComments),
+      step4StudentGrowthAssessment: filterFeedback(draft.step4StudentGrowthAssessment),
+      composeStep: !termAvailable
+        ? (1 as const)
+        : missingSubject
+          ? (2 as const)
+          : removedStudents && !selectedStudentIds.length && draft.composeStep === 4
+            ? (3 as const)
+            : draft.composeStep
+    },
+    notice: [
+      !termAvailable || missingSubject ? "部分学期或学科已不可用，请重新选择。" : "",
+      removedStudents ? `已移除 ${removedStudents} 位当前不可选的学生及其评价。` : ""
+    ].join("")
+  };
 }
 
 /**
@@ -527,62 +645,52 @@ export function SemesterReportsV2View() {
   const [confirmDeleteReport, setConfirmDeleteReport] = useState<ReportSummaryItem | null>(null);
   const [batchPublishing, setBatchPublishing] = useState(false);
 
-  // Tab 2 (Compose 向导) 状态
-  const [composeStep, setComposeStep] = useState<1 | 2 | 3 | 4>(1);
-  const [composePeriod, setComposePeriod] = useState<"week" | "month" | "term">("week");
-  const [composeTermId, setComposeTermId] = useState<string>("");
-  const [composeStart, setComposeStart] = useState(() => defaultReportDates("week").start);
-  const [composeEnd, setComposeEnd] = useState(() => defaultReportDates("week").end);
-  const [institutionName, setInstitutionName] = useState("课堂成长记录");
-  const [courseTheme, setCourseTheme] = useState("");
-  const [lessonNumber, setLessonNumber] = useState<number | "">("");
-  const [lessonDate, setLessonDate] = useState(() => defaultReportDates("week").end);
+  const {
+    form: {
+      composeStep,
+      composePeriod,
+      composeTermId,
+      composeStart,
+      composeEnd,
+      institutionName,
+      courseTheme,
+      lessonNumber,
+      lessonDate,
+      composeSelectedSubjects,
+      courseSource,
+      courseManualText,
+      selectedStudentClass,
+      selectedStudentIds,
+      feedbackStudentId,
+      step4PerfSubject,
+      step4StudentRatings,
+      step4StudentComments,
+      step4StudentGrowthAssessment,
+      step4FocusItems,
+      step4CompletedIds,
+      step4Keywords,
+      step4Observation
+    },
+    edit,
+    initialize,
+    reset,
+    readPending,
+    apply,
+    discardInvalid,
+    recovery,
+    setRecovery,
+    cleanupFailed,
+    cleanUp
+  } = useReportDraftForm("semester", createSemesterDraft);
 
-  // 周期切换联动更新开始时间与结束时间
-  function handlePeriodChange(p: "week" | "month" | "term") {
-    setComposePeriod(p);
+  function handlePeriodChange(period: "week" | "month" | "term") {
+    edit("composePeriod", period);
     const activeTerm = terms.find(t => t.id === composeTermId) || terms.find(t => t.isCurrent) || terms[0];
-    const dates = defaultReportDates(p, activeTerm);
-    setComposeStart(dates.start);
-    setComposeEnd(dates.end);
-    setLessonDate(dates.end);
+    const dates = defaultReportDates(period, activeTerm);
+    edit("composeStart", dates.start);
+    edit("composeEnd", dates.end);
+    edit("lessonDate", dates.end);
   }
-
-  // Step 2 状态 (默认不选学科，必须主动选择后方可进入下一步)
-  const [composeSelectedSubjects, setComposeSelectedSubjects] = useState<string[]>([]);
-  const [courseSource, setCourseSource] = useState<"manual" | "pdf">("manual");
-  const [courseManualText, setCourseManualText] = useState("");
-
-  // Step 3 状态
-  const [selectedStudentClass, setSelectedStudentClass] = useState("");
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-
-  // Step 4 状态（学生逐人反馈工作台）
-  const [step4StudentIndex, setStep4StudentIndex] = useState(0);
-  const [step4PerfSubject, setStep4PerfSubject] = useState("english");
-  const [step4StudentRatings, setStep4StudentRatings] = useState<Record<string, PerformanceRating[]>>({
-    s1: [
-      { subjectId: "english", label: "听力跟读与发音", value: "发音标准流利" },
-      { subjectId: "english", label: "课堂互动与表达", value: "主动大胆表达" },
-      { subjectId: "science", label: "探究实验操作", value: "操作规范细致" }
-    ]
-  });
-  const [step4StudentComments, setStep4StudentComments] = useState<Record<string, string>>({
-    s1: "小明本周在自然生态主题中发言积极，单词发音非常标准，小组合作很愉快！",
-    s2: "小华在科学探究实验中观察极其细致，善于提出启发性问题！"
-  });
-  const [step4StudentGrowthAssessment, setStep4StudentGrowthAssessment] = useState<Record<string, GrowthAssessment>>({
-    s1: {
-      learningReadiness: "课前主动准备学习用具，坐姿端正，听讲专注度高。",
-      communicationCooperation: "乐于在小组中表达自己的观点，能够倾听同学发言。",
-      independenceRules: "严格遵守课堂纪律，按时独立完成课堂练习。",
-      overallUnderstanding: "整体表现积极向上，学习习惯良好，求知欲强。"
-    }
-  });
-  const [step4FocusItems, setStep4FocusItems] = useState<string[]>([]);
-  const [step4CompletedIds, setStep4CompletedIds] = useState<string[]>(["s1", "s2"]);
-  const [step4Keywords, setStep4Keywords] = useState("");
-  const [step4Observation, setStep4Observation] = useState("");
 
   // Tab 3 (Settings) 状态
   // kind 决定共享学期或独立学科接口，确认前不改动当前选项。
@@ -612,10 +720,10 @@ export function SemesterReportsV2View() {
   const configSubject =
     currentSettingsSubjects.find(subject => subject.id === activeConfigSubjectId) ?? currentSettingsSubjects[0];
 
-  function showToast(msg: string) {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
-  }
+  }, []);
 
   // 搜索防抖
   useEffect(() => {
@@ -638,8 +746,13 @@ export function SemesterReportsV2View() {
           ? petPointsRes.value.students
           : [];
       const classList = classesRes.status === "fulfilled" && Array.isArray(classesRes.value) ? classesRes.value : [];
-      const merged = mergeStudentRosters(petList, classList);
-      if (merged.length) {
+      if (
+        petPointsRes.status === "fulfilled" &&
+        Array.isArray(petPointsRes.value?.students) &&
+        classesRes.status === "fulfilled" &&
+        Array.isArray(classesRes.value)
+      ) {
+        const merged = mergeStudentRosters(petList, classList);
         setStudents(prev => (areStudentRostersEqual(prev, merged) ? prev : merged));
       }
     } catch {
@@ -649,13 +762,16 @@ export function SemesterReportsV2View() {
 
   useEffect(() => {
     if (activeMainTab === "compose" || activeMainTab === "stage") {
-      // 导航切换时刷新名单，初始化状态属于请求生命周期。
-      void refreshStudents();
+      queueMicrotask(() => {
+        void refreshStudents();
+      });
     }
   }, [activeMainTab, refreshStudents]);
 
   // 全量加载既有数据（包括后端真实数据与本地平滑兼容）
   const loadInitialData = useCallback(async () => {
+    const pending = readPending();
+    if (pending) setRecovery("loading");
     setLoading(true);
     try {
       const [termsRes, subjectsRes, petPointsRes, classesRes, docsRes, reportsRes] = await Promise.allSettled([
@@ -671,15 +787,20 @@ export function SemesterReportsV2View() {
         request.get<ReportSummaryItem[], ReportSummaryItem[]>(`${base}/reports`)
       ]);
 
-      if (termsRes.status === "fulfilled" && Array.isArray(termsRes.value)) {
-        setTerms(termsRes.value);
-        const currentTerm = termsRes.value.find(t => t.isCurrent) || termsRes.value[0];
+      const termList = termsRes.status === "fulfilled" && Array.isArray(termsRes.value) ? termsRes.value : undefined;
+      const subjectList =
+        subjectsRes.status === "fulfilled" && Array.isArray(subjectsRes.value) ? subjectsRes.value : undefined;
+      if (termList) {
+        setTerms(termList);
+        const currentTerm = termList.find(t => t.isCurrent) || termList[0];
         if (currentTerm) {
-          setComposeTermId(currentTerm.id);
           const initialDates = defaultReportDates("week", currentTerm);
-          setComposeStart(initialDates.start);
-          setComposeEnd(initialDates.end);
-          setLessonDate(initialDates.end);
+          initialize({
+            composeTermId: currentTerm.id,
+            composeStart: initialDates.start,
+            composeEnd: initialDates.end,
+            lessonDate: initialDates.end
+          });
         }
       } else {
         const fallbackTerm: Term = {
@@ -690,17 +811,14 @@ export function SemesterReportsV2View() {
           isCurrent: true
         };
         setTerms([fallbackTerm]);
-        setComposeTermId(fallbackTerm.id);
+        initialize({ composeTermId: fallbackTerm.id });
       }
 
-      if (subjectsRes.status === "fulfilled" && Array.isArray(subjectsRes.value)) {
-        const loadedSubjects = subjectsRes.value;
-        setSubjects(loadedSubjects);
-        // 填写报告时学科与内容默认不选学科，由教师在向导步骤2中主动选择
-        setComposeSelectedSubjects([]);
-        if (loadedSubjects[0]) {
-          setStep4PerfSubject(loadedSubjects[0].id);
-          setActiveConfigSubjectId(loadedSubjects[0].id);
+      if (subjectList) {
+        setSubjects(subjectList);
+        if (subjectList[0]) {
+          initialize({ step4PerfSubject: subjectList[0].id });
+          setActiveConfigSubjectId(subjectList[0].id);
         }
       } else {
         setSubjects([
@@ -713,20 +831,12 @@ export function SemesterReportsV2View() {
       const petList =
         petPointsRes.status === "fulfilled" && Array.isArray(petPointsRes.value?.students)
           ? petPointsRes.value.students
-          : [];
-      const classList = classesRes.status === "fulfilled" && Array.isArray(classesRes.value) ? classesRes.value : [];
-      const mergedStudents = mergeStudentRosters(petList, classList);
-
-      if (mergedStudents.length) {
+          : undefined;
+      const classList =
+        classesRes.status === "fulfilled" && Array.isArray(classesRes.value) ? classesRes.value : undefined;
+      const mergedStudents = mergeStudentRosters(petList ?? [], classList ?? []);
+      if ((petList && classList) || mergedStudents.length) {
         setStudents(prev => (areStudentRostersEqual(prev, mergedStudents) ? prev : mergedStudents));
-        // 新增报告时默认不选中学生，等待教师主动勾选或点击全选
-        setSelectedStudentIds([]);
-        setSelectedStudentClass("");
-      } else {
-        // 权限数据加载失败时保持空集，不能把演示学生当成当前教师可见数据。
-        setStudents([]);
-        setSelectedStudentIds([]);
-        setSelectedStudentClass("");
       }
 
       if (docsRes.status === "fulfilled" && Array.isArray(docsRes.value)) {
@@ -734,14 +844,12 @@ export function SemesterReportsV2View() {
       }
 
       if (reportsRes.status === "fulfilled" && Array.isArray(reportsRes.value) && reportsRes.value.length > 0) {
-        const loadedSubjects =
-          subjectsRes.status === "fulfilled" && Array.isArray(subjectsRes.value) ? subjectsRes.value : [];
         const normalized = reportsRes.value.map(r => {
           const rawStart = r.startDate || r.start || "";
           const rawEnd = r.endDate || r.end || "";
           const startIso = rawStart ? (rawStart.includes("T") ? rawStart.slice(0, 10) : rawStart) : "";
           const endIso = rawEnd ? (rawEnd.includes("T") ? rawEnd.slice(0, 10) : rawEnd) : "";
-          const subjectText = getReportSubjectNames(r, loadedSubjects);
+          const subjectText = getReportSubjectNames(r, subjectList ?? []);
           const normalizedShare =
             r.share && r.share.url && typeof window !== "undefined"
               ? { ...r.share, url: localReportShareUrl(r.share.url, window.location.origin) }
@@ -762,16 +870,39 @@ export function SemesterReportsV2View() {
         });
         setReports(normalized);
       }
+
+      if (pending && readPending()?.id !== pending.id) {
+        setRecovery(null);
+      } else if (pending) {
+        const saved = readSemesterDraft(pending.form);
+        if (!saved) {
+          discardInvalid(pending);
+          setRecovery(null);
+        } else if (!termList || !subjectList || !petList || !classList) {
+          setRecovery("failed");
+        } else {
+          const { form, notice } = reconcileSemesterDraft(saved, termList, subjectList, mergedStudents);
+          apply(pending, form);
+          setActiveMainTab("compose");
+          setRecovery(null);
+          showToast(`已恢复上次填写的内容。${notice}`);
+        }
+      }
     } catch {
-      // 保持平稳降级
+      if (pending) setRecovery("failed");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apply, discardInvalid, initialize, readPending, setRecovery, showToast]);
 
   useEffect(() => {
-    // 初次加载同步设置 loading，沿用请求生命周期。
-    void loadInitialData();
+    let mounted = true;
+    queueMicrotask(() => {
+      if (mounted) void loadInitialData();
+    });
+    return () => {
+      mounted = false;
+    };
   }, [loadInitialData]);
 
   // 可选班级列表
@@ -782,7 +913,7 @@ export function SemesterReportsV2View() {
 
   // 当前激活的学期
   const activeTerm = useMemo(() => {
-    return terms.find(t => t.id === composeTermId) || terms.find(t => t.isCurrent) || terms[0] || null;
+    return terms.find(t => t.id === composeTermId) ?? null;
   }, [terms, composeTermId]);
 
   // 对 preview-input 前置条件进行全面合规校验（严格对齐后端校验规则，杜绝 400 Bad Request）
@@ -886,29 +1017,35 @@ export function SemesterReportsV2View() {
   ]);
 
   useEffect(() => {
+    if (recovery) return;
     let cancelled = false;
+
+    const showFallback = (studentIds: string[]) => {
+      const scoreSummaries = studentIds.map(id => ({
+        ...createFallbackScoreDetails(),
+        studentId: id,
+        studentName: students.find(student => student.id === id)?.name || "学生"
+      }));
+      setScorePreview({ key: scorePreviewKey, data: { scoreSummaries } });
+      setScorePreviewLoading(false);
+    };
 
     // 前置校验未通过时，决不向后端发起非法请求（避免在控制台产生 400 Bad Request）
     if (!previewValidation.ok) {
-      const fallbackSummaries = selectedStudentIds.map(id => {
-        const stu = students.find(s => s.id === id);
-        return {
-          ...createFallbackScoreDetails(stu?.name),
-          studentId: id,
-          studentName: stu?.name || "学生"
-        };
+      queueMicrotask(() => {
+        if (!cancelled) showFallback(selectedStudentIds);
       });
-      // 无有效预览请求时沿用本地统计展示。
-      setScorePreview({
-        key: scorePreviewKey,
-        data: { scoreSummaries: fallbackSummaries }
-      });
-      setScorePreviewLoading(false);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
-    setScorePreviewLoading(true);
-    setScorePreviewError("");
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setScorePreviewLoading(true);
+        setScorePreviewError("");
+      }
+    });
 
     const timer = setTimeout(() => {
       request
@@ -929,22 +1066,7 @@ export function SemesterReportsV2View() {
           }
         })
         .catch(() => {
-          if (!cancelled) {
-            // 平滑降级：生成对应学生的本地加分数据，保证周期内细项不留空
-            const fallbackSummaries = previewValidation.studentIds.map(id => {
-              const stu = students.find(s => s.id === id);
-              return {
-                ...createFallbackScoreDetails(stu?.name),
-                studentId: id,
-                studentName: stu?.name || "学生"
-              };
-            });
-            setScorePreview({
-              key: scorePreviewKey,
-              data: { scoreSummaries: fallbackSummaries }
-            });
-            setScorePreviewLoading(false);
-          }
+          if (!cancelled) showFallback(previewValidation.studentIds);
         });
     }, 250);
 
@@ -952,7 +1074,16 @@ export function SemesterReportsV2View() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [scorePreviewKey, previewValidation, composePeriod, composeStart, composeEnd, selectedStudentIds, students]);
+  }, [
+    scorePreviewKey,
+    previewValidation,
+    composePeriod,
+    composeStart,
+    composeEnd,
+    selectedStudentIds,
+    students,
+    recovery
+  ]);
 
   // 判定报告是否处于草稿范畴（兼容 draft、queued 与 generating）
   const isDraftStatus = (status?: string) => status === "draft" || status === "queued" || status === "generating";
@@ -1007,7 +1138,7 @@ export function SemesterReportsV2View() {
   // 当筛选或搜索变化时，重置展示条数为默认的 20 条
   useEffect(() => {
     // 筛选条件变化后恢复首屏数量。
-    setDisplayCount(20);
+    queueMicrotask(() => setDisplayCount(20));
   }, [currentFilterStatus, statusFilter, periodFilter, startDateFilter, endDateFilter, debouncedQuery]);
 
   // 当前实际渲染展示的报告（默认展示 20 条，加载更多追加 20 条）
@@ -1146,7 +1277,7 @@ export function SemesterReportsV2View() {
         (targetContent as { scoreDetails?: ScoreDetails })?.scoreDetails ??
         (reportItem.content as { scoreDetails?: ScoreDetails })?.scoreDetails;
 
-      const resolvedScoreDetails = rawScoreDetails ?? createFallbackScoreDetails(target.studentName);
+      const resolvedScoreDetails = rawScoreDetails ?? createFallbackScoreDetails();
 
       // 解析学生宠物信息：优先使用报告快照中保存的 pet，若缺失则从学生名单中回溯该学生当前领养的宠物
       const matchedStudent = students.find(s => s.id === target.studentId || s.name === target.studentName);
@@ -1573,8 +1704,9 @@ export function SemesterReportsV2View() {
           }
         }
 
-        const genRes = await request
-          .post<{ reports: ReportSummaryItem[] }, { reports: ReportSummaryItem[] }>(`${base}/reports/generate`, {
+        const genRes = await request.post<{ reports: ReportSummaryItem[] }, { reports: ReportSummaryItem[] }>(
+          `${base}/reports/generate`,
+          {
             period: composePeriod,
             generationMode: composePeriod === "week" ? "template" : "auto",
             start: composeStart,
@@ -1594,26 +1726,26 @@ export function SemesterReportsV2View() {
               lessonDate: sanitizedLessonDate
             },
             studentFeedback: studentFeedbackPayload
-          })
-          .catch(() => null);
+          }
+        );
 
         if (genRes?.reports && Array.isArray(genRes.reports) && genRes.reports.length > 0) {
           showToast(`🎉 ${genRes.reports.length} 份报告草稿已全部成功生成！已为您切换回【报告管理与分发】列表。`);
-          await loadInitialData();
+          reset();
           setActiveMainTab("dashboard");
-          setComposeStep(1);
-          setSelectedStudentIds([]);
-          setComposeSelectedSubjects([]);
+          await loadInitialData();
           return;
         }
-      } catch {
-        // 后端失败时平滑走下方本地 fallback 生成
+      } catch (error) {
+        if (isAxiosError(error) && error.response?.status === 401) return;
+        showToast("生成报告失败，已保留当前填写内容，请重试。");
+        return;
       }
     }
 
     const newGeneratedReports: ReportSummaryItem[] = selectedStudentsList.map((stu, idx) => {
       const studentScore =
-        scorePreview?.data.scoreSummaries?.find(s => s.studentId === stu.id) ?? createFallbackScoreDetails(stu.name);
+        scorePreview?.data.scoreSummaries?.find(s => s.studentId === stu.id) ?? createFallbackScoreDetails();
 
       const petPreview = scorePreview?.data.petPreviews?.find(p => p.studentId === stu.id);
       const studentPet: ReportPet | null =
@@ -1679,9 +1811,7 @@ export function SemesterReportsV2View() {
     setReports(prev => [...newGeneratedReports, ...prev]);
     showToast(`🎉 ${newGeneratedReports.length} 份报告草稿已全部成功生成！已为您切换回【报告管理与分发】列表。`);
     setActiveMainTab("dashboard");
-    setComposeStep(1);
-    setSelectedStudentIds([]);
-    setComposeSelectedSubjects([]);
+    // Local preview records are transient, so keep the teacher's inputs available for reauthentication.
   }
 
   // 转换为 V2Subject 格式
@@ -1698,10 +1828,12 @@ export function SemesterReportsV2View() {
   );
 
   // 当前 Step 4 正在评价的学生
-  const currentStep4Student = useMemo(() => {
-    const list = students.filter(s => selectedStudentIds.includes(s.id));
-    return list[step4StudentIndex] || list[0] || students[0];
-  }, [students, selectedStudentIds, step4StudentIndex]);
+  const studentsToEvaluate = students.filter(student => selectedStudentIds.includes(student.id));
+  const step4StudentIndex = Math.max(
+    0,
+    studentsToEvaluate.findIndex(student => student.id === feedbackStudentId)
+  );
+  const currentStep4Student = studentsToEvaluate[step4StudentIndex];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-3 text-xs antialiased select-none sm:p-5 sm:text-sm">
@@ -1752,6 +1884,7 @@ export function SemesterReportsV2View() {
           <button
             type="button"
             id="mainTabCompose"
+            disabled={Boolean(recovery)}
             onClick={() => setActiveMainTab("compose")}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-center transition ${
               activeMainTab === "compose"
@@ -2180,11 +2313,18 @@ export function SemesterReportsV2View() {
       {/* ========================================================================= */}
       {/* 模块二：【填写与生成报告】(内嵌向导式 Compose，非弹框)                   */}
       {/* ========================================================================= */}
-      {activeMainTab === "compose" && (
+      <ReportDraftRecoveryNotice
+        recovery={recovery}
+        cleanupFailed={cleanupFailed}
+        onRetry={loadInitialData}
+        onCleanup={cleanUp}
+      />
+
+      {activeMainTab === "compose" && !recovery && (
         <main className="space-y-4 animate-in fade-in duration-200">
           <ReportWizardSteps
             step={composeStep}
-            onChange={setComposeStep}
+            onChange={value => edit("composeStep", value, false)}
             hasSubjects={composeSelectedSubjects.length > 0}
             hasStudents={selectedStudentIds.length > 0}
           />
@@ -2224,7 +2364,7 @@ export function SemesterReportsV2View() {
                   <Input
                     type="date"
                     value={composeStart}
-                    onChange={e => setComposeStart(e.target.value)}
+                    onChange={e => edit("composeStart", e.target.value)}
                     className="h-9 min-w-0 text-left text-xs"
                   />
                 </div>
@@ -2233,7 +2373,7 @@ export function SemesterReportsV2View() {
                   <Input
                     type="date"
                     value={composeEnd}
-                    onChange={e => setComposeEnd(e.target.value)}
+                    onChange={e => edit("composeEnd", e.target.value)}
                     className="h-9 min-w-0 text-left text-xs"
                   />
                 </div>
@@ -2242,20 +2382,23 @@ export function SemesterReportsV2View() {
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">所属学期</label>
                     <select
                       aria-label="所属学期"
-                      value={composeTermId || activeTerm?.id || terms[0]?.id}
+                      value={composeTermId}
                       onChange={e => {
                         const newId = e.target.value;
-                        setComposeTermId(newId);
+                        edit("composeTermId", newId);
                         const selectedTerm = terms.find(t => t.id === newId);
                         if (selectedTerm && composePeriod === "term") {
                           const dates = defaultReportDates("term", selectedTerm);
-                          setComposeStart(dates.start);
-                          setComposeEnd(dates.end);
-                          setLessonDate(dates.end);
+                          edit("composeStart", dates.start);
+                          edit("composeEnd", dates.end);
+                          edit("lessonDate", dates.end);
                         }
                       }}
                       className="h-9 w-full rounded-xl border border-input bg-background px-3 text-xs"
                     >
+                      <option value="" disabled>
+                        请选择学期
+                      </option>
                       {terms.map(t => (
                         <option key={t.id} value={t.id}>
                           {t.name} ({t.startDate.slice(0, 10)} 至 {t.endDate.slice(0, 10)})
@@ -2273,7 +2416,7 @@ export function SemesterReportsV2View() {
                     value={institutionName}
                     maxLength={60}
                     placeholder="课堂成长记录"
-                    onChange={e => setInstitutionName(e.target.value)}
+                    onChange={e => edit("institutionName", e.target.value)}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -2283,7 +2426,7 @@ export function SemesterReportsV2View() {
                     value={courseTheme}
                     maxLength={100}
                     placeholder="选填"
-                    onChange={e => setCourseTheme(e.target.value)}
+                    onChange={e => edit("courseTheme", e.target.value)}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -2298,7 +2441,7 @@ export function SemesterReportsV2View() {
                       value={lessonNumber}
                       onChange={e => {
                         const val = e.target.value;
-                        setLessonNumber(val === "" ? "" : Number(val));
+                        edit("lessonNumber", val === "" ? "" : Number(val));
                       }}
                       className="h-9 text-xs"
                     />
@@ -2308,7 +2451,7 @@ export function SemesterReportsV2View() {
                     <Input
                       type="date"
                       value={lessonDate}
-                      onChange={e => setLessonDate(e.target.value)}
+                      onChange={e => edit("lessonDate", e.target.value)}
                       className="h-9 min-w-0 text-left text-xs"
                     />
                   </div>
@@ -2318,7 +2461,8 @@ export function SemesterReportsV2View() {
               <div className="flex justify-end pt-2">
                 <Button
                   type="button"
-                  onClick={() => setComposeStep(2)}
+                  disabled={!composeTermId}
+                  onClick={() => edit("composeStep", 2, false)}
                   className="bg-indigo-600 text-xs font-medium text-white hover:bg-indigo-700"
                 >
                   <span>下一步：配置学科与教学内容</span>
@@ -2372,7 +2516,7 @@ export function SemesterReportsV2View() {
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => {
-                              setComposeSelectedSubjects(prev =>
+                              edit("composeSelectedSubjects", prev =>
                                 prev.includes(sub.id) ? prev.filter(x => x !== sub.id) : [...prev, sub.id]
                               );
                             }}
@@ -2395,7 +2539,7 @@ export function SemesterReportsV2View() {
                   <div className="flex gap-1 text-xs">
                     <button
                       type="button"
-                      onClick={() => setCourseSource("manual")}
+                      onClick={() => edit("courseSource", "manual")}
                       className={`rounded-lg px-2.5 py-1 font-medium transition ${
                         courseSource === "manual"
                           ? "bg-indigo-600 text-white shadow-2xs"
@@ -2406,7 +2550,7 @@ export function SemesterReportsV2View() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setCourseSource("pdf")}
+                      onClick={() => edit("courseSource", "pdf")}
                       className={`rounded-lg px-2.5 py-1 font-medium transition ${
                         courseSource === "pdf"
                           ? "bg-indigo-600 text-white shadow-2xs"
@@ -2422,7 +2566,7 @@ export function SemesterReportsV2View() {
                   <Textarea
                     rows={4}
                     value={courseManualText}
-                    onChange={e => setCourseManualText(e.target.value)}
+                    onChange={e => edit("courseManualText", e.target.value)}
                     placeholder="选填，输入本期教学内容与掌握要求..."
                     className="text-xs leading-relaxed"
                   />
@@ -2441,7 +2585,7 @@ export function SemesterReportsV2View() {
               </div>
 
               <div className="flex items-center justify-between pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setComposeStep(1)}>
+                <Button type="button" variant="outline" size="sm" onClick={() => edit("composeStep", 1, false)}>
                   <ArrowLeft className="mr-1 h-3.5 w-3.5" />
                   <span>上一步</span>
                 </Button>
@@ -2454,7 +2598,7 @@ export function SemesterReportsV2View() {
                       showToast("请至少勾选一门学科！");
                       return;
                     }
-                    setComposeStep(3);
+                    edit("composeStep", 3, false);
                   }}
                   className="bg-indigo-600 text-white hover:bg-indigo-700 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -2482,7 +2626,7 @@ export function SemesterReportsV2View() {
                   <select
                     aria-label="按班级筛选学生"
                     value={selectedStudentClass}
-                    onChange={e => setSelectedStudentClass(e.target.value)}
+                    onChange={e => edit("selectedStudentClass", e.target.value)}
                     className="h-8 rounded-lg border bg-background px-2 text-xs"
                   >
                     <option value="">全部班级 ({students.length}人)</option>
@@ -2499,10 +2643,10 @@ export function SemesterReportsV2View() {
                         .filter(s => !selectedStudentClass || s.className === selectedStudentClass)
                         .map(s => s.id);
                       if (classStudentIds.length > 30) {
-                        setSelectedStudentIds(classStudentIds.slice(0, 30));
+                        edit("selectedStudentIds", classStudentIds.slice(0, 30));
                         showToast(`已选中前 30 名学生（单次报告生成上限为 30 人）`);
                       } else {
-                        setSelectedStudentIds(classStudentIds);
+                        edit("selectedStudentIds", classStudentIds);
                         showToast(`已选中全部学生 (${classStudentIds.length}人)`);
                       }
                     }}
@@ -2512,7 +2656,7 @@ export function SemesterReportsV2View() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSelectedStudentIds([])}
+                    onClick={() => edit("selectedStudentIds", [])}
                     className="rounded-xl border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
                   >
                     清空
@@ -2530,7 +2674,7 @@ export function SemesterReportsV2View() {
                         key={s.id}
                         data-testid={`student-card-${s.id}`}
                         onClick={() => {
-                          setSelectedStudentIds(prev => {
+                          edit("selectedStudentIds", prev => {
                             if (prev.includes(s.id)) {
                               return prev.filter(x => x !== s.id);
                             }
@@ -2571,7 +2715,7 @@ export function SemesterReportsV2View() {
               </div>
 
               <div className="flex items-center justify-between pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setComposeStep(2)}>
+                <Button type="button" variant="outline" size="sm" onClick={() => edit("composeStep", 2, false)}>
                   <ArrowLeft className="mr-1 h-3.5 w-3.5" />
                   <span>上一步</span>
                 </Button>
@@ -2579,7 +2723,7 @@ export function SemesterReportsV2View() {
                   type="button"
                   size="sm"
                   disabled={selectedStudentIds.length === 0}
-                  onClick={() => setComposeStep(4)}
+                  onClick={() => edit("composeStep", 4, false)}
                   className="bg-indigo-600 text-white hover:bg-indigo-700 font-medium disabled:opacity-40"
                 >
                   <span>下一步：录入课堂评价与生成</span>
@@ -2612,7 +2756,7 @@ export function SemesterReportsV2View() {
                     selectedStudentIds.forEach(id => {
                       newComments[id] = sample;
                     });
-                    setStep4StudentComments(newComments);
+                    edit("step4StudentComments", newComments);
                     showToast("已为全班待评价学生套用基础寄语模版！");
                   }}
                   className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-emerald-700"
@@ -2625,35 +2769,33 @@ export function SemesterReportsV2View() {
               <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
                 {/* 左侧：待评学生名单导航 */}
                 <div className="space-y-1 rounded-xl border bg-muted/20 p-2 max-h-[620px] overflow-y-auto">
-                  {students
-                    .filter(s => selectedStudentIds.includes(s.id))
-                    .map((s, idx) => {
-                      const isActive = idx === step4StudentIndex;
-                      const isDone = step4CompletedIds.includes(s.id);
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => setStep4StudentIndex(idx)}
-                          className={`flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition ${
-                            isActive
-                              ? "bg-indigo-600 font-bold text-white shadow-xs"
-                              : isDone
-                                ? "text-foreground hover:bg-card"
-                                : "text-muted-foreground hover:bg-card"
-                          }`}
+                  {studentsToEvaluate.map((s, idx) => {
+                    const isActive = idx === step4StudentIndex;
+                    const isDone = step4CompletedIds.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => edit("feedbackStudentId", s.id)}
+                        className={`flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition ${
+                          isActive
+                            ? "bg-indigo-600 font-bold text-white shadow-xs"
+                            : isDone
+                              ? "text-foreground hover:bg-card"
+                              : "text-muted-foreground hover:bg-card"
+                        }`}
+                      >
+                        <span>
+                          {isDone ? "●" : "○"} {s.name}
+                        </span>
+                        <span
+                          className={`text-[11px] ${isActive ? "text-indigo-100" : isDone ? "font-semibold text-emerald-600" : "text-muted-foreground"}`}
                         >
-                          <span>
-                            {isDone ? "●" : "○"} {s.name}
-                          </span>
-                          <span
-                            className={`text-[11px] ${isActive ? "text-indigo-100" : isDone ? "font-semibold text-emerald-600" : "text-muted-foreground"}`}
-                          >
-                            {isDone ? "已完成" : "待评价"}
-                          </span>
-                        </button>
-                      );
-                    })}
+                          {isDone ? "已完成" : "待评价"}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* 右侧：当前选中学生反馈工作台 */}
@@ -2677,7 +2819,7 @@ export function SemesterReportsV2View() {
                           type="button"
                           onClick={() => {
                             const cur = step4StudentComments[currentStep4Student.id] || "";
-                            setStep4StudentComments(prev => ({
+                            edit("step4StudentComments", prev => ({
                               ...prev,
                               [currentStep4Student.id]: (cur ? `${cur} ` : "") + "课上发言积极，发音标准！"
                             }));
@@ -2690,7 +2832,7 @@ export function SemesterReportsV2View() {
                           type="button"
                           onClick={() => {
                             const cur = step4StudentComments[currentStep4Student.id] || "";
-                            setStep4StudentComments(prev => ({
+                            edit("step4StudentComments", prev => ({
                               ...prev,
                               [currentStep4Student.id]: (cur ? `${cur} ` : "") + "探究合作非常投入。"
                             }));
@@ -2709,7 +2851,7 @@ export function SemesterReportsV2View() {
                       );
                       const step4StudentScore =
                         scorePreview?.data.scoreSummaries?.find(s => s.studentId === currentStep4Student.id) ??
-                        createFallbackScoreDetails(currentStep4Student.name);
+                        createFallbackScoreDetails();
                       const periodLabel =
                         composePeriod === "week"
                           ? "本周最值肯定"
@@ -2781,7 +2923,7 @@ export function SemesterReportsV2View() {
                               <button
                                 key={subId}
                                 type="button"
-                                onClick={() => setStep4PerfSubject(subId)}
+                                onClick={() => edit("step4PerfSubject", subId)}
                                 className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
                                   step4PerfSubject === subId
                                     ? "bg-indigo-600 text-white shadow-2xs"
@@ -2798,11 +2940,11 @@ export function SemesterReportsV2View() {
                       <V2ClassroomPerformance
                         subjects={v2SubjectsList}
                         activeSubjectId={step4PerfSubject}
-                        onSelectSubject={setStep4PerfSubject}
+                        onSelectSubject={value => edit("step4PerfSubject", value)}
                         hideSubjectTabs={true}
                         ratings={step4StudentRatings[currentStep4Student.id] || []}
                         onChange={nextRatings => {
-                          setStep4StudentRatings(prev => ({
+                          edit("step4StudentRatings", prev => ({
                             ...prev,
                             [currentStep4Student.id]: nextRatings
                           }));
@@ -2829,7 +2971,7 @@ export function SemesterReportsV2View() {
                               value={step4StudentGrowthAssessment[currentStep4Student.id]?.[key] || ""}
                               onChange={e => {
                                 const val = e.target.value;
-                                setStep4StudentGrowthAssessment(prev => ({
+                                edit("step4StudentGrowthAssessment", prev => ({
                                   ...prev,
                                   [currentStep4Student.id]: {
                                     ...(prev[currentStep4Student.id] || emptyGrowthAssessment()),
@@ -2860,7 +3002,7 @@ export function SemesterReportsV2View() {
                         value={step4StudentComments[currentStep4Student.id] || ""}
                         onChange={e => {
                           const val = e.target.value;
-                          setStep4StudentComments(prev => ({ ...prev, [currentStep4Student.id]: val }));
+                          edit("step4StudentComments", prev => ({ ...prev, [currentStep4Student.id]: val }));
                         }}
                         placeholder="输入教师专属寄语与鼓励..."
                         className="text-xs"
@@ -2876,7 +3018,7 @@ export function SemesterReportsV2View() {
                           disabled={step4FocusItems.length >= 8}
                           onClick={() => {
                             if (step4FocusItems.length >= 8) return;
-                            setStep4FocusItems(prev => [...prev, ""]);
+                            edit("step4FocusItems", prev => [...prev, ""]);
                           }}
                           className="text-[11px] font-semibold text-indigo-600 hover:underline disabled:opacity-40"
                         >
@@ -2898,13 +3040,13 @@ export function SemesterReportsV2View() {
                                 placeholder="输入下一阶段具体学习或习惯重点..."
                                 onChange={e => {
                                   const val = e.target.value;
-                                  setStep4FocusItems(prev => prev.map((x, i) => (i === idx ? val : x)));
+                                  edit("step4FocusItems", prev => prev.map((x, i) => (i === idx ? val : x)));
                                 }}
                                 className="flex-1 bg-transparent text-xs outline-none"
                               />
                               <button
                                 type="button"
-                                onClick={() => setStep4FocusItems(prev => prev.filter((_, i) => i !== idx))}
+                                onClick={() => edit("step4FocusItems", prev => prev.filter((_, i) => i !== idx))}
                                 className="text-muted-foreground hover:text-red-500"
                               >
                                 ✕
@@ -2920,18 +3062,16 @@ export function SemesterReportsV2View() {
                       <button
                         type="button"
                         onClick={() => {
-                          const selectedStudents = students.filter(s => selectedStudentIds.includes(s.id));
-                          const isLast = step4StudentIndex >= selectedStudents.length - 1;
+                          const nextStudent = studentsToEvaluate[step4StudentIndex + 1];
 
-                          setStep4CompletedIds(prev =>
+                          edit("step4CompletedIds", prev =>
                             prev.includes(currentStep4Student.id) ? prev : [...prev, currentStep4Student.id]
                           );
 
-                          if (isLast) {
+                          if (!nextStudent) {
                             showToast("已经完成全部学生的报告填写，请点击确认生成草稿");
                           } else {
-                            const nextIdx = step4StudentIndex + 1;
-                            setStep4StudentIndex(nextIdx);
+                            edit("feedbackStudentId", nextStudent.id);
                             showToast(`已暂存「${currentStep4Student.name}」的完整课堂反馈，已切换到下一位`);
                           }
                         }}
@@ -2952,7 +3092,7 @@ export function SemesterReportsV2View() {
                   <Input
                     value={step4Keywords}
                     placeholder="选填，多个用逗号隔开，如：生态探究、合作表达"
-                    onChange={e => setStep4Keywords(e.target.value)}
+                    onChange={e => edit("step4Keywords", e.target.value)}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -2961,7 +3101,7 @@ export function SemesterReportsV2View() {
                   <Input
                     value={step4Observation}
                     placeholder="选填，如：本周全班开展了小组自然探索拼图游戏..."
-                    onChange={e => setStep4Observation(e.target.value)}
+                    onChange={e => edit("step4Observation", e.target.value)}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -3384,15 +3524,17 @@ export function SemesterReportsV2View() {
             .then(() => {
               if (target.kind === "term") {
                 setTerms(current => current.filter(term => term.id !== target.id));
-                setComposeTermId(current =>
-                  current === target.id ? (terms.find(term => term.id !== target.id)?.id ?? "") : current
+                edit(
+                  "composeTermId",
+                  current => (current === target.id ? (terms.find(term => term.id !== target.id)?.id ?? "") : current),
+                  false
                 );
               } else {
                 setSubjects(current => current.filter(subject => subject.id !== target.id));
-                setComposeSelectedSubjects(current => current.filter(id => id !== target.id));
+                edit("composeSelectedSubjects", current => current.filter(id => id !== target.id), false);
                 const nextId = subjects.find(subject => subject.id !== target.id)?.id ?? "";
                 setActiveConfigSubjectId(current => (current === target.id ? nextId : current));
-                setStep4PerfSubject(current => (current === target.id ? nextId : current));
+                edit("step4PerfSubject", current => (current === target.id ? nextId : current), false);
               }
               showToast(`${target.kind === "term" ? "学期" : "学科"}已删除，已有报告保留`);
             })
@@ -3425,7 +3567,10 @@ export function SemesterReportsV2View() {
 
       {/* 页面内全局通知 Toast */}
       {toastMessage && (
-        <div className="fixed top-5 left-1/2 z-[9999] -translate-x-1/2 flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white shadow-2xl animate-in fade-in slide-in-from-top-2">
+        <div
+          role="status"
+          className="fixed top-5 left-1/2 z-[9999] flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white shadow-2xl animate-in fade-in slide-in-from-top-2"
+        >
           <CheckCircle2 className="h-4 w-4 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
